@@ -151,11 +151,36 @@ activemq-data/
 .env
 .envrc
 .venv
+.floracco
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Agent instructions (local)
+AGENTS.md
+AI.md
+
+# FlorAcco — corpus data stays outside git
+*.sqlite
+*.sqlite3
+*.db
+
+# Word sources (authoritative narratives; stored at IAS)
+*.doc
+*.docx
+
+# Local copies of corpus / images (symlinks or test trees)
+data/
+local/
+images/
+
+# macOS
+.DS_Store
+
+# OpenRefine (local project state beside the repo)
+.openrefine/
 
 # Spyder project settings
 .spyderproject
