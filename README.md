@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" width="72" alt="FlorAcco">
+
 # FlorAcco
 
 Code, docs, and workflows for stewarding the **Florentine Accomandite Corpus (1445–1808)**: ~4,800 limited-partnership contracts from 20 registers at the Archivio di Stato, Firenze. Led by Francesca Trivellato (IAS Princeton).
