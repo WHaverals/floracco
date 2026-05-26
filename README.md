@@ -1,4 +1,4 @@
-<img src="assets/logo.svg" width="72" alt="FlorAcco">
+<img src="assets/logo.svg" width="96" alt="FlorAcco">
 
 # FlorAcco
 
