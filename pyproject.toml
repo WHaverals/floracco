@@ -1,0 +1,11 @@
+[project]
+name = "floracco"
+version = "0.1.0"
+description = "Code and workflows for the Florentine Accomandite Corpus (1445–1808)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "marimo",
+    "pandas",
+    "python-dotenv",
+]
