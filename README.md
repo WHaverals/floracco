@@ -62,4 +62,4 @@ Run a notebook: `uv run marimo edit notebooks/` (create `notebooks/` as needed).
 
 ## People
 
-Francesca Trivellato, Wouter Haverals, Brian Kernighan, Jonathan Betz
+Francesca Trivellato (FT), Wouter Haverals (WH), Brian Kernighan (BK), Jonathan Betz (JB)
