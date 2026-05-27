@@ -173,7 +173,6 @@ AI.md
 
 # Local data directory (entire tree — corpus, sqlite, reference; never commit)
 data/
-docs/
 queries/
 local/
 images/
