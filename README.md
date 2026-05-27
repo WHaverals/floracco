@@ -4,7 +4,7 @@
 
 Code, docs, and workflows for stewarding the **Florentine Accomandite Corpus (1445–1808)**: ~4,800 limited-partnership contracts from 20 registers at the Archivio di Stato, Firenze. Led by Francesca Trivellato (IAS Princeton).
 
-**This repo holds code and documentation only.** The SQLite database, Word narrative summaries, and folio images live elsewhere (IAS storage). The repo’s job is to make that material reproducible and traceable.
+**This repo holds code and documentation only.** The SQLite database, Word files, and images live elsewhere (IAS storage). This repo supports inspection and analysis of the data, and provides the framework (workflows, linking, audit trail) to work with the files.
 
 ## What we are doing
 
@@ -18,7 +18,7 @@ Main priorities:
 
 1. **Stewardship** — reproducible Python environment, backups, data dictionary, project log
 2. **Database quality** — issue inventory, tested SQL query cookbook, lightweight browse/edit tools
-3. **Word ↔ DB reconciliation** — per-contract XML with preserved edits, stable IDs linking DB, Word, and images, human-reviewed updates with an audit trail
+3. **Word ↔ DB reconciliation** — per-contract file with preserved edits, stable IDs linking DB, Word, and images, human-reviewed updates with an audit trail
 4. **Entity disambiguation** — person and place names are messy: typos and variants ("Bartolomeo Barbanelli" vs "Barbaneli"), and the same name can refer to different people across decades ("Niccolò Scarlatti" in 1640 ≠ 1750). OpenRefine for clustering and reconciliation; SPLINK for harder probabilistic linkage.
 
 ## Research objectives
@@ -37,27 +37,26 @@ With a reconciled, trustable database, the corpus supports questions such as:
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.12.
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/WHaverals/floracco.git
 cd floracco
 export UV_PROJECT_ENVIRONMENT=.floracco
 uv sync
-cp .env.example .env   # edit paths to your local DB and data
+cp .env.example .env   # configure local paths
 ```
 
 The Python project is named **floracco** (`pyproject.toml`). The virtualenv lives in `.floracco/` (uv default is `.venv`; we set the name above).
 
 Run a notebook: `uv run marimo edit notebooks/` (create `notebooks/` as needed).
 
-## What lives here (planned)
+## What lives here
 
 | Path | Purpose |
 |------|---------|
-| `LOG.md` | Running log of decisions and data changes |
-| `docs/data_dictionary.md` | Field definitions for the database |
-| `docs/glossary.md` | Historical and project terms |
-| `queries/` | Tested, portable SQL (query cookbook) |
 | `notebooks/` | Data-quality reports and exploration |
-| `workflows/` | OpenRefine, reconciliation, and conversion scripts |
+| `workflows/` | OpenRefine, reconciliation, conversion scripts |
+| `docs/data_dictionary.md` | Field definitions (in progress) |
+| `docs/glossary.md` | Historical and project terms |
+| `LOG.md` | Running log of decisions and data changes |
 
 
 ## People
