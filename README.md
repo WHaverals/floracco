@@ -8,18 +8,19 @@ Code, docs, and workflows for stewarding the **Florentine Accomandite Corpus (14
 
 ## What we are doing
 
-The corpus currently sits in several places that have drifted apart:
+The corpus currently sits in several places that have drifted apart (all private, not in git):
 
 - **SQLite** — structured fields from a web-app export
 - **Word** — Italian narrative summaries (authoritative text; many with tracked changes)
-- **Images** — ~4,000 folio photographs (private; not in git)
+- **Images** — ~4,000 folio photographs
 
 Main priorities:
 
 1. **Stewardship** — reproducible Python environment, backups, data dictionary, project log
 2. **Database quality** — issue inventory, tested SQL query cookbook, lightweight browse/edit tools
-3. **Word ↔ DB reconciliation** — per-contract file with preserved edits, stable IDs linking DB, Word, and images, human-reviewed updates with an audit trail
-4. **Entity disambiguation** — person and place names are messy: typos and variants ("Bartolomeo Barbanelli" vs "Barbaneli"), and the same name can refer to different people across decades ("Niccolò Scarlatti" in 1640 ≠ 1750). OpenRefine for clustering and reconciliation; SPLINK for harder probabilistic linkage.
+3. **Improved interface** — better webapp for working with and exploring the data (no longer handrolling queries)
+4. **Word ↔ DB reconciliation** — per-contract files with preserved edits, stable IDs linking DB, Word, and images, human-reviewed updates with an audit trail
+5. **Entity disambiguation** — person and place names are messy: typos and variants ("Bartolomeo Barbanelli" vs "Barbaneli"), and the same name can refer to different people across decades ("Niccolò Scarlatti" in 1640 ≠ 1750). OpenRefine for clustering and reconciliation; SPLINK for harder probabilistic linkage.
 
 ## Research objectives
 
