@@ -171,7 +171,7 @@ AI.md
 *.doc
 *.docx
 
-# Local copies of corpus / images (symlinks or test trees)
+# Local data directory (entire tree — corpus, sqlite, reference; never commit)
 data/
 local/
 images/
