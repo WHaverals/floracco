@@ -180,6 +180,9 @@ images/
 # macOS
 .DS_Store
 
+# Office temporary lock files
+~$*
+
 # OpenRefine (local project state beside the repo)
 .openrefine/
 
