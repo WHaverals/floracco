@@ -140,20 +140,33 @@ ITALIAN_MONTHS = {
     "novembre": "11",
     "dicembre": "12",
 }
+# Maps a normalized Word event label to the DB sub_contract.sub_type values it is
+# compatible with. The DB only ever stores four sub_types
+# (balance / renewal / termination / variation; see docs/data_dictionary.md and
+# the original input rules), so every value below MUST be one of those four,
+# except "new_contract" which targets the `contract` table rather than a sub_type.
+#
+# INTERPRETIVE LAYER (FT review pending): the narrative-label -> DB-sub_type
+# mapping below encodes an editorial judgment about how Italian act labels were
+# coded into the four DB categories. It is intentionally permissive (a label may
+# be compatible with more than one sub_type) because the goal is candidate
+# recall, not truth. Confirm these groupings with FT before they harden into
+# anything authoritative. See LOG.md (2026-05-29) for the rationale and history.
+DB_SUB_TYPES = {"termination", "renewal", "balance", "variation"}
 DB_EVENT_TYPE_MAP = {
     "new_contract": {"contract"},
     "termination": {"termination"},
     "rescinded_termination": {"termination"},
-    "assignment": {"cession", "assignment", "variation"},
-    "modification": {"variation", "modification"},
+    "assignment": {"variation", "termination"},
+    "modification": {"variation"},
     "balance": {"balance"},
     "renewal": {"renewal"},
-    "ratification": {"ratification"},
-    "extension": {"renewal", "extension", "variation"},
-    "declaration": {"declaration", "variation"},
+    "ratification": {"variation"},
+    "extension": {"renewal", "variation"},
+    "declaration": {"variation"},
     "variation": {"variation"},
-    "dissolution": {"termination", "dissolution"},
-    "confirmation": {"confirmation", "variation"},
+    "dissolution": {"termination"},
+    "confirmation": {"renewal", "variation"},
     "profit_distribution": {"balance", "variation"},
     "capital_return": {"variation", "termination"},
     "winding_up": {"termination", "variation"},
@@ -181,13 +194,27 @@ MATCH_STATUS_LABELS = {
 SIGNAL_LABELS = {
     "contract_id_exact": "Word event number exactly matches DB contract_id",
     "contract_id_from_event_number": "Word event number points to this DB contract_id",
+    "component_contract_id_exact": "A component event number points to this DB contract_id",
     "main_contract_id_referenced": "Word reference number matches DB sub_contract.main_contract_id",
     "main_contract_id_from_event_number": "Word event number matches DB sub_contract.main_contract_id",
+    "component_main_contract_id": "A component event number points to this related sub-contract row",
     "registration_date_exact": "Registration dates match exactly",
+    "registration_date_stile_fiorentino": "Registration date matches after Florentine-calendar (stile fiorentino) year shift",
     "folio_exact": "Folio range matches exactly",
+    "folio_within": "DB folio falls inside the Word entry's folio span",
+    "folio_overlap": "Word and DB folio ranges overlap",
+    "folio_adjacent": "Word and DB folios are one folio apart (possible original/current numbering)",
     "folio_partial": "At least one folio endpoint matches",
     "event_type_compatible": "Word event type is compatible with DB table/type",
-    "text_similarity_good": "Word and DB narratives are textually similar",
+    "component_event_type_compatible": "One Word event component is compatible with DB table/type",
+    "text_similarity_good": "Word and DB narratives are textually similar by a recorded metric",
+    "token_coverage_good": "Most distinctive Word terms also appear in the DB narrative",
+    "shared_phrase_good": "Word and DB share a long phrase",
+    "person_name_overlap": "DB person name appears in the Word entry",
+    "firm_name_overlap": "DB firm or partnership name appears in the Word entry",
+    "place_overlap": "DB place or address appears in the Word entry",
+    "amount_overlap": "DB amount appears in the Word entry",
+    "date_field_overlap": "A DB date field appears in the Word entry",
 }
 CONFLICT_LABELS = {
     "db_register_missing": "DB row has missing or malformed register metadata",
@@ -196,6 +223,41 @@ CONFLICT_LABELS = {
     "folio_differs": "Folio ranges differ",
     "event_type_table_differs": "Word event type points to a different DB table/type",
     "text_similarity_low": "Word and DB narratives have low text similarity",
+}
+MATCH_STOPWORDS = {
+    "alla",
+    "allo",
+    "come",
+    "con",
+    "dalla",
+    "dalle",
+    "degli",
+    "della",
+    "delle",
+    "detta",
+    "dette",
+    "detti",
+    "detto",
+    "dice",
+    "essere",
+    "firenze",
+    "gli",
+    "il",
+    "in",
+    "la",
+    "le",
+    "lo",
+    "nel",
+    "nella",
+    "per",
+    "ragione",
+    "signor",
+    "signora",
+    "signori",
+    "societa",
+    "società",
+    "sotto",
+    "una",
 }
 
 
@@ -1591,6 +1653,92 @@ def count_event_labels(text: str) -> int:
     return bracket_count + plus_count
 
 
+def immediate_component_number(segment: str) -> int | None:
+    prefix = re.sub(r"\s+", " ", segment.strip())[:90]
+    match = re.match(
+        r"^(?:di|del|della|a|o|rinnovo(?:\s+del(?:la)?)?|nuov[ao])?\s*(?P<number>\d{2,5})\b",
+        prefix,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return int(match.group("number"))
+
+
+def immediate_component_reference_number(segment: str) -> int | None:
+    prefix = re.sub(r"\s+", " ", segment.strip())[:90]
+    referenced = REFERENCED_EVENT_RE.search(prefix)
+    return int(referenced.group("number")) if referenced else None
+
+
+def event_components_for_text(text: str) -> list[dict[str, Any]]:
+    components: list[dict[str, Any]] = []
+    matches = list(re.finditer(r"\[(?P<label>[^\]]+)\]", text or ""))
+    for index, match in enumerate(matches):
+        raw_label = f"[{match.group('label').strip()}]"
+        guesses = event_label_guesses(raw_label)
+        if not guesses:
+            continue
+        next_start = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        segment = text[match.end() : next_start]
+        referenced_number = immediate_component_reference_number(segment)
+        event_number = immediate_component_number(segment)
+        for guess in guesses:
+            components.append(
+                {
+                    "raw_label": raw_label,
+                    "label_guess": guess,
+                    "event_number": event_number,
+                    "referenced_event_number": referenced_number,
+                    "segment_text": segment.strip()[:500],
+                }
+            )
+    return components
+
+
+def event_components_for_entry(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    text = str(entry.get("current_text") or "")
+    components = event_components_for_text(text)
+    if components:
+        return components
+    raw_label = entry.get("event_label_raw")
+    label_guess = entry.get("event_label_guess")
+    if not raw_label or not label_guess:
+        return []
+    return [
+        {
+            "raw_label": raw_label,
+            "label_guess": label_guess,
+            "event_number": integer_or_none(entry.get("event_number_raw")),
+            "referenced_event_number": integer_or_none(entry.get("referenced_event_number_raw")),
+            "segment_text": str(entry.get("event_label_trailing_text") or "")[:500],
+        }
+    ]
+
+
+def component_label_guesses(entry: dict[str, Any]) -> set[str]:
+    return {component["label_guess"] for component in event_components_for_entry(entry)}
+
+
+def component_contract_ids(entry: dict[str, Any]) -> set[int]:
+    return {
+        int(component["event_number"])
+        for component in event_components_for_entry(entry)
+        if component.get("label_guess") == "new_contract" and component.get("event_number") is not None
+    }
+
+
+def component_sub_contract_main_ids(entry: dict[str, Any]) -> set[int]:
+    ids: set[int] = set()
+    for component in event_components_for_entry(entry):
+        if component.get("label_guess") == "new_contract":
+            continue
+        for key in ("referenced_event_number", "event_number"):
+            if component.get(key) is not None:
+                ids.add(int(component[key]))
+    return ids
+
+
 def parse_entry_label(text: str) -> dict[str, Any] | None:
     stripped_text = text.strip()
     if re.match(r"^Senza accomandita\b", stripped_text, flags=re.IGNORECASE):
@@ -1650,6 +1798,69 @@ def group_rows_by_register(rows: list[dict[str, Any]]) -> dict[str, list[dict[st
 
 def make_source_entry_id(register_id: str, ordinal: int) -> str:
     return f"{register_id}_entry_{ordinal:05d}"
+
+
+def make_source_entry_key(
+    *,
+    register_id: str,
+    folio_start: str | None,
+    folio_end: str | None,
+    date_candidates: list[str] | None,
+    event_label_guess: str | None,
+    event_number_raw: str | None,
+) -> str:
+    """Content-stable identifier for a source entry.
+
+    The positional ``source_entry_id`` (register + sequential ordinal) is renumbered
+    whenever segmentation changes, which would orphan any human review decision keyed
+    on it. This key is derived from the entry's stable historical coordinates
+    (register, folio span, earliest ISO date, event label and number) and therefore
+    does not move when other entries are added, removed, or re-ordered. Collisions
+    (entries that share all those coordinates) are disambiguated in
+    ``run_segment_entries`` using a content hash, never the ordinal.
+    """
+    iso_dates = sorted(
+        {iso for candidate in (date_candidates or []) if (iso := parse_italian_date(candidate))}
+    )
+    natural = "|".join(
+        [
+            str(register_id or ""),
+            str(folio_start or ""),
+            str(folio_end or ""),
+            iso_dates[0] if iso_dates else "",
+            str(event_label_guess or ""),
+            str(event_number_raw or ""),
+        ]
+    )
+    digest = hashlib.sha256(natural.encode("utf-8")).hexdigest()[:12]
+    return f"{register_id}_e{digest}"
+
+
+def disambiguate_source_entry_keys(entries: list[dict[str, Any]]) -> None:
+    """Make ``source_entry_key`` unique without falling back to positional ordinals.
+
+    Entries that share every natural coordinate (same folio span, date, label, and
+    event number) receive a stable suffix derived from their text content hash, so
+    the key stays reproducible across re-segmentation. Only genuine content
+    duplicates fall back to a positional index.
+    """
+    by_key: dict[str, list[dict[str, Any]]] = {}
+    for entry in entries:
+        by_key.setdefault(entry["source_entry_key"], []).append(entry)
+    for key, group in by_key.items():
+        if len(group) < 2:
+            continue
+        for entry in group:
+            content_hash = str(entry.get("current_text_sha256") or "")[:8]
+            entry["source_entry_key"] = f"{key}_{content_hash}" if content_hash else key
+        seen: dict[str, int] = {}
+        for entry in group:
+            current = entry["source_entry_key"]
+            if current in seen:
+                seen[current] += 1
+                entry["source_entry_key"] = f"{current}_{seen[current]}"
+            else:
+                seen[current] = 0
 
 
 def issue_row(
@@ -1746,8 +1957,17 @@ def build_entry_from_paragraphs(
         )
 
     entry_status = status if not issues else "needs_review"
+    source_entry_key = make_source_entry_key(
+        register_id=register_id,
+        folio_start=folio_start,
+        folio_end=folio_end,
+        date_candidates=date_candidates,
+        event_label_guess=label_info.get("event_label_guess"),
+        event_number_raw=label_info.get("event_number_raw"),
+    )
     entry = {
         "source_entry_id": source_entry_id,
+        "source_entry_key": source_entry_key,
         "register_id": register_id,
         "source_file": source_file,
         "normalized_path": normalized_path,
@@ -1956,6 +2176,8 @@ def run_segment_entries(args: argparse.Namespace) -> int:
             }
         )
 
+    disambiguate_source_entry_keys(all_entries)
+
     write_jsonl(segmentation_dir / "source_entries.jsonl", all_entries)
     write_csv(segmentation_dir / "source_entries.csv", all_entries)
     write_jsonl(segmentation_dir / "entry_paragraphs.jsonl", all_entry_paragraphs)
@@ -2001,6 +2223,148 @@ def normalize_match_text(text: str | None) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def match_tokens(text: str | None) -> list[str]:
+    normalized = normalize_match_text(text)
+    return [
+        token
+        for token in normalized.split()
+        if len(token) > 2 and token not in MATCH_STOPWORDS and not token.isdigit()
+    ]
+
+
+def phrase_in_text(text: str | None, phrase: str | None) -> bool:
+    normalized_phrase = normalize_match_text(phrase)
+    if len(normalized_phrase) < 4:
+        return False
+    return normalized_phrase in normalize_match_text(text)
+
+
+def number_in_text(text: str | None, value: Any) -> bool:
+    if value in (None, ""):
+        return False
+    digits = re.sub(r"\D+", "", str(value))
+    if not digits:
+        return False
+    if int(digits) == 0:
+        return False
+    compact_text = re.sub(r"\D+", "", str(text or ""))
+    if digits in compact_text:
+        return True
+    grouped = r"[., ]?".join(re.escape(digit) for digit in digits)
+    return bool(re.search(grouped, str(text or "")))
+
+
+def narrative_similarity_metrics(word_text: str | None, db_text: str | None) -> dict[str, Any]:
+    word_match_text = normalize_match_text(word_text)[:4000]
+    db_match_text = normalize_match_text(db_text)[:4000]
+    ratio = 0.0
+    if word_match_text and db_match_text:
+        ratio = difflib.SequenceMatcher(None, word_match_text, db_match_text).ratio()
+    word_tokens = match_tokens(word_text)
+    db_tokens = match_tokens(db_text)
+    word_token_set = set(word_tokens)
+    db_token_set = set(db_tokens)
+    shared_tokens = word_token_set & db_token_set
+    # Order-aware containment: fraction of the SHORTER token sequence covered by
+    # contiguous matching blocks shared with the longer one. Unlike the symmetric
+    # SequenceMatcher ratio (which penalizes length asymmetry), this scores ~1.0
+    # when the DB `document` is a snippet that is faithfully contained in the Word
+    # segment (or vice versa) -- the common case in this corpus.
+    matcher = difflib.SequenceMatcher(a=word_tokens, b=db_tokens, autojunk=True)
+    matching_blocks = matcher.get_matching_blocks()
+    matched_token_count = sum(block.size for block in matching_blocks)
+    shorter_token_count = min(len(word_tokens), len(db_tokens))
+    # Require a minimum length on the shorter side so a tiny DB document cannot
+    # claim full containment from a handful of incidental tokens.
+    containment = matched_token_count / shorter_token_count if shorter_token_count >= 5 else 0.0
+    shared_phrases: list[str] = []
+    for block in sorted(matching_blocks, key=lambda item: item.size, reverse=True):
+        if block.size < 4:
+            continue
+        phrase = " ".join(word_tokens[block.a : block.a + min(block.size, 18)])
+        if phrase and phrase not in shared_phrases:
+            shared_phrases.append(phrase)
+        if len(shared_phrases) >= 6:
+            break
+    return {
+        "narrative_similarity_ratio": round(ratio, 4),
+        "text_containment_ratio": round(min(containment, 1.0), 4),
+        "word_token_coverage_in_db": round(len(shared_tokens) / len(word_token_set), 4) if word_token_set else 0,
+        "db_token_coverage_in_word": round(len(shared_tokens) / len(db_token_set), 4) if db_token_set else 0,
+        "shared_distinctive_token_count": len(shared_tokens),
+        "shared_phrase_count": len(shared_phrases),
+        "longest_shared_phrase_words": max((len(phrase.split()) for phrase in shared_phrases), default=0),
+        "shared_phrases": shared_phrases,
+    }
+
+
+def add_field_hit(hits: list[dict[str, str]], field: str, label: str, value: Any) -> None:
+    if value in (None, ""):
+        return
+    text = str(value).strip()
+    if not text:
+        return
+    hit = {"field": field, "label": label, "value": text}
+    if hit not in hits:
+        hits.append(hit)
+
+
+def structured_field_overlap(entry_text: str | None, db_row: dict[str, Any]) -> list[dict[str, str]]:
+    hits: list[dict[str, str]] = []
+    phrase_fields = [
+        ("firm_name", "firm name", db_row.get("firm_name")),
+        ("sub_firm_name", "sub-firm name", db_row.get("sub_firm_name")),
+        ("sub_type", "sub-contract type", db_row.get("sub_type")),
+        ("currency", "currency", db_row.get("currency")),
+    ]
+    for field, label, value in phrase_fields:
+        if phrase_in_text(entry_text, value):
+            add_field_hit(hits, field, label, value)
+    for value in db_row.get("person_names") or []:
+        if phrase_in_text(entry_text, value):
+            add_field_hit(hits, "person_name", "person name", value)
+    for value in db_row.get("person_last_names") or []:
+        if phrase_in_text(entry_text, value):
+            add_field_hit(hits, "person_last_name", "person last name", value)
+    for value in db_row.get("professions") or []:
+        if phrase_in_text(entry_text, value):
+            add_field_hit(hits, "profession", "profession", value)
+    for value in db_row.get("partnership_names") or []:
+        if phrase_in_text(entry_text, value):
+            add_field_hit(hits, "partnership_name", "investment partnership name", value)
+    for value in db_row.get("investment_non_cash_values") or []:
+        if phrase_in_text(entry_text, value):
+            add_field_hit(hits, "investment_non_cash", "non-cash investment", value)
+    for value in db_row.get("place_names") or []:
+        if phrase_in_text(entry_text, value):
+            add_field_hit(hits, "place_name", "place name", value)
+    for value in db_row.get("addresses") or []:
+        if phrase_in_text(entry_text, value):
+            add_field_hit(hits, "address", "address", value)
+    number_fields = [
+        ("total", "total capital", db_row.get("total")),
+        ("duration_months", "duration in months", db_row.get("duration_months")),
+        ("renewal_months", "renewal in months", db_row.get("renewal_months")),
+        ("automatic_renewal_months", "automatic renewal in months", db_row.get("automatic_renewal_months")),
+    ]
+    for field, label, value in number_fields:
+        if number_in_text(entry_text, value):
+            add_field_hit(hits, field, label, value)
+    for value in db_row.get("investment_cash_amounts") or []:
+        if number_in_text(entry_text, value):
+            add_field_hit(hits, "investment_cash", "investment cash amount", value)
+    for field in ["registration_date", "start_date", "end_date"]:
+        if db_row.get(field) and phrase_in_text(entry_text, db_row.get(field)):
+            add_field_hit(hits, field, field.replace("_", " "), db_row.get(field))
+    return hits
+
+
+def field_overlap_summary(hits: list[dict[str, str]], limit: int = 10) -> str:
+    if not hits:
+        return "No structured DB field overlap was recorded."
+    return "; ".join(f"{hit['label']}: {hit['value']}" for hit in hits[:limit])
+
+
 def is_date_like_line(text: str) -> bool:
     stripped = text.strip()
     return bool(stripped and DATE_RE.fullmatch(stripped))
@@ -2041,12 +2405,110 @@ def parse_italian_date(text: str | None) -> str | None:
     return f"{match.group('year')}-{month}-{day:02d}"
 
 
+def parse_italian_date_candidates(text: str | None) -> set[str]:
+    if not text:
+        return set()
+    dates: set[str] = set()
+    for match in re.finditer(
+        r"\b(?P<day>[0-3]?\d)\s+(?P<month>[A-Za-zàèéìòù]+)\s+"
+        r"(?P<year>1[4-8]\d{2})(?:/(?P<short_year>\d{2}))?\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        month = ITALIAN_MONTHS.get(match.group("month").lower())
+        if month is None:
+            continue
+        day = int(match.group("day"))
+        if day < 1 or day > 31:
+            continue
+        year = match.group("year")
+        dates.add(f"{year}-{month}-{day:02d}")
+        if match.group("short_year"):
+            dates.add(f"{year[:2]}{match.group('short_year')}-{month}-{day:02d}")
+    return dates
+
+
+def entry_date_candidates(entry: dict[str, Any]) -> set[str]:
+    candidates = parse_italian_date_candidates(entry.get("registration_date_raw"))
+    candidates.update(parse_italian_date_candidates(entry.get("current_text")))
+    return candidates
+
+
+# Tuscany abolished the Florentine new-year (25 March) and adopted the common
+# 1-January start on 1 January 1750; the shift only applies to earlier dates.
+STILE_FIORENTINO_CUTOFF_YEAR = 1750
+
+
+def stile_fiorentino_modern_date(year: int, month: int, day: int) -> str | None:
+    """Modern-calendar equivalent of a Florentine-style date, or None if unshifted.
+
+    The Florentine year began 25 March (*ab Incarnatione*), so a document date in
+    the window [1 Jan .. 24 Mar] lags the modern year by one (e.g. "22 febbraio
+    1499" Florentine == 22 February 1500 modern). The encoded DB dates use the
+    modern calendar; the Word narratives preserve the document's stated date.
+    Returns the shifted ISO date only inside the window and before the 1750
+    reform; otherwise None (no shift applies).
+    """
+    if year >= STILE_FIORENTINO_CUTOFF_YEAR:
+        return None
+    if month in (1, 2) or (month == 3 and day <= 24):
+        return f"{year + 1}-{month:02d}-{day:02d}"
+    return None
+
+
+def stile_fiorentino_modern_dates(text: str | None) -> set[str]:
+    if not text:
+        return set()
+    dates: set[str] = set()
+    for match in re.finditer(
+        r"\b(?P<day>[0-3]?\d)\s+(?P<month>[A-Za-zàèéìòù]+)\s+(?P<year>1[4-8]\d{2})\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        month = ITALIAN_MONTHS.get(match.group("month").lower())
+        if month is None:
+            continue
+        day = int(match.group("day"))
+        if day < 1 or day > 31:
+            continue
+        shifted = stile_fiorentino_modern_date(int(match.group("year")), int(month), day)
+        if shifted:
+            dates.add(shifted)
+    return dates
+
+
+def entry_stile_fiorentino_dates(entry: dict[str, Any]) -> set[str]:
+    candidates = stile_fiorentino_modern_dates(entry.get("registration_date_raw"))
+    candidates.update(stile_fiorentino_modern_dates(entry.get("current_text")))
+    return candidates
+
+
+def strip_db_folio_annotations(folio: str | None) -> str:
+    """Reduce a DB folio string to its current-numbering token.
+
+    DB folio values frequently carry inline annotations that block parsing and
+    cause false folio conflicts, e.g. ``94r[ORIG.93r]`` (original foliation),
+    ``118v-119r/117v-118r`` (current/original split), or ``76v=774``. We keep the
+    leading current-numbering part and drop the annotation. The raw value is
+    preserved separately on the DB row for review and original-numbering checks.
+    """
+    text = re.sub(r"\[[^\]]*\]", "", str(folio or ""))
+    text = re.split(r"[/=]", text)[0]
+    return text.strip()
+
+
 def parse_db_folio(folio: str | None) -> tuple[str | None, str | None]:
     if folio is None:
         return None, None
-    cleaned = re.sub(r"\s+", "", str(folio).strip())
+    cleaned = re.sub(r"\s+", "", strip_db_folio_annotations(folio))
     if not cleaned:
         return None, None
+    # Recto-verso written without a separator: "24rv" / "109vr" -> 24r .. 24v.
+    # Checked before parse_folio_heading, which would otherwise absorb the "v".
+    rv = re.fullmatch(r"(?P<number>\d+(?:bis)?)(?:rv|vr)", cleaned, flags=re.IGNORECASE)
+    if rv:
+        number = rv.group("number")
+        return normalize_folio_token(number, "r"), normalize_folio_token(number, "v")
     parsed = parse_folio_heading(f"c. {cleaned}")
     if parsed:
         return parsed["start"], parsed["end"]
@@ -2058,17 +2520,80 @@ def parse_db_folio(folio: str | None) -> tuple[str | None, str | None]:
     return cleaned, cleaned
 
 
+def folio_sort_key(token: str | None) -> tuple[int, int, int, int] | None:
+    """Orderable key for a folio token: (number, bis, letter, side).
+
+    Side recto (`r`) sorts before verso (`v`). Returns None for tokens with no
+    leading number (e.g. ``n.n``), which fall back to string comparison.
+    """
+    if not token:
+        return None
+    text = str(token).strip().lower()
+    number_match = re.match(r"(\d+)", text)
+    if not number_match:
+        return None
+    number = int(number_match.group(1))
+    rest = text[number_match.end():]
+    bis = 1 if "bis" in rest else 0
+    letter = 0
+    paren = re.search(r"\(([a-z])\)", rest)
+    if paren:
+        letter = ord(paren.group(1)) - ord("a") + 1
+    side = 0
+    for char in reversed(rest):
+        if char == "v":
+            side = 1
+            break
+        if char == "r":
+            side = 0
+            break
+    return (number, bis, letter, side)
+
+
+def folio_span_keys(
+    start: str | None, end: str | None
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]] | None:
+    start_key = folio_sort_key(start)
+    if start_key is None:
+        return None
+    end_key = folio_sort_key(end) or start_key
+    return (start_key, end_key) if start_key <= end_key else (end_key, start_key)
+
+
 def folio_relationship(entry: dict[str, Any], db_row: dict[str, Any]) -> str:
+    """Relate a Word entry's folio span to a DB row's folio span.
+
+    A Word source entry usually spans the whole act (often several folia), while
+    a DB row may sit on any folio within that span. Endpoint-only comparison
+    therefore mislabels in-span DB rows as different. This compares the two
+    ranges as intervals: ``exact`` > ``within`` (one range contains the other) >
+    ``overlap`` (ranges intersect) > ``off_by_one`` (adjacent folio numbers,
+    a common original-vs-current numbering signature) > ``different``.
+    """
     entry_start = entry.get("folio_start")
     entry_end = entry.get("folio_end")
     db_start = db_row.get("folio_start")
     db_end = db_row.get("folio_end")
     if not entry_start or not db_start:
         return "missing"
-    if entry_start == db_start and entry_end == db_end:
+    if entry_start == db_start and (entry_end or entry_start) == (db_end or db_start):
         return "exact"
-    if entry_start == db_start or entry_end == db_end:
-        return "partial"
+    entry_span = folio_span_keys(entry_start, entry_end)
+    db_span = folio_span_keys(db_start, db_end)
+    if entry_span is None or db_span is None:
+        # Unorderable tokens (e.g. n.n): fall back to endpoint string comparison.
+        if entry_start == db_start or (entry_end and entry_end == db_end):
+            return "overlap"
+        return "different"
+    (entry_lo, entry_hi), (db_lo, db_hi) = entry_span, db_span
+    if entry_lo == db_lo and entry_hi == db_hi:
+        return "exact"
+    if (entry_lo <= db_lo and db_hi <= entry_hi) or (db_lo <= entry_lo and entry_hi <= db_hi):
+        return "within"
+    if entry_lo <= db_hi and db_lo <= entry_hi:
+        return "overlap"
+    if max(db_lo[0] - entry_hi[0], entry_lo[0] - db_hi[0]) == 1:
+        return "off_by_one"
     return "different"
 
 
@@ -2079,6 +2604,106 @@ def integer_or_none(value: Any) -> int | None:
     if not match:
         return None
     return int(match.group(0))
+
+
+def append_context_value(mapping: dict[int, list[str]], key: int, value: Any) -> None:
+    if value in (None, ""):
+        return
+    text = str(value).strip()
+    if not text:
+        return
+    values = mapping.setdefault(key, [])
+    if text not in values:
+        values.append(text)
+
+
+def append_context_number(mapping: dict[int, list[int]], key: int, value: Any) -> None:
+    if value in (None, ""):
+        return
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return
+    if number == 0:
+        return
+    values = mapping.setdefault(key, [])
+    if number not in values:
+        values.append(number)
+
+
+def load_db_match_context(connection: sqlite3.Connection) -> dict[int, dict[str, Any]]:
+    context: dict[int, dict[str, Any]] = {}
+    person_names: dict[int, list[str]] = {}
+    person_last_names: dict[int, list[str]] = {}
+    professions: dict[int, list[str]] = {}
+    partnership_names: dict[int, list[str]] = {}
+    investment_cash_amounts: dict[int, list[int]] = {}
+    investment_non_cash_values: dict[int, list[str]] = {}
+    place_names: dict[int, list[str]] = {}
+    addresses: dict[int, list[str]] = {}
+
+    for row in connection.execute(
+        """
+        SELECT i.contract_id, p.first_name, p.father_mother, p.grandfather, p.last_name,
+               i.profession
+        FROM investor i
+        JOIN person p ON p.person_id = i.person_id
+        """
+    ):
+        contract_id = int(row["contract_id"])
+        name_parts = [
+            str(row[field] or "").strip()
+            for field in ["first_name", "father_mother", "grandfather", "last_name"]
+            if str(row[field] or "").strip()
+        ]
+        append_context_value(person_names, contract_id, " ".join(name_parts))
+        append_context_value(person_last_names, contract_id, row["last_name"])
+        append_context_value(professions, contract_id, row["profession"])
+
+    for row in connection.execute(
+        """
+        SELECT contract_id, partnership_name, investment_cash, investment_non_cash
+        FROM investment
+        """
+    ):
+        contract_id = int(row["contract_id"])
+        append_context_value(partnership_names, contract_id, row["partnership_name"])
+        append_context_number(investment_cash_amounts, contract_id, row["investment_cash"])
+        append_context_value(investment_non_cash_values, contract_id, row["investment_non_cash"])
+
+    for row in connection.execute(
+        """
+        SELECT cp.contract_id, p.place_name, cp.address
+        FROM contract_place cp
+        JOIN place p ON p.place_id = cp.place_id
+        """
+    ):
+        contract_id = int(row["contract_id"])
+        append_context_value(place_names, contract_id, row["place_name"])
+        append_context_value(addresses, contract_id, row["address"])
+
+    contract_ids = set().union(
+        person_names,
+        person_last_names,
+        professions,
+        partnership_names,
+        investment_cash_amounts,
+        investment_non_cash_values,
+        place_names,
+        addresses,
+    )
+    for contract_id in contract_ids:
+        context[contract_id] = {
+            "person_names": person_names.get(contract_id, []),
+            "person_last_names": person_last_names.get(contract_id, []),
+            "professions": professions.get(contract_id, []),
+            "partnership_names": partnership_names.get(contract_id, []),
+            "investment_cash_amounts": investment_cash_amounts.get(contract_id, []),
+            "investment_non_cash_values": investment_non_cash_values.get(contract_id, []),
+            "place_names": place_names.get(contract_id, []),
+            "addresses": addresses.get(contract_id, []),
+        }
+    return context
 
 
 def load_db_match_rows(db_path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -2100,7 +2725,9 @@ def load_db_match_rows(db_path: Path) -> tuple[list[dict[str, Any]], list[dict[s
             "contract",
             """
             SELECT contract_id, archive, series, folder, folio, registration_date,
-                   document, NULL AS sub_type, NULL AS main_contract_id
+                   firm_name, NULL AS sub_firm_name, start_date, NULL AS end_date,
+                   duration_months, automatic_renewal_months, NULL AS renewal_months,
+                   total, currency_id, document, NULL AS sub_type, NULL AS main_contract_id
             FROM contract
             """,
         ),
@@ -2108,13 +2735,20 @@ def load_db_match_rows(db_path: Path) -> tuple[list[dict[str, Any]], list[dict[s
             "sub_contract",
             """
             SELECT contract_id, archive, series, folder, folio, registration_date,
-                   document, sub_type, main_contract_id
+                   NULL AS firm_name, sub_firm_name, NULL AS start_date, end_date,
+                   NULL AS duration_months, NULL AS automatic_renewal_months, renewal_months,
+                   NULL AS total, NULL AS currency_id, document, sub_type, main_contract_id
             FROM sub_contract
             """,
         ),
     ]
     with sqlite3.connect(db_path) as connection:
         connection.row_factory = sqlite3.Row
+        context_by_contract_id = load_db_match_context(connection)
+        currency_by_id = {
+            int(row["currency_id"]): row["currency"]
+            for row in connection.execute("SELECT currency_id, currency FROM currency")
+        }
         for table_name, query in queries:
             for row in connection.execute(query):
                 raw_folder = str(row["folder"] or "").strip()
@@ -2135,6 +2769,8 @@ def load_db_match_rows(db_path: Path) -> tuple[list[dict[str, Any]], list[dict[s
                 register_id = register_id_for(series, folder) if folder else None
                 folio_start, folio_end = parse_db_folio(row["folio"])
                 document = row["document"] or ""
+                main_context_id = int(row["main_contract_id"] or row["contract_id"])
+                db_context = context_by_contract_id.get(main_context_id, {})
                 rows.append(
                     {
                         "db_row_id": f"{table_name}:{row['contract_id']}",
@@ -2149,7 +2785,25 @@ def load_db_match_rows(db_path: Path) -> tuple[list[dict[str, Any]], list[dict[s
                         "folio_start": folio_start,
                         "folio_end": folio_end,
                         "registration_date": row["registration_date"],
+                        "firm_name": row["firm_name"],
+                        "sub_firm_name": row["sub_firm_name"],
+                        "start_date": row["start_date"],
+                        "end_date": row["end_date"],
+                        "duration_months": row["duration_months"],
+                        "automatic_renewal_months": row["automatic_renewal_months"],
+                        "renewal_months": row["renewal_months"],
+                        "total": row["total"],
+                        "currency_id": row["currency_id"],
+                        "currency": currency_by_id.get(int(row["currency_id"])) if row["currency_id"] else None,
                         "sub_type": row["sub_type"],
+                        "person_names": db_context.get("person_names", []),
+                        "person_last_names": db_context.get("person_last_names", []),
+                        "professions": db_context.get("professions", []),
+                        "partnership_names": db_context.get("partnership_names", []),
+                        "investment_cash_amounts": db_context.get("investment_cash_amounts", []),
+                        "investment_non_cash_values": db_context.get("investment_non_cash_values", []),
+                        "place_names": db_context.get("place_names", []),
+                        "addresses": db_context.get("addresses", []),
                         "document_characters": len(document),
                         "document_text_sha256": hashlib.sha256(document.encode("utf-8")).hexdigest(),
                         "_match_text": normalize_match_text(document)[:4000],
@@ -2159,9 +2813,25 @@ def load_db_match_rows(db_path: Path) -> tuple[list[dict[str, Any]], list[dict[s
 
 
 def db_type_matches(entry: dict[str, Any], db_row: dict[str, Any]) -> bool:
+    labels = component_label_guesses(entry) or {str(entry.get("event_label_guess") or "")}
+    if db_row["db_table"] == "contract":
+        return "new_contract" in labels
+    if db_row["db_table"] != "sub_contract":
+        return False
+    sub_type = normalize_match_text(db_row.get("sub_type"))
+    if not sub_type:
+        return False
+    for label in labels:
+        allowed = DB_EVENT_TYPE_MAP.get(str(label), set())
+        if any(value in sub_type for value in allowed):
+            return True
+    return False
+
+
+def primary_db_type_matches(entry: dict[str, Any], db_row: dict[str, Any]) -> bool:
     label = entry.get("event_label_guess")
-    if label == "new_contract":
-        return db_row["db_table"] == "contract"
+    if db_row["db_table"] == "contract":
+        return label == "new_contract"
     if db_row["db_table"] != "sub_contract":
         return False
     sub_type = normalize_match_text(db_row.get("sub_type"))
@@ -2180,7 +2850,10 @@ def candidate_db_rows_for_entry(
     rows = db_rows_by_register.get(str(entry["register_id"]), [])
     event_number = integer_or_none(entry.get("event_number_raw"))
     referenced_number = integer_or_none(entry.get("referenced_event_number_raw"))
-    parsed_date = parse_italian_date(entry.get("registration_date_raw"))
+    component_contract_numbers = component_contract_ids(entry)
+    component_sub_main_numbers = component_sub_contract_main_ids(entry)
+    parsed_dates = entry_date_candidates(entry)
+    stile_dates = entry_stile_fiorentino_dates(entry)
     candidate_ids: set[str] = set()
     candidates: list[dict[str, Any]] = []
 
@@ -2189,8 +2862,14 @@ def candidate_db_rows_for_entry(
             candidate_ids.add(row["db_row_id"])
             candidates.append(row)
 
-    if entry.get("event_label_guess") == "new_contract" and event_number is not None:
+    if (
+        entry.get("event_label_guess") in {"new_contract", *CONTRACT_ID_COMPATIBLE_LABELS}
+        and event_number is not None
+    ):
         for row in db_contract_rows_by_id.get(event_number, []):
+            add_if(row, row["db_table"] == "contract")
+    for component_contract_number in component_contract_numbers:
+        for row in db_contract_rows_by_id.get(component_contract_number, []):
             add_if(row, row["db_table"] == "contract")
     if referenced_number is not None:
         for row in db_main_rows_by_id.get(referenced_number, []):
@@ -2198,14 +2877,22 @@ def candidate_db_rows_for_entry(
     elif event_number is not None and entry.get("event_label_guess") != "new_contract":
         for row in db_main_rows_by_id.get(event_number, []):
             add_if(row, row["db_table"] == "sub_contract")
+    for component_sub_main_number in component_sub_main_numbers:
+        for row in db_main_rows_by_id.get(component_sub_main_number, []):
+            add_if(row, row["db_table"] == "sub_contract")
 
     for row in rows:
         add_if(
             row,
-            entry.get("event_label_guess") == "new_contract"
+            entry.get("event_label_guess") in {"new_contract", *CONTRACT_ID_COMPATIBLE_LABELS}
             and event_number is not None
             and row["db_table"] == "contract"
             and row["contract_id"] == event_number,
+        )
+        add_if(
+            row,
+            row["db_table"] == "contract"
+            and row["contract_id"] in component_contract_numbers,
         )
         add_if(
             row,
@@ -2219,18 +2906,30 @@ def candidate_db_rows_for_entry(
             and event_number is not None
             and row.get("main_contract_id") == event_number,
         )
-        add_if(row, parsed_date is not None and row.get("registration_date") == parsed_date)
-        add_if(row, folio_relationship(entry, row) in {"exact", "partial"})
+        add_if(
+            row,
+            row["db_table"] == "sub_contract"
+            and row.get("main_contract_id") in component_sub_main_numbers,
+        )
+        add_if(row, bool(parsed_dates) and row.get("registration_date") in parsed_dates)
+        add_if(row, bool(stile_dates) and row.get("registration_date") in stile_dates)
+        add_if(row, folio_relationship(entry, row) in {"exact", "within", "overlap"})
     return candidates
 
 
-def score_match(entry: dict[str, Any], db_row: dict[str, Any], entry_match_text: str) -> dict[str, Any]:
+def score_match(entry: dict[str, Any], db_row: dict[str, Any], entry_text: str) -> dict[str, Any]:
     score = 0.0
     signals: list[str] = []
     conflicts: list[str] = []
     event_number = integer_or_none(entry.get("event_number_raw"))
     referenced_number = integer_or_none(entry.get("referenced_event_number_raw"))
+    component_contract_numbers = component_contract_ids(entry)
+    component_sub_main_numbers = component_sub_contract_main_ids(entry)
+    parsed_dates = entry_date_candidates(entry)
+    stile_fiorentino_dates = entry_stile_fiorentino_dates(entry)
     parsed_date = parse_italian_date(entry.get("registration_date_raw"))
+    metrics = narrative_similarity_metrics(entry_text, db_row.get("_match_text") or "")
+    field_hits = structured_field_overlap(entry_text, db_row)
 
     if db_row.get("register_id") is None:
         conflicts.append("db_register_missing")
@@ -2253,6 +2952,12 @@ def score_match(entry: dict[str, Any], db_row: dict[str, Any], entry_match_text:
     ):
         score += 35
         signals.append("contract_id_from_event_number")
+    elif (
+        db_row["db_table"] == "contract"
+        and db_row["contract_id"] in component_contract_numbers
+    ):
+        score += 40
+        signals.append("component_contract_id_exact")
     if db_row["db_table"] == "sub_contract":
         if referenced_number is not None and db_row.get("main_contract_id") == referenced_number:
             score += 35
@@ -2260,49 +2965,111 @@ def score_match(entry: dict[str, Any], db_row: dict[str, Any], entry_match_text:
         elif event_number is not None and db_row.get("main_contract_id") == event_number:
             score += 30
             signals.append("main_contract_id_from_event_number")
-    if parsed_date and db_row.get("registration_date") == parsed_date:
+        elif db_row.get("main_contract_id") in component_sub_main_numbers:
+            score += 32
+            signals.append("component_main_contract_id")
+    if db_row.get("registration_date") in parsed_dates:
         score += 25
         signals.append("registration_date_exact")
-    elif parsed_date and db_row.get("registration_date"):
+    elif db_row.get("registration_date") in stile_fiorentino_dates:
+        # DB stores the modern calendar; the Word date is one year behind because
+        # the Florentine year began 25 March. Treat as a (slightly softer) match.
+        score += 20
+        signals.append("registration_date_stile_fiorentino")
+    elif parsed_dates and db_row.get("registration_date"):
         conflicts.append("registration_date_differs")
 
     folio_relation = folio_relationship(entry, db_row)
     if folio_relation == "exact":
         score += 20
         signals.append("folio_exact")
-    elif folio_relation == "partial":
-        score += 12
-        signals.append("folio_partial")
+    elif folio_relation == "within":
+        # DB row sits inside the Word entry's folio span (or vice versa).
+        score += 16
+        signals.append("folio_within")
+    elif folio_relation == "overlap":
+        score += 13
+        signals.append("folio_overlap")
+    elif folio_relation == "off_by_one":
+        # Adjacent folio numbers: weak positive; often original-vs-current numbering.
+        score += 3
+        signals.append("folio_adjacent")
     elif folio_relation == "different":
         conflicts.append("folio_differs")
 
     if db_type_matches(entry, db_row):
         score += 10
-        signals.append("event_type_compatible")
+        signals.append(
+            "event_type_compatible"
+            if primary_db_type_matches(entry, db_row)
+            else "component_event_type_compatible"
+        )
     elif entry.get("event_label_guess") == "new_contract" and db_row["db_table"] != "contract":
         conflicts.append("event_type_table_differs")
     elif (
         entry.get("event_label_guess") != "new_contract"
         and db_row["db_table"] == "contract"
         and "contract_id_from_event_number" not in signals
+        and "component_contract_id_exact" not in signals
     ):
         conflicts.append("event_type_table_differs")
 
-    text_similarity = 0.0
-    db_text = db_row.get("_match_text") or ""
-    if entry_match_text and db_text:
-        text_similarity = difflib.SequenceMatcher(None, entry_match_text[:4000], db_text).ratio()
-        score += round(text_similarity * 20, 2)
-        if text_similarity >= 0.55:
+    text_similarity = metrics["narrative_similarity_ratio"]
+    text_containment = metrics["text_containment_ratio"]
+    # Use the stronger of symmetric ratio and order-aware containment so that a
+    # DB snippet contained in a longer Word segment is not mis-scored as dissimilar.
+    text_strength = max(text_similarity, text_containment)
+    if entry_text and db_row.get("_match_text"):
+        score += round(text_strength * 20, 2)
+        strong_directional = (
+            metrics["db_token_coverage_in_word"] >= 0.70
+            and metrics["longest_shared_phrase_words"] >= 8
+        )
+        if text_strength >= 0.55 or strong_directional:
             signals.append("text_similarity_good")
-        elif text_similarity < 0.20:
+        elif text_strength < 0.20 and metrics["db_token_coverage_in_word"] < 0.50:
             conflicts.append("text_similarity_low")
+        if metrics["word_token_coverage_in_db"] >= 0.55 and metrics["shared_distinctive_token_count"] >= 12:
+            score += 6
+            signals.append("token_coverage_good")
+        if metrics["longest_shared_phrase_words"] >= 8:
+            score += 5
+            signals.append("shared_phrase_good")
+
+    hit_fields = {hit["field"] for hit in field_hits}
+    if {"person_name", "person_last_name"} & hit_fields:
+        score += min(10, 3 * sum(1 for hit in field_hits if hit["field"] in {"person_name", "person_last_name"}))
+        signals.append("person_name_overlap")
+    if {"firm_name", "sub_firm_name", "partnership_name"} & hit_fields:
+        score += 8
+        signals.append("firm_name_overlap")
+    if {"place_name", "address"} & hit_fields:
+        score += 5
+        signals.append("place_overlap")
+    if {"total", "investment_cash"} & hit_fields:
+        score += 6
+        signals.append("amount_overlap")
+    if {"registration_date", "start_date", "end_date"} & hit_fields:
+        score += 4
+        signals.append("date_field_overlap")
     return {
         "score": round(score, 2),
         "signals": signals,
         "conflicts": conflicts,
         "text_similarity": round(text_similarity, 4),
+        "narrative_similarity_ratio": metrics["narrative_similarity_ratio"],
+        "text_containment_ratio": metrics["text_containment_ratio"],
+        "word_token_coverage_in_db": metrics["word_token_coverage_in_db"],
+        "db_token_coverage_in_word": metrics["db_token_coverage_in_word"],
+        "shared_distinctive_token_count": metrics["shared_distinctive_token_count"],
+        "shared_phrase_count": metrics["shared_phrase_count"],
+        "longest_shared_phrase_words": metrics["longest_shared_phrase_words"],
+        "shared_phrases": metrics["shared_phrases"],
+        "field_overlap_count": len(field_hits),
+        "field_overlap": field_hits,
+        "field_overlap_plain_language": field_overlap_summary(field_hits),
         "entry_registration_date_iso": parsed_date,
+        "entry_registration_date_candidates": sorted(parsed_dates),
         "folio_relation": folio_relation,
     }
 
@@ -2347,27 +3114,521 @@ def has_matched_multiple(candidates: list[dict[str, Any]]) -> bool:
     return same_main and same_date and same_folio
 
 
-def accepted_db_row_ids_for_match(match_status: str, candidates: list[dict[str, Any]]) -> set[str]:
+def is_combined_word_label(entry_or_match: dict[str, Any]) -> bool:
+    raw = str(entry_or_match.get("event_label_raw") or "").lower()
+    return (
+        entry_or_match.get("event_label_guess") == "combined_event"
+        or "+" in raw
+        or "/" in raw
+        or "&" in raw
+    )
+
+
+def connected_contract_subcontract(candidates: list[dict[str, Any]]) -> bool:
+    contract_ids = {
+        candidate.get("db_contract_id")
+        for candidate in candidates
+        if candidate.get("db_table") == "contract"
+    }
+    main_ids = {
+        candidate.get("db_main_contract_id")
+        for candidate in candidates
+        if candidate.get("db_main_contract_id") is not None
+    }
+    return bool(contract_ids & main_ids)
+
+
+ID_SIGNALS = {
+    "contract_id_exact",
+    "contract_id_from_event_number",
+    "component_contract_id_exact",
+    "main_contract_id_referenced",
+    "main_contract_id_from_event_number",
+    "component_main_contract_id",
+}
+FOLIO_AGREEMENT_RELATIONS = {"exact", "within", "overlap"}
+
+
+def candidate_text_strength(candidate: dict[str, Any]) -> float:
+    return max(
+        float(candidate.get("narrative_similarity_ratio") or 0),
+        float(candidate.get("text_containment_ratio") or 0),
+    )
+
+
+def folio_conflict_corroborated(candidate: dict[str, Any]) -> bool:
+    """Is a folio disagreement safe to link through anyway?
+
+    A non-overlapping folio (``folio_differs``) is tolerated only when the event
+    number/main-contract id AND the registration date AND the narrative all
+    agree. That is the original-vs-current foliation signature; it still blocks
+    genuine mismatches where the text is also weak.
+    """
+    signals = set(candidate.get("signals") or [])
+    text_strong = candidate_text_strength(candidate) >= 0.55 or "text_similarity_good" in signals
+    return bool(ID_SIGNALS & signals) and "registration_date_exact" in signals and text_strong
+
+
+def linkable_candidate(candidate: dict[str, Any], allow_minor_date_conflict: bool = False) -> bool:
+    conflicts = set(candidate.get("conflicts") or [])
+    severe_conflicts = {"db_register_missing", "db_register_differs", "text_similarity_low"}
+    if severe_conflicts & conflicts:
+        return False
+    tolerable_conflicts = {"registration_date_differs", "folio_differs"}
+    if conflicts - tolerable_conflicts:
+        return False
+    if "registration_date_differs" in conflicts and not allow_minor_date_conflict:
+        return False
+    # Folio disagreement is no longer automatically fatal: a Word entry usually
+    # spans several folia, and DB foliation may use original numbering. Only block
+    # it when the rest of the evidence does not strongly corroborate the link.
+    if "folio_differs" in conflicts and not folio_conflict_corroborated(candidate):
+        return False
+    return (
+        candidate["score"] >= 85
+        or (
+            candidate["score"] >= 65
+            and "text_similarity_good" in candidate.get("signals", [])
+            and candidate.get("folio_relation") in FOLIO_AGREEMENT_RELATIONS
+        )
+    )
+
+
+def strong_secondary_link_candidate(candidate: dict[str, Any]) -> bool:
+    conflicts = set(candidate.get("conflicts") or [])
+    if conflicts & {"db_register_missing", "db_register_differs", "folio_differs"}:
+        return False
+    if conflicts - {"text_similarity_low", "registration_date_differs"}:
+        return False
+    strong_text_or_fields = (
+        max(
+            float(candidate.get("narrative_similarity_ratio") or 0),
+            float(candidate.get("text_containment_ratio") or 0),
+        )
+        >= 0.55
+        or (
+            float(candidate.get("word_token_coverage_in_db") or 0) >= 0.70
+            and int(candidate.get("longest_shared_phrase_words") or 0) >= 8
+        )
+        or int(candidate.get("field_overlap_count") or 0) >= 5
+    )
+    if not strong_text_or_fields:
+        return False
+    if "text_similarity_low" in conflicts:
+        return (
+            float(candidate.get("word_token_coverage_in_db") or 0) >= 0.70
+            and int(candidate.get("longest_shared_phrase_words") or 0) >= 8
+            and int(candidate.get("field_overlap_count") or 0) >= 5
+        )
+    return float(candidate.get("score") or 0) >= 65
+
+
+def has_multiple_event_components(entry: dict[str, Any]) -> bool:
+    return len(component_label_guesses(entry)) > 1 or is_combined_word_label(entry)
+
+
+def relationship_type_for_links(entry: dict[str, Any], links: list[dict[str, Any]]) -> str:
+    if not links:
+        return (
+            "word_only_expected_non_accomandita"
+            if entry.get("event_label_guess") == "without_accomandita"
+            else "word_only_unresolved"
+        )
+    if len(links) == 1:
+        return "simple_one_to_one"
+    tables = {link["db_table"] for link in links}
+    sub_types = {str(link.get("db_sub_type") or "").strip().lower() for link in links if link.get("db_sub_type")}
+    if "contract" in tables and "sub_contract" in tables and connected_contract_subcontract(links):
+        return "word_entry_to_contract_and_subcontract"
+    if tables == {"sub_contract"} and len(sub_types) >= 2:
+        return "word_entry_to_multiple_subcontracts"
+    return "word_entry_to_multiple_db_rows"
+
+
+def component_label_for_link(entry: dict[str, Any], candidate: dict[str, Any]) -> str:
+    if candidate["db_table"] == "contract":
+        return "new contract" if is_combined_word_label(entry) else "contract"
+    if candidate.get("db_sub_type"):
+        return str(candidate["db_sub_type"])
+    return "sub-contract"
+
+
+def link_reason_for_candidate(relationship_type: str, candidate: dict[str, Any]) -> str:
+    reasons = []
+    if relationship_type != "simple_one_to_one":
+        reasons.append("Word entry may represent more than one structured DB row")
+    if "contract_id_exact" in candidate.get("signals", []) or "contract_id_from_event_number" in candidate.get("signals", []):
+        reasons.append("Word event number points to this contract row")
+    if "main_contract_id_referenced" in candidate.get("signals", []) or "main_contract_id_from_event_number" in candidate.get("signals", []):
+        reasons.append("Word event number points to this related sub-contract row")
+    if "registration_date_exact" in candidate.get("signals", []):
+        reasons.append("registration date matches")
+    elif "registration_date_stile_fiorentino" in candidate.get("signals", []):
+        reasons.append("registration date matches after Florentine-calendar (stile fiorentino) year shift")
+    signal_set = set(candidate.get("signals", []))
+    if "folio_exact" in signal_set:
+        reasons.append("folio matches")
+    elif "folio_within" in signal_set:
+        reasons.append("DB folio falls inside the Word entry's folio span")
+    elif "folio_overlap" in signal_set:
+        reasons.append("Word and DB folio ranges overlap")
+    elif "folio_adjacent" in signal_set:
+        reasons.append("Word and DB folios are one folio apart (possible original/current numbering)")
+    if "text_similarity_good" in candidate.get("signals", []):
+        reasons.append(
+            f"DB narrative similarity metric is {candidate.get('narrative_similarity_ratio', candidate.get('text_similarity'))}"
+        )
+    if "token_coverage_good" in candidate.get("signals", []):
+        reasons.append(
+            f"{candidate.get('word_token_coverage_in_db')} of distinctive Word tokens appear in the DB narrative"
+        )
+    if "shared_phrase_good" in candidate.get("signals", []):
+        reasons.append(
+            f"longest shared phrase has {candidate.get('longest_shared_phrase_words')} distinctive words"
+        )
+    if candidate.get("field_overlap_count"):
+        reasons.append(candidate.get("field_overlap_plain_language"))
+    if candidate.get("conflicts"):
+        reasons.append("visible conflict remains for review")
+    return "; ".join(reasons) or "Candidate retained for human review"
+
+
+def source_entry_db_link_candidates(
+    entry: dict[str, Any], candidates: list[dict[str, Any]], match_status: str
+) -> list[dict[str, Any]]:
     if not candidates:
-        return set()
-    if match_status == "matched_multiple":
-        best = candidates[0]
-        accepted: set[str] = set()
+        return []
+    strong_links = [candidate for candidate in candidates if linkable_candidate(candidate)]
+    reviewable_links = [
+        candidate
+        for candidate in candidates
+        if linkable_candidate(candidate, allow_minor_date_conflict=True)
+    ]
+    selected: list[dict[str, Any]]
+    if len(strong_links) >= 2:
+        selected = strong_links
+    elif is_combined_word_label(entry) and len(reviewable_links) >= 2:
+        selected = reviewable_links
+    elif match_status == "matched_high_confidence" and strong_links:
+        selected = [strong_links[0]]
+    elif match_status == "matched_candidate":
+        # A candidate match is deliberately not final truth, but it should remain
+        # in the review alignment layer so DB-only diagnostics do not treat it as absent.
+        selected = [candidates[0]]
+    elif match_status == "matched_multiple" and reviewable_links:
+        selected = reviewable_links
+    elif match_status == "ambiguous" and reviewable_links:
+        selected = reviewable_links
+    else:
+        selected = []
+
+    if has_multiple_event_components(entry):
+        selected_ids = {candidate["db_row_id"] for candidate in selected}
         for candidate in candidates:
-            if (
-                candidate["score"] >= 85
-                and not candidate["conflicts"]
-                and abs(candidate["score"] - best["score"]) <= 3
-                and candidate.get("db_main_contract_id") == best.get("db_main_contract_id")
-                and candidate.get("db_registration_date") == best.get("db_registration_date")
-                and candidate.get("db_folio_start") == best.get("db_folio_start")
-                and candidate.get("db_folio_end") == best.get("db_folio_end")
-            ):
-                accepted.add(candidate["db_row_id"])
-        return accepted
-    if match_status in {"matched_high_confidence", "matched_candidate"}:
-        return {candidates[0]["db_row_id"]}
-    return set()
+            if candidate["db_row_id"] in selected_ids:
+                continue
+            if strong_secondary_link_candidate(candidate):
+                selected.append(candidate)
+                selected_ids.add(candidate["db_row_id"])
+
+    # An independent main `contract` (a distinct accomandita) must not be
+    # co-linked to a Word entry on boilerplate text + folio overlap alone: two
+    # separate contracts rarely share one narrative, and registers pack several
+    # acts onto the same folio. Keep the primary link, but drop any *secondary*
+    # contract link that lacks its own id evidence (its contract_id matching a
+    # Word event number/component). Sub-contract links — the normal
+    # "same act, several DB rows" pattern (a contract and its termination, a
+    # termination recorded also as a variation) — are unaffected.
+    if len(selected) >= 2:
+        filtered = [selected[0]]
+        for candidate in selected[1:]:
+            if candidate.get("db_table") == "contract" and not (ID_SIGNALS & set(candidate.get("signals") or [])):
+                continue
+            filtered.append(candidate)
+        selected = filtered
+
+    relationship_type = relationship_type_for_links(entry, selected)
+    group_id = f"{entry['source_entry_id']}__{relationship_type}"
+    rows: list[dict[str, Any]] = []
+    for ordinal, candidate in enumerate(selected, start=1):
+        rows.append(
+            {
+                "match_group_id": group_id,
+                "source_entry_id": entry["source_entry_id"],
+                "source_entry_key": entry.get("source_entry_key"),
+                "register_id": entry["register_id"],
+                "entry_label_raw": entry.get("event_label_raw"),
+                "entry_label_guess": entry.get("event_label_guess"),
+                "entry_registration_date_raw": entry.get("registration_date_raw"),
+                "entry_folio_start": entry.get("folio_start"),
+                "entry_folio_end": entry.get("folio_end"),
+                "relationship_type": relationship_type,
+                "component_label": component_label_for_link(entry, candidate),
+                "link_ordinal": ordinal,
+                "db_row_id": candidate["db_row_id"],
+                "db_table": candidate["db_table"],
+                "db_contract_id": candidate["db_contract_id"],
+                "db_main_contract_id": candidate.get("db_main_contract_id"),
+                "db_sub_type": candidate.get("db_sub_type"),
+                "db_firm_name": candidate.get("db_firm_name"),
+                "db_sub_firm_name": candidate.get("db_sub_firm_name"),
+                "db_registration_date": candidate.get("db_registration_date"),
+                "db_folio_raw": candidate.get("db_folio_raw"),
+                "score": candidate["score"],
+                "signals": candidate["signals"],
+                "conflicts": candidate["conflicts"],
+                "text_similarity": candidate["text_similarity"],
+                "narrative_similarity_ratio": candidate["narrative_similarity_ratio"],
+                "text_containment_ratio": candidate.get("text_containment_ratio"),
+                "word_token_coverage_in_db": candidate["word_token_coverage_in_db"],
+                "db_token_coverage_in_word": candidate["db_token_coverage_in_word"],
+                "shared_distinctive_token_count": candidate["shared_distinctive_token_count"],
+                "shared_phrase_count": candidate["shared_phrase_count"],
+                "longest_shared_phrase_words": candidate["longest_shared_phrase_words"],
+                "shared_phrases": candidate["shared_phrases"],
+                "field_overlap_count": candidate["field_overlap_count"],
+                "field_overlap": candidate["field_overlap"],
+                "field_overlap_plain_language": candidate["field_overlap_plain_language"],
+                "needs_review": relationship_type != "simple_one_to_one"
+                or bool(candidate.get("conflicts"))
+                or match_status != "matched_high_confidence",
+                "link_reason": link_reason_for_candidate(relationship_type, candidate),
+            }
+        )
+    return rows
+
+
+def alignment_diagnostic_row(
+    *,
+    diagnostic_type: str,
+    priority: str,
+    source_entry_id: str | None,
+    db_row_id: str | None,
+    register_id: str | None,
+    explanation: str,
+    recommended_action: str,
+    evidence: str,
+    candidate: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "diagnostic_type": diagnostic_type,
+        "priority": priority,
+        "source_entry_id": source_entry_id,
+        "db_row_id": db_row_id,
+        "register_id": register_id,
+        "explanation": explanation,
+        "recommended_action": recommended_action,
+        "evidence": evidence,
+        "candidate_score": candidate.get("score") if candidate else None,
+        "narrative_similarity_ratio": candidate.get("narrative_similarity_ratio") if candidate else None,
+        "word_token_coverage_in_db": candidate.get("word_token_coverage_in_db") if candidate else None,
+        "field_overlap_count": candidate.get("field_overlap_count") if candidate else None,
+        "field_overlap_plain_language": candidate.get("field_overlap_plain_language") if candidate else "",
+        "conflicts": candidate.get("conflicts") if candidate else [],
+    }
+
+
+def candidate_has_strong_unlinked_evidence(candidate: dict[str, Any]) -> bool:
+    return (
+        max(
+            float(candidate.get("narrative_similarity_ratio") or 0),
+            float(candidate.get("text_containment_ratio") or 0),
+        )
+        >= 0.55
+        or float(candidate.get("word_token_coverage_in_db") or 0) >= 0.60
+        or int(candidate.get("field_overlap_count") or 0) >= 5
+        or float(candidate.get("score") or 0) >= 85
+    )
+
+
+def source_entry_has_marginal_opening(source_entry: dict[str, Any]) -> bool:
+    text = str(source_entry.get("current_text") or "").strip()
+    return text.lower().startswith("a margine") or "a margine:" in text[:220].lower()
+
+
+def possible_original_folio_numbering(candidate: dict[str, Any], source_entry: dict[str, Any]) -> bool:
+    db_folio = str(candidate.get("db_folio_raw") or "").lower()
+    word_text = str(source_entry.get("current_text") or "").lower()
+    signals = set(candidate.get("signals") or [])
+    conflicts = set(candidate.get("conflicts") or [])
+    text_ok = candidate_text_strength(candidate) >= 0.35
+    mentions_orig = "orig" in db_folio or "numerazione originale" in word_text
+    # Either an adjacent-folio signal (off-by-one numbering) or an explicit
+    # original-numbering annotation on an otherwise text-aligned candidate.
+    return text_ok and (
+        "folio_adjacent" in signals
+        or ("folio_differs" in conflicts and mentions_orig)
+    )
+
+
+def diagnostic_plain_language(diagnostics: list[dict[str, Any]]) -> str:
+    if not diagnostics:
+        return "No additional alignment diagnostic was recorded."
+    parts = []
+    for diagnostic in diagnostics:
+        parts.append(
+            f"{diagnostic['diagnostic_type']}: {diagnostic['explanation']} "
+            f"Evidence: {diagnostic['evidence']} "
+            f"Recommended action: {diagnostic['recommended_action']}"
+        )
+    return "\n".join(parts)
+
+
+def diagnostic_types(diagnostics: list[dict[str, Any]]) -> str:
+    return "; ".join(sorted({diagnostic["diagnostic_type"] for diagnostic in diagnostics}))
+
+
+def build_alignment_diagnostics(
+    entry_matches: list[dict[str, Any]],
+    match_candidates: list[dict[str, Any]],
+    link_candidates: list[dict[str, Any]],
+    db_only_rows: list[dict[str, Any]],
+    duplicate_link_candidates: list[dict[str, Any]],
+    source_entries_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    diagnostics: list[dict[str, Any]] = []
+    candidates_by_db: dict[str, list[dict[str, Any]]] = {}
+    candidates_by_source: dict[str, list[dict[str, Any]]] = {}
+    for candidate in match_candidates:
+        candidates_by_db.setdefault(candidate["db_row_id"], []).append(candidate)
+        candidates_by_source.setdefault(candidate["source_entry_id"], []).append(candidate)
+    for candidates in candidates_by_db.values():
+        candidates.sort(key=lambda row: row["score"], reverse=True)
+    for candidates in candidates_by_source.values():
+        candidates.sort(key=lambda row: row["score"], reverse=True)
+
+    for db_row in db_only_rows:
+        db_row_id = db_row["db_row_id"]
+        best_candidate = (candidates_by_db.get(db_row_id) or [None])[0]
+        if best_candidate and candidate_has_strong_unlinked_evidence(best_candidate):
+            diagnostics.append(
+                alignment_diagnostic_row(
+                    diagnostic_type="db_text_found_in_word_but_not_linked",
+                    priority="High",
+                    source_entry_id=best_candidate["source_entry_id"],
+                    db_row_id=db_row_id,
+                    register_id=db_row.get("register_id"),
+                    explanation="This DB row is currently unlinked, but a Word entry has strong text or field evidence for it.",
+                    recommended_action="Review the suggested Word entry before treating the DB row as genuinely DB-only.",
+                    evidence=(
+                        f"score {best_candidate.get('score')}; narrative similarity "
+                        f"{best_candidate.get('narrative_similarity_ratio')}; field overlaps: "
+                        f"{best_candidate.get('field_overlap_plain_language') or 'none recorded'}"
+                    ),
+                    candidate=best_candidate,
+                )
+            )
+
+    for match in entry_matches:
+        source_entry = source_entries_by_id.get(match["source_entry_id"], {})
+        source_candidates = candidates_by_source.get(match["source_entry_id"], [])
+        top_candidate = source_candidates[0] if source_candidates else None
+        top_conflicts = set(match.get("top_conflicts") or [])
+        if top_candidate and source_entry_has_marginal_opening(source_entry) and "registration_date_differs" in top_conflicts:
+            diagnostics.append(
+                alignment_diagnostic_row(
+                    diagnostic_type="possible_marginal_date_confusion",
+                    priority="High",
+                    source_entry_id=match["source_entry_id"],
+                    db_row_id=top_candidate["db_row_id"],
+                    register_id=match["register_id"],
+                    explanation="The Word entry opens with a marginal note and the top DB candidate has a date conflict.",
+                    recommended_action="Check whether the marginal note date was confused with the main act date.",
+                    evidence=f"Word date {match.get('entry_registration_date_raw')}; DB date {top_candidate.get('db_registration_date')}.",
+                    candidate=top_candidate,
+                )
+            )
+        if top_candidate and possible_original_folio_numbering(top_candidate, source_entry):
+            diagnostics.append(
+                alignment_diagnostic_row(
+                    diagnostic_type="possible_original_folio_numbering_match",
+                    priority="Medium",
+                    source_entry_id=match["source_entry_id"],
+                    db_row_id=top_candidate["db_row_id"],
+                    register_id=match["register_id"],
+                    explanation="Folio fields disagree, but text evidence is strong and original/current folio numbering is mentioned.",
+                    recommended_action="Check current and original folio numbering before rejecting the candidate.",
+                    evidence=f"Word folio {match.get('entry_folio_start')}-{match.get('entry_folio_end')}; DB folio {top_candidate.get('db_folio_raw')}.",
+                    candidate=top_candidate,
+                )
+            )
+        if top_candidate and "registration_date_stile_fiorentino" in set(top_candidate.get("signals") or []):
+            diagnostics.append(
+                alignment_diagnostic_row(
+                    diagnostic_type="possible_stile_fiorentino_date_alignment",
+                    priority="Medium",
+                    source_entry_id=match["source_entry_id"],
+                    db_row_id=top_candidate["db_row_id"],
+                    register_id=match["register_id"],
+                    explanation="The Word date matches the DB date only after a Florentine-calendar (stile fiorentino) one-year shift; the Florentine year began 25 March, so Jan-24 Mar dates lag the modern year by one.",
+                    recommended_action="Confirm the calendar-style alignment before treating the date as a match.",
+                    evidence=f"Word date {match.get('entry_registration_date_raw')}; DB date {top_candidate.get('db_registration_date')}.",
+                    candidate=top_candidate,
+                )
+            )
+        if int(match.get("suggested_link_count") or 0) > 1:
+            diagnostics.append(
+                alignment_diagnostic_row(
+                    # Informational, not an alarm: one Word narrative legitimately
+                    # approving several DB rows (a contract + its termination, etc.)
+                    # is the expected combined-act pattern, not a defect. Low so it
+                    # does not force the row into the High-priority queue.
+                    diagnostic_type="word_entry_combines_multiple_db_rows",
+                    priority="Low",
+                    source_entry_id=match["source_entry_id"],
+                    db_row_id=None,
+                    register_id=match["register_id"],
+                    explanation="The Word source entry has multiple proposed DB links.",
+                    recommended_action="Confirm this narrative approves these DB rows together (the normal combined-act pattern).",
+                    evidence=f"Suggested DB rows: {'; '.join(match.get('suggested_db_row_ids') or [])}.",
+                )
+            )
+        if match["match_status"] == "word_only" and top_candidate and candidate_has_strong_unlinked_evidence(top_candidate):
+            diagnostics.append(
+                alignment_diagnostic_row(
+                    diagnostic_type="word_only_has_strong_rejected_candidate",
+                    priority="High",
+                    source_entry_id=match["source_entry_id"],
+                    db_row_id=top_candidate["db_row_id"],
+                    register_id=match["register_id"],
+                    explanation="This Word entry is marked Word-only, but a rejected candidate has strong text or field evidence.",
+                    recommended_action="Inspect conflicts to decide whether this is a parser issue, a DB modeling issue, or a true rejected match.",
+                    evidence=(
+                        f"score {top_candidate.get('score')}; conflicts {top_candidate.get('conflicts')}; "
+                        f"field overlaps: {top_candidate.get('field_overlap_plain_language') or 'none recorded'}"
+                    ),
+                    candidate=top_candidate,
+                )
+            )
+
+    for duplicate in duplicate_link_candidates:
+        for source_entry_id in duplicate.get("source_entry_ids") or []:
+            diagnostics.append(
+                alignment_diagnostic_row(
+                    # A DB row legitimately referenced by more than one Word entry
+                    # (an act and a later entry that cites it) is common; only worth
+                    # a glance, not a High-priority block. Medium keeps it out of the
+                    # forced-High queue while staying filterable for audits.
+                    diagnostic_type="db_row_linked_to_multiple_word_entries",
+                    priority="Medium",
+                    source_entry_id=source_entry_id,
+                    db_row_id=duplicate["db_row_id"],
+                    register_id=source_entries_by_id.get(source_entry_id, {}).get("register_id"),
+                    explanation="The same DB row is proposed for more than one Word entry.",
+                    recommended_action="Decide whether the Word entries are duplicates, later references, or separate acts needing separate DB rows.",
+                    evidence=f"All source entries sharing this DB row: {'; '.join(duplicate.get('source_entry_ids') or [])}.",
+                )
+            )
+
+    seen: set[tuple[str, str | None, str | None]] = set()
+    unique: list[dict[str, Any]] = []
+    for diagnostic in diagnostics:
+        key = (diagnostic["diagnostic_type"], diagnostic.get("source_entry_id"), diagnostic.get("db_row_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(diagnostic)
+    return unique
 
 
 def run_match_db(args: argparse.Namespace) -> int:
@@ -2381,6 +3642,7 @@ def run_match_db(args: argparse.Namespace) -> int:
         for entry in read_jsonl(segmentation_dir / "source_entries.jsonl")
         if entry.get("parser_status") in MATCH_OUTPUT_ALLOWED_STATUSES
     ]
+    source_entries_by_id = {entry["source_entry_id"]: entry for entry in source_entries}
     db_rows, issues = load_db_match_rows(config["db_path"])
     db_rows_by_register: dict[str, list[dict[str, Any]]] = {}
     db_contract_rows_by_id: dict[int, list[dict[str, Any]]] = {}
@@ -2394,12 +3656,12 @@ def run_match_db(args: argparse.Namespace) -> int:
 
     entry_matches: list[dict[str, Any]] = []
     match_candidates: list[dict[str, Any]] = []
-    matched_db_rows: set[str] = set()
+    link_candidates: list[dict[str, Any]] = []
 
     for index, entry in enumerate(source_entries, start=1):
         if index == 1 or index % 500 == 0 or index == len(source_entries):
             print(f"[{index}/{len(source_entries)}] matching {entry['source_entry_id']}", flush=True)
-        entry_match_text = normalize_match_text(entry_text_for_similarity(entry))[:4000]
+        entry_body_text = entry_text_for_similarity(entry)
         scored: list[dict[str, Any]] = []
         for db_row in candidate_db_rows_for_entry(
             entry,
@@ -2407,18 +3669,23 @@ def run_match_db(args: argparse.Namespace) -> int:
             db_contract_rows_by_id,
             db_main_rows_by_id,
         ):
-            details = score_match(entry, db_row, entry_match_text)
+            details = score_match(entry, db_row, entry_body_text)
             scored.append(
                 {
                     "source_entry_id": entry["source_entry_id"],
+                    "source_entry_key": entry.get("source_entry_key"),
                     "register_id": entry["register_id"],
                     "entry_ordinal": entry["entry_ordinal"],
                     "event_label_raw": entry["event_label_raw"],
                     "event_label_guess": entry["event_label_guess"],
+                    "event_component_labels": sorted(component_label_guesses(entry)),
+                    "event_component_contract_ids": sorted(component_contract_ids(entry)),
+                    "event_component_sub_contract_main_ids": sorted(component_sub_contract_main_ids(entry)),
                     "event_number_raw": entry.get("event_number_raw"),
                     "referenced_event_number_raw": entry.get("referenced_event_number_raw"),
                     "entry_registration_date_raw": entry.get("registration_date_raw"),
                     "entry_registration_date_iso": details["entry_registration_date_iso"],
+                    "entry_registration_date_candidates": details["entry_registration_date_candidates"],
                     "entry_folio_start": entry.get("folio_start"),
                     "entry_folio_end": entry.get("folio_end"),
                     "db_row_id": db_row["db_row_id"],
@@ -2426,6 +3693,8 @@ def run_match_db(args: argparse.Namespace) -> int:
                     "db_contract_id": db_row["contract_id"],
                     "db_main_contract_id": db_row.get("main_contract_id"),
                     "db_sub_type": db_row.get("sub_type"),
+                    "db_firm_name": db_row.get("firm_name"),
+                    "db_sub_firm_name": db_row.get("sub_firm_name"),
                     "db_registration_date": db_row.get("registration_date"),
                     "db_folio_raw": db_row.get("folio_raw"),
                     "db_folio_start": db_row.get("folio_start"),
@@ -2434,6 +3703,17 @@ def run_match_db(args: argparse.Namespace) -> int:
                     "signals": details["signals"],
                     "conflicts": details["conflicts"],
                     "text_similarity": details["text_similarity"],
+                    "narrative_similarity_ratio": details["narrative_similarity_ratio"],
+                    "text_containment_ratio": details["text_containment_ratio"],
+                    "word_token_coverage_in_db": details["word_token_coverage_in_db"],
+                    "db_token_coverage_in_word": details["db_token_coverage_in_word"],
+                    "shared_distinctive_token_count": details["shared_distinctive_token_count"],
+                    "shared_phrase_count": details["shared_phrase_count"],
+                    "longest_shared_phrase_words": details["longest_shared_phrase_words"],
+                    "shared_phrases": details["shared_phrases"],
+                    "field_overlap_count": details["field_overlap_count"],
+                    "field_overlap": details["field_overlap"],
+                    "field_overlap_plain_language": details["field_overlap_plain_language"],
                     "folio_relation": details["folio_relation"],
                 }
             )
@@ -2442,7 +3722,8 @@ def run_match_db(args: argparse.Namespace) -> int:
         match_candidates.extend(top_candidates)
         match_status = classify_match(top_candidates)
         top = top_candidates[0] if top_candidates else None
-        matched_db_rows.update(accepted_db_row_ids_for_match(match_status, top_candidates))
+        entry_link_candidates = source_entry_db_link_candidates(entry, top_candidates, match_status)
+        link_candidates.extend(entry_link_candidates)
         if match_status == "word_only":
             issues.append(
                 {
@@ -2479,6 +3760,7 @@ def run_match_db(args: argparse.Namespace) -> int:
         entry_matches.append(
             {
                 "source_entry_id": entry["source_entry_id"],
+                "source_entry_key": entry.get("source_entry_key"),
                 "register_id": entry["register_id"],
                 "entry_ordinal": entry["entry_ordinal"],
                 "event_label_raw": entry["event_label_raw"],
@@ -2498,37 +3780,44 @@ def run_match_db(args: argparse.Namespace) -> int:
                 "top_score": top["score"] if top else 0,
                 "top_signals": top["signals"] if top else [],
                 "top_conflicts": top["conflicts"] if top else [],
+                "top_narrative_similarity_ratio": top["narrative_similarity_ratio"] if top else 0,
+                "top_text_containment_ratio": top.get("text_containment_ratio") if top else 0,
+                "top_word_token_coverage_in_db": top["word_token_coverage_in_db"] if top else 0,
+                "top_db_token_coverage_in_word": top["db_token_coverage_in_word"] if top else 0,
+                "top_shared_phrase_count": top["shared_phrase_count"] if top else 0,
+                "top_longest_shared_phrase_words": top["longest_shared_phrase_words"] if top else 0,
+                "top_field_overlap_count": top["field_overlap_count"] if top else 0,
+                "top_field_overlap_plain_language": top["field_overlap_plain_language"] if top else "",
                 "candidate_count": len(scored),
+                "suggested_link_count": len(entry_link_candidates),
+                "suggested_relationship_type": relationship_type_for_links(entry, entry_link_candidates),
+                "suggested_db_row_ids": [row["db_row_id"] for row in entry_link_candidates],
             }
         )
 
-    accepted_top_matches = [
-        row
-        for row in entry_matches
-        if row["match_status"] in {"matched_high_confidence", "matched_candidate", "matched_multiple"}
-        and row.get("top_db_row_id")
-    ]
-    top_match_counts = Counter(row["top_db_row_id"] for row in accepted_top_matches)
-    duplicate_top_matches: list[dict[str, Any]] = []
-    for db_row_id, count in sorted(top_match_counts.items()):
+    accepted_link_rows = [row for row in link_candidates if row.get("db_row_id")]
+    matched_db_rows = {row["db_row_id"] for row in accepted_link_rows}
+    link_counts_by_db_row = Counter(row["db_row_id"] for row in accepted_link_rows)
+    duplicate_link_candidates: list[dict[str, Any]] = []
+    for db_row_id, count in sorted(link_counts_by_db_row.items()):
         if count <= 1:
             continue
-        linked_rows = [row for row in accepted_top_matches if row["top_db_row_id"] == db_row_id]
-        duplicate_top_matches.append(
+        linked_rows = [row for row in accepted_link_rows if row["db_row_id"] == db_row_id]
+        duplicate_link_candidates.append(
             {
                 "db_row_id": db_row_id,
-                "accepted_top_match_count": count,
+                "proposed_link_count": count,
                 "source_entry_ids": [row["source_entry_id"] for row in linked_rows],
-                "match_statuses": [row["match_status"] for row in linked_rows],
-                "event_label_raws": [row["event_label_raw"] for row in linked_rows],
-                "top_scores": [row["top_score"] for row in linked_rows],
+                "relationship_types": [row["relationship_type"] for row in linked_rows],
+                "event_label_raws": [row["entry_label_raw"] for row in linked_rows],
+                "scores": [row["score"] for row in linked_rows],
             }
         )
         issues.append(
             {
                 "severity": "warning",
-                "code": "db_row_reused_as_top_match",
-                "message": "DB row is the accepted top candidate for multiple Word entries",
+                "code": "db_row_reused_as_link_candidate",
+                "message": "DB row is proposed as a link candidate for multiple Word entries",
                 "source_entry_id": None,
                 "db_row_id": db_row_id,
                 "register_id": linked_rows[0]["register_id"],
@@ -2549,18 +3838,38 @@ def run_match_db(args: argparse.Namespace) -> int:
             {
                 "severity": "warning",
                 "code": "db_row_without_matched_word_entry",
-                "message": "DB row was not the accepted top candidate for a Word entry",
+                "message": "DB row was not proposed as a link candidate for a Word entry",
                 "source_entry_id": None,
                 "db_row_id": row["db_row_id"],
                 "register_id": row["register_id"],
             }
         )
 
+    alignment_diagnostics = build_alignment_diagnostics(
+        entry_matches,
+        match_candidates,
+        link_candidates,
+        db_only_rows,
+        duplicate_link_candidates,
+        source_entries_by_id,
+    )
+    for diagnostic in alignment_diagnostics:
+        issues.append(
+            {
+                "severity": "warning" if diagnostic["priority"] == "High" else "info",
+                "code": diagnostic["diagnostic_type"],
+                "message": diagnostic["explanation"],
+                "source_entry_id": diagnostic.get("source_entry_id"),
+                "db_row_id": diagnostic.get("db_row_id"),
+                "register_id": diagnostic.get("register_id"),
+            }
+        )
+
     word_register_ids = {row["register_id"] for row in entry_matches}
     matched_main_contract_ids = {
-        row["top_db_main_contract_id"]
-        for row in accepted_top_matches
-        if row.get("top_db_table") == "sub_contract" and row.get("top_db_main_contract_id") is not None
+        row["db_main_contract_id"]
+        for row in accepted_link_rows
+        if row.get("db_table") == "sub_contract" and row.get("db_main_contract_id") is not None
     }
     word_only_rows = [row for row in entry_matches if row["match_status"] == "word_only"]
     review_buckets = [
@@ -2599,14 +3908,24 @@ def run_match_db(args: argparse.Namespace) -> int:
             "interpretation": "Main contract row was not itself matched, but related sub_contract rows were matched.",
         },
         {
-            "bucket": "db_row_reused_as_top_match",
-            "count": len(duplicate_top_matches),
-            "interpretation": "One DB row is the accepted top match for multiple Word entries; often duplicate/repeated Word evidence.",
+            "bucket": "db_row_reused_as_link_candidate",
+            "count": len(duplicate_link_candidates),
+            "interpretation": "One DB row is proposed for multiple Word entries; often duplicate/repeated Word evidence.",
         },
         {
             "bucket": "matched_multiple_word_entries",
             "count": sum(1 for row in entry_matches if row["match_status"] == "matched_multiple"),
             "interpretation": "One Word entry plausibly corresponds to multiple DB rows with equivalent evidence.",
+        },
+        {
+            "bucket": "word_entry_to_multiple_db_rows",
+            "count": sum(1 for row in entry_matches if row["suggested_link_count"] > 1),
+            "interpretation": "One Word narrative unit has multiple proposed DB-row links; review as a group.",
+        },
+        {
+            "bucket": "alignment_diagnostics",
+            "count": len(alignment_diagnostics),
+            "interpretation": "Unresolved or suspicious Word-DB alignments where DB evidence helps explain what to review.",
         },
     ]
 
@@ -2629,14 +3948,19 @@ def run_match_db(args: argparse.Namespace) -> int:
                 "ambiguous": sum(1 for row in register_entry_matches if row["match_status"] == "ambiguous"),
                 "word_only": sum(1 for row in register_entry_matches if row["match_status"] == "word_only"),
                 "db_only": sum(1 for row in db_only_rows if row["register_id"] == register_id),
+                "word_entries_with_multiple_link_candidates": sum(1 for row in register_entry_matches if row["suggested_link_count"] > 1),
             }
         )
 
     write_jsonl(match_dir / "entry_db_matches.jsonl", entry_matches)
     write_csv(match_dir / "entry_db_matches.csv", entry_matches)
     write_jsonl(match_dir / "match_candidates.jsonl", match_candidates)
+    write_jsonl(match_dir / "source_entry_db_link_candidates.jsonl", link_candidates)
+    write_csv(match_dir / "source_entry_db_link_candidates.csv", link_candidates)
     write_jsonl(match_dir / "db_only_rows.jsonl", db_only_rows)
-    write_jsonl(match_dir / "duplicate_top_matches.jsonl", duplicate_top_matches)
+    write_jsonl(match_dir / "duplicate_link_candidates.jsonl", duplicate_link_candidates)
+    write_jsonl(match_dir / "alignment_diagnostics.jsonl", alignment_diagnostics)
+    write_csv(match_dir / "alignment_diagnostics.csv", alignment_diagnostics)
     write_csv(match_dir / "review_buckets.csv", review_buckets)
     write_csv(match_dir / "register_match_summary.csv", summary_rows)
     write_jsonl(match_dir / "issues.jsonl", issues)
@@ -2648,8 +3972,11 @@ def run_match_db(args: argparse.Namespace) -> int:
         f"- DB rows considered: {len(db_rows)}",
         f"- Match statuses: {status_counts}",
         f"- Candidate rows written: {len(match_candidates)}",
+        f"- Source-entry/DB link candidates written: {len(link_candidates)}",
+        f"- Word entries with multiple proposed DB links: {sum(1 for row in entry_matches if row['suggested_link_count'] > 1)}",
         f"- DB-only rows: {len(db_only_rows)}",
-        f"- Duplicate accepted top DB rows: {len(duplicate_top_matches)}",
+        f"- Alignment diagnostics: {len(alignment_diagnostics)}",
+        f"- DB rows proposed for multiple Word entries: {len(duplicate_link_candidates)}",
         f"- Matched-multiple Word entries: {sum(1 for row in entry_matches if row['match_status'] == 'matched_multiple')}",
         f"- Issues: {len(issues)}",
         "",
@@ -2658,6 +3985,8 @@ def run_match_db(args: argparse.Namespace) -> int:
         "",
         "How to read this stage:",
         "- matches are ranked candidates, not accepted truth;",
+        "- `source_entry_db_link_candidates` is the review alignment layer and allows one Word entry to map to several DB rows;",
+        "- `alignment_diagnostics` explains unresolved or suspicious cases inside the same matching/review flow;",
         "- new contracts primarily use `contract.contract_id` when the Word event number is available;",
         "- non-new acts use `sub_contract.main_contract_id`, date, folio, type, and text signals;",
         "- `matched_multiple` means one Word entry plausibly maps to multiple DB rows with equivalent evidence;",
@@ -2712,9 +4041,43 @@ def candidate_summary(candidates: list[dict[str, Any]]) -> str:
             f"{index}. {candidate['db_row_id']} "
             f"(score {candidate['score']}; date {candidate.get('db_registration_date')}; "
             f"folio {candidate.get('db_folio_raw')}; type {candidate.get('db_sub_type') or candidate.get('db_table')}; "
+            f"narrative similarity {candidate.get('narrative_similarity_ratio', candidate.get('text_similarity'))}; "
+            f"Word-token coverage in DB {candidate.get('word_token_coverage_in_db')}; "
+            f"field overlaps: {candidate.get('field_overlap_plain_language', 'None recorded.')}; "
             f"signals: {signals}; conflicts: {conflicts})"
         )
     return "\n".join(parts)
+
+
+def db_link_candidate_summary(link_candidates: list[dict[str, Any]]) -> str:
+    if not link_candidates:
+        return "No DB link candidate was generated."
+    parts: list[str] = []
+    for index, link in enumerate(link_candidates, start=1):
+        conflicts = readable_list(link.get("conflicts"), CONFLICT_LABELS)
+        signals = readable_list(link.get("signals"), SIGNAL_LABELS)
+        parts.append(
+            f"{index}. {link['db_row_id']} ({link['component_label']}; {link['relationship_type']}; "
+            f"score {link['score']}; date {link.get('db_registration_date')}; folio {link.get('db_folio_raw')}; "
+            f"narrative similarity {link.get('narrative_similarity_ratio')}; "
+            f"Word-token coverage in DB {link.get('word_token_coverage_in_db')}; "
+            f"longest shared phrase {link.get('longest_shared_phrase_words')} words; "
+            f"field overlaps: {link.get('field_overlap_plain_language')}; "
+            f"signals: {signals}; conflicts: {conflicts}; reason: {link.get('link_reason')})"
+        )
+    return "\n".join(parts)
+
+
+def db_link_candidate_ids(link_candidates: list[dict[str, Any]]) -> str:
+    return "; ".join(link["db_row_id"] for link in link_candidates)
+
+
+def db_link_candidate_documents(link_candidates: list[dict[str, Any]], db_documents: dict[str, str]) -> str:
+    parts: list[str] = []
+    for link in link_candidates[:5]:
+        text = compact_text(db_documents.get(link["db_row_id"], ""), limit=1200)
+        parts.append(f"{link['db_row_id']} ({link['component_label']}): {text or '[No DB narrative text]'}")
+    return "\n\n".join(parts)
 
 
 def image_candidate_summary(candidates: list[dict[str, Any]]) -> str:
@@ -2744,110 +4107,203 @@ def image_candidates_need_review(candidates: list[dict[str, Any]]) -> bool:
     return any(bool(candidate.get("needs_review")) for candidate in candidates)
 
 
-def review_bucket_for_match(match: dict[str, Any], duplicate_db_ids: set[str]) -> tuple[str, str, str]:
-    status = match["match_status"]
-    if match.get("top_db_row_id") in duplicate_db_ids:
-        return (
-            "DB row reused by multiple Word entries",
-            "High",
-            "Decide whether these Word entries are true duplicates, repeated source evidence, or separate acts that need separate DB rows.",
+def clear_word_db_evidence(match: dict[str, Any]) -> bool:
+    return (
+        max(
+            float(match.get("top_narrative_similarity_ratio") or 0),
+            float(match.get("top_text_containment_ratio") or 0),
         )
-    if status == "matched_multiple":
+        >= 0.55
+        or (
+            float(match.get("top_word_token_coverage_in_db") or 0) >= 0.55
+            and int(match.get("top_longest_shared_phrase_words") or 0) >= 8
+        )
+        or int(match.get("top_field_overlap_count") or 0) >= 5
+    )
+
+
+def db_document_available_for_success(db_documents: dict[str, str], db_row_id: Any) -> bool:
+    text = str(db_documents.get(str(db_row_id)) or "").strip()
+    return bool(text) and "[No DB narrative text]" not in text
+
+
+def source_entry_clean_for_success_control(source_entry: dict[str, Any]) -> bool:
+    text = str(source_entry.get("current_text") or "").lower()
+    return not re.search(
+        r"\b(?:ghost|da rivedere|da inserire|da creare|non inserit[ao]|non si trova|a quale contratto)\b",
+        text,
+    )
+
+
+def review_bucket_for_match(match: dict[str, Any]) -> tuple[str, str, str]:
+    """Lean triage tier for a Word-entry match.
+
+    Only what genuinely needs a human is High. Conflicts and ambiguity come
+    first (a multi-row link with a real conflict is a conflict, not a routine
+    confirm). Clean multi-row links — the normal combined-act pattern — are a
+    low-urgency confirm, not an alarm. Clean single high-confidence matches are
+    auto-eligible and are not surfaced at all (see qa_rows_for_matches).
+    """
+    status = match["match_status"]
+    if status == "word_only":
+        if match.get("event_label_guess") == "without_accomandita":
+            return (
+                "Expected Word-only (non-accomandita)",
+                "Low",
+                "Usually mark as expected Word-only unless the text clearly belongs in SQLite.",
+            )
+        if int(match.get("candidate_count") or 0) == 0:
+            return (
+                "Word entry with no DB match",
+                "High",
+                "No ID, date, or folio signal produced a plausible DB row; check Word source and DB coverage.",
+            )
         return (
-            "One Word entry maps to multiple DB rows",
+            "Word entry with weak or rejected DB candidates",
             "High",
-            "Review whether the Word entry should approve several DB rows together, usually for a combined act.",
+            "Decide whether this is a DB mismatch, a true Word-only entry, or a parser issue.",
+        )
+    conflicts = set(match.get("top_conflicts") or [])
+    if conflicts:
+        # Soft conflict: the DB id (event number / main-contract id) and the
+        # narrative agree, and the *only* disagreement is the date or folio. That
+        # is a field-verification question (data-entry slip, stile fiorentino,
+        # original foliation) — not "is this the right row". Route to Medium so
+        # High holds genuine linking problems only.
+        soft_only = conflicts.issubset({"registration_date_differs", "folio_differs"})
+        has_id = bool(ID_SIGNALS & set(match.get("top_signals") or []))
+        strength = max(
+            float(match.get("top_narrative_similarity_ratio") or 0),
+            float(match.get("top_text_containment_ratio") or 0),
+        )
+        if soft_only and has_id and strength >= 0.6:
+            return (
+                "Likely match — verify date/folio",
+                "Medium",
+                "The DB id and narrative agree; only the date or folio differs. Check whether the DB field needs a correction (stile fiorentino, original foliation, data-entry slip) rather than re-linking.",
+            )
+        return (
+            "Match has conflicts to resolve",
+            "High",
+            "Review the conflicting register / type / text signal before approving.",
         )
     if status == "ambiguous":
         return (
-            "Ambiguous DB match",
+            "Ambiguous match to choose",
             "High",
-            "Choose the correct candidate, approve multiple candidates, or mark the entry as unresolved.",
+            "Pick the correct candidate, approve several, or mark unresolved.",
         )
-    if status == "word_only" and match["event_label_guess"] == "without_accomandita":
+    if int(match.get("suggested_link_count") or 0) > 1:
         return (
-            "Expected Word-only non-accomandita act",
+            "Confirm multi-row link",
             "Low",
-            "Usually mark as expected Word-only unless the text clearly belongs in SQLite.",
-        )
-    if status == "word_only" and int(match["candidate_count"]) == 0:
-        return (
-            "Word entry has no DB candidate",
-            "High",
-            "Check the Word source and DB coverage; no ID, date, or folio signal produced a plausible DB row.",
-        )
-    if status == "word_only":
-        return (
-            "Word entry has only weak or conflicting DB candidates",
-            "High",
-            "Inspect the top candidates and decide whether this is a DB mismatch, a Word-only entry, or a parser issue.",
-        )
-    if match.get("top_conflicts"):
-        return (
-            "Candidate match has visible conflicts",
-            "Medium",
-            "Review the conflicts before approving the match.",
+            "Confirm this one narrative approves these DB rows together (the normal combined-act pattern).",
         )
     if status == "matched_candidate":
         return (
-            "Candidate match below high-confidence threshold",
+            "Candidate match to confirm",
             "Medium",
             "Spot-check before using this for field-level reconciliation.",
         )
     return (
-        "High-confidence control sample",
+        "High-confidence match",
         "Low",
-        "Use as a control row; no action needed unless the side-by-side text looks wrong.",
+        "Auto-eligible; no action needed unless the side-by-side text looks wrong.",
     )
+
+
+def entry_revision_fields(
+    source_entry: dict[str, Any],
+    comments_by_key: dict[tuple[str, str], dict[str, Any]],
+    notes_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any]:
+    """Editorial-history fields for the tracked-changes Word panel.
+
+    Carries the raw `revision_aware_text` marker string plus the resolved comment
+    and footnote/endnote bodies referenced by the entry, so the review server can
+    parse them into a render-ready token stream (see
+    docs/workflows/tracked_changes_word_panel.md). The CSV serialization omits the
+    nested objects; the JSONL keeps them.
+    """
+    revision_text = str(source_entry.get("revision_aware_text") or "")
+    register_id = str(source_entry.get("register_id") or "")
+    comments: list[dict[str, Any]] = []
+    for comment_id in source_entry.get("comment_ids") or []:
+        body = comments_by_key.get((register_id, str(comment_id)))
+        if body:
+            comments.append(
+                {
+                    "id": str(comment_id),
+                    "author": body.get("author"),
+                    "date": body.get("date"),
+                    "initials": body.get("initials"),
+                    "text": body.get("text"),
+                }
+            )
+    notes: list[dict[str, Any]] = []
+    for note_kind, id_field in (("footnote", "footnote_ids"), ("endnote", "endnote_ids")):
+        for note_id in source_entry.get(id_field) or []:
+            body = notes_by_key.get((register_id, str(note_id)))
+            if body:
+                notes.append({"id": str(note_id), "kind": note_kind, "text": body.get("text")})
+    return {
+        "word_entry_revision_text": revision_text,
+        "word_entry_has_revisions": bool(source_entry.get("has_revisions")),
+        "word_entry_revision_summary": {
+            "insertions": revision_text.count("<INS "),
+            "deletions": revision_text.count("<DEL "),
+            "moves": revision_text.count("<MOVETO "),
+            "comments": len(comments),
+            "notes": len(notes),
+        },
+        "word_entry_comments": comments,
+        "word_entry_notes": notes,
+    }
 
 
 def qa_rows_for_matches(
     entry_matches: list[dict[str, Any]],
     source_entries_by_id: dict[str, dict[str, Any]],
     candidates_by_entry: dict[str, list[dict[str, Any]]],
+    link_candidates_by_entry: dict[str, list[dict[str, Any]]],
+    diagnostics_by_entry: dict[str, list[dict[str, Any]]],
     image_candidates_by_entry: dict[str, list[dict[str, Any]]],
     db_documents: dict[str, str],
-    duplicate_db_ids: set[str],
+    comments_by_key: dict[tuple[str, str], dict[str, Any]],
+    notes_by_key: dict[tuple[str, str], dict[str, Any]],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    high_confidence_controls_by_register: set[str] = set()
-    candidate_controls_by_register: set[str] = set()
     for match in entry_matches:
         source_entry = source_entries_by_id.get(match["source_entry_id"], {})
+        link_candidates = link_candidates_by_entry.get(match["source_entry_id"], [])
+        image_candidates = image_candidates_by_entry.get(match["source_entry_id"], [])
+        alignment_diagnostics = diagnostics_by_entry.get(match["source_entry_id"], [])
+
+        # Surface only what genuinely needs a human:
+        #   - unresolved conflicts or ambiguity,
+        #   - Word entries with no / weak DB match,
+        #   - clean multi-row links to confirm (the normal combined-act pattern),
+        #   - candidate matches below the high-confidence bar.
+        # Clean single high-confidence matches are auto-eligible and stay out of
+        # the queue entirely (no control-sample rows). A genuine, non-structural
+        # High alignment diagnostic still forces a row in as a safety net.
+        status = match["match_status"]
+        has_conflict = bool(match.get("top_conflicts"))
+        link_count = int(match.get("suggested_link_count") or 0)
         include = False
-        if match["match_status"] in {"ambiguous", "matched_multiple", "word_only"}:
+        if status in {"ambiguous", "word_only"} or has_conflict:
             include = True
-        if match.get("top_db_row_id") in duplicate_db_ids:
+        elif link_count > 1:
             include = True
-        serious_conflicts = {
-            "db_register_missing",
-            "db_register_differs",
-            "event_type_table_differs",
-        }
-        if serious_conflicts.intersection(set(match.get("top_conflicts") or [])):
+        elif status == "matched_candidate" and float(match.get("top_score") or 0) < 70:
             include = True
-        if match["match_status"] == "matched_candidate" and float(match.get("top_score") or 0) < 70:
+        if any(diagnostic.get("priority") == "High" for diagnostic in alignment_diagnostics):
             include = True
-        if (
-            match["match_status"] == "matched_candidate"
-            and not match.get("top_conflicts")
-            and match.get("top_db_row_id") not in duplicate_db_ids
-            and match["register_id"] not in candidate_controls_by_register
-        ):
-            include = True
-            candidate_controls_by_register.add(match["register_id"])
-        if (
-            match["match_status"] == "matched_high_confidence"
-            and not match.get("top_conflicts")
-            and match["register_id"] not in high_confidence_controls_by_register
-        ):
-            include = True
-            high_confidence_controls_by_register.add(match["register_id"])
         if not include:
             continue
-        bucket, priority, recommendation = review_bucket_for_match(match, duplicate_db_ids)
+        bucket, priority, recommendation = review_bucket_for_match(match)
         top_db_row_id = match.get("top_db_row_id")
-        image_candidates = image_candidates_by_entry.get(match["source_entry_id"], [])
+        relationship_type = match.get("suggested_relationship_type") or relationship_type_for_links(match, link_candidates)
         rows.append(
             {
                 "packet_section": "Word entry review",
@@ -2855,6 +4311,7 @@ def qa_rows_for_matches(
                 "recommended_review_bucket": bucket,
                 "recommended_reviewer_action": recommendation,
                 "source_entry_id": match["source_entry_id"],
+                "source_entry_key": match.get("source_entry_key"),
                 "register_id": match["register_id"],
                 "entry_label": match["event_label_raw"],
                 "entry_type_interpretation": match["event_label_guess"],
@@ -2871,13 +4328,29 @@ def qa_rows_for_matches(
                 "top_match_score": match.get("top_score"),
                 "top_match_signals_plain_language": readable_list(match.get("top_signals"), SIGNAL_LABELS),
                 "top_match_conflicts_plain_language": readable_list(match.get("top_conflicts"), CONFLICT_LABELS),
+                "narrative_similarity_ratio": match.get("top_narrative_similarity_ratio"),
+                "text_containment_ratio": match.get("top_text_containment_ratio"),
+                "word_token_coverage_in_db": match.get("top_word_token_coverage_in_db"),
+                "db_token_coverage_in_word": match.get("top_db_token_coverage_in_word"),
+                "shared_phrase_count": match.get("top_shared_phrase_count"),
+                "longest_shared_phrase_words": match.get("top_longest_shared_phrase_words"),
+                "field_overlap_count": match.get("top_field_overlap_count"),
+                "field_overlap_plain_language": match.get("top_field_overlap_plain_language"),
+                "alignment_diagnostic_types": diagnostic_types(alignment_diagnostics),
+                "alignment_diagnostics_plain_language": diagnostic_plain_language(alignment_diagnostics),
                 "candidate_count": match.get("candidate_count"),
                 "top_candidates_plain_language": candidate_summary(candidates_by_entry.get(match["source_entry_id"], [])),
+                "suggested_relationship_type": relationship_type,
+                "suggested_db_row_ids": db_link_candidate_ids(link_candidates),
+                "suggested_db_rows_plain_language": db_link_candidate_summary(link_candidates),
+                "suggested_db_documents_text": db_link_candidate_documents(link_candidates, db_documents),
+                "suggested_link_count": len(link_candidates),
                 "image_candidates_plain_language": image_candidate_summary(image_candidates),
                 "image_candidate_paths": image_candidate_paths(image_candidates),
                 "image_candidates_need_review": image_candidates_need_review(image_candidates),
                 "word_entry_text": compact_text(source_entry.get("current_text")),
                 "top_db_document_text": compact_text(db_documents.get(str(top_db_row_id), "")),
+                **entry_revision_fields(source_entry, comments_by_key, notes_by_key),
             }
         )
     return rows
@@ -2885,59 +4358,85 @@ def qa_rows_for_matches(
 
 def qa_rows_for_db_only(
     db_only_rows: list[dict[str, Any]],
+    source_entries_by_id: dict[str, dict[str, Any]],
     db_documents: dict[str, str],
     word_register_ids: set[str],
     matched_main_contract_ids: set[int],
+    diagnostics_by_db: dict[str, list[dict[str, Any]]],
+    comments_by_key: dict[tuple[str, str], dict[str, Any]],
+    notes_by_key: dict[tuple[str, str], dict[str, Any]],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for db_row in db_only_rows:
         register_id = db_row.get("register_id")
-        if register_id is None:
-            bucket = "DB-only row with missing register metadata"
-            priority = "High"
-            action = "Correct or investigate DB folder/register metadata before matching."
-        elif register_id not in word_register_ids:
-            bucket = "DB-only row outside current Word corpus"
+        alignment_diagnostics = diagnostics_by_db.get(db_row["db_row_id"], [])
+        diagnostic_source_entry_id = next(
+            (diagnostic.get("source_entry_id") for diagnostic in alignment_diagnostics if diagnostic.get("source_entry_id")),
+            None,
+        )
+        diagnostic_source_entry = source_entries_by_id.get(str(diagnostic_source_entry_id), {})
+        primary_diagnostic = alignment_diagnostics[0] if alignment_diagnostics else {}
+        if register_id not in word_register_ids:
+            bucket = "Expected DB-only (outside Word corpus)"
             priority = "Low"
             action = "Usually out of scope for this Word matching pass."
-        elif db_row["db_table"] == "contract" and db_row["contract_id"] in matched_main_contract_ids:
-            bucket = "DB-only main contract with matched later acts"
+        elif alignment_diagnostics:
+            bucket = "DB row may have Word evidence"
             priority = "Medium"
-            action = "Check whether the Word source has the original contract entry or only later acts referring to it."
+            action = "Review the alignment diagnostic before treating this as a genuinely DB-only row."
         else:
-            bucket = "DB-only row needing review"
-            priority = "High"
-            action = "Look for a missing Word entry, segmentation miss, or DB row that belongs outside the Word corpus."
+            bucket = "DB row not in Word — review"
+            priority = "Medium"
+            action = (
+                "Look for a missing Word entry, a segmentation miss, missing register metadata, "
+                "or a DB row that belongs outside the Word corpus."
+            )
         rows.append(
             {
                 "packet_section": "DB-only review",
                 "review_priority": priority,
                 "recommended_review_bucket": bucket,
                 "recommended_reviewer_action": action,
-                "source_entry_id": None,
+                "source_entry_id": diagnostic_source_entry_id,
+                "source_entry_key": diagnostic_source_entry.get("source_entry_key"),
                 "register_id": register_id or "_unknown_register",
-                "entry_label": None,
-                "entry_type_interpretation": None,
-                "entry_number": None,
-                "referenced_entry_number": None,
-                "word_registration_date": None,
-                "word_folio_range": None,
-                "match_status": "DB row not accepted as top match",
+                "entry_label": diagnostic_source_entry.get("event_label_raw"),
+                "entry_type_interpretation": diagnostic_source_entry.get("event_label_guess"),
+                "entry_number": diagnostic_source_entry.get("event_number_raw"),
+                "referenced_entry_number": diagnostic_source_entry.get("referenced_event_number_raw"),
+                "word_registration_date": diagnostic_source_entry.get("registration_date_raw"),
+                "word_folio_range": f"{diagnostic_source_entry.get('folio_start') or ''}-{diagnostic_source_entry.get('folio_end') or ''}".strip("-"),
+                "match_status": "DB row has no proposed Word link",
                 "top_db_row_id": db_row["db_row_id"],
                 "top_db_table": db_row["db_table"],
                 "top_db_contract_id": db_row["contract_id"],
                 "top_db_main_contract_id": db_row.get("main_contract_id"),
                 "top_db_type": db_row.get("sub_type") or db_row["db_table"],
-                "top_match_score": None,
-                "top_match_signals_plain_language": "None recorded.",
-                "top_match_conflicts_plain_language": "No Word entry accepted this DB row as its top match.",
+                "top_match_score": primary_diagnostic.get("candidate_score"),
+                "top_match_signals_plain_language": "See alignment diagnostic.",
+                "top_match_conflicts_plain_language": "This DB row has no proposed Word-entry link.",
+                "narrative_similarity_ratio": primary_diagnostic.get("narrative_similarity_ratio"),
+                "word_token_coverage_in_db": primary_diagnostic.get("word_token_coverage_in_db"),
+                "db_token_coverage_in_word": None,
+                "shared_phrase_count": None,
+                "longest_shared_phrase_words": None,
+                "field_overlap_count": primary_diagnostic.get("field_overlap_count"),
+                "field_overlap_plain_language": primary_diagnostic.get("field_overlap_plain_language", ""),
+                "alignment_diagnostic_types": diagnostic_types(alignment_diagnostics),
+                "alignment_diagnostics_plain_language": diagnostic_plain_language(alignment_diagnostics),
                 "candidate_count": None,
                 "top_candidates_plain_language": "This is a DB-only diagnostic row.",
+                "suggested_relationship_type": "db_only_unlinked",
+                "suggested_db_row_ids": db_row["db_row_id"],
+                "suggested_db_rows_plain_language": "This DB row was not proposed as a link candidate for a Word entry.",
+                "suggested_db_documents_text": compact_text(db_documents.get(db_row["db_row_id"], "")),
+                "suggested_link_count": 0,
                 "image_candidates_plain_language": "No Word source entry is attached to this DB-only diagnostic row.",
                 "image_candidate_paths": "",
                 "image_candidates_need_review": False,
-                "word_entry_text": "",
+                "word_entry_text": compact_text(diagnostic_source_entry.get("current_text")),
                 "top_db_document_text": compact_text(db_documents.get(db_row["db_row_id"], "")),
+                **entry_revision_fields(diagnostic_source_entry, comments_by_key, notes_by_key),
             }
         )
     return rows
@@ -2960,8 +4459,12 @@ def write_qa_packet_html(path: Path, rows: list[dict[str, Any]], summary_lines: 
                 <dt>Word entry</dt><dd>{html.escape(str(row.get('source_entry_id') or 'No Word entry'))}</dd>
                 <dt>Label / type</dt><dd>{html.escape(str(row.get('entry_label') or ''))} · {html.escape(str(row.get('entry_type_interpretation') or ''))}</dd>
                 <dt>Date / folio</dt><dd>{html.escape(str(row.get('word_registration_date') or ''))} · {html.escape(str(row.get('word_folio_range') or ''))}</dd>
-                <dt>Top DB row</dt><dd>{html.escape(str(row.get('top_db_row_id') or 'No top DB row'))} · {html.escape(str(row.get('top_db_type') or ''))}</dd>
+                <dt>Suggested DB rows</dt><dd>{html.escape(str(row.get('suggested_db_row_ids') or row.get('top_db_row_id') or 'No suggested DB row'))}</dd>
+                <dt>Relationship type</dt><dd>{html.escape(str(row.get('suggested_relationship_type') or ''))}</dd>
                 <dt>Match status</dt><dd>{html.escape(str(row.get('match_status') or ''))}</dd>
+                <dt>Text metrics</dt><dd>{html.escape(f"Narrative similarity: {row.get('narrative_similarity_ratio')}; text containment: {row.get('text_containment_ratio')}; Word-token coverage in DB: {row.get('word_token_coverage_in_db')}; longest shared phrase: {row.get('longest_shared_phrase_words')} words")}</dd>
+                <dt>Structured overlap</dt><dd>{html.escape(str(row.get('field_overlap_plain_language') or 'No structured DB field overlap was recorded.'))}</dd>
+                <dt>Alignment diagnostics</dt><dd>{html.escape(str(row.get('alignment_diagnostics_plain_language') or 'No additional alignment diagnostic was recorded.'))}</dd>
                 <dt>Signals</dt><dd>{html.escape(str(row.get('top_match_signals_plain_language') or ''))}</dd>
                 <dt>Conflicts</dt><dd>{html.escape(str(row.get('top_match_conflicts_plain_language') or ''))}</dd>
                 <dt>Image candidates</dt><dd>{html.escape(str(row.get('image_candidate_paths') or 'No image candidate path'))}</dd>
@@ -2973,12 +4476,12 @@ def write_qa_packet_html(path: Path, rows: list[dict[str, Any]], summary_lines: 
                 </div>
                 <div>
                   <h3>Top DB document</h3>
-                  <pre>{html.escape(str(row.get('top_db_document_text') or ''))}</pre>
+                  <pre>{html.escape(str(row.get('suggested_db_documents_text') or row.get('top_db_document_text') or ''))}</pre>
                 </div>
               </div>
               <details>
-                <summary>Top candidates and scoring details</summary>
-                <pre>{html.escape(str(row.get('top_candidates_plain_language') or ''))}</pre>
+                <summary>Suggested DB links and scoring details</summary>
+                <pre>{html.escape(str(row.get('suggested_db_rows_plain_language') or row.get('top_candidates_plain_language') or ''))}</pre>
               </details>
               <details>
                 <summary>Image candidates</summary>
@@ -3021,6 +4524,7 @@ def write_qa_packet_html(path: Path, rows: list[dict[str, Any]], summary_lines: 
 
 def run_qa_packet(args: argparse.Namespace) -> int:
     config = load_config(args)
+    extraction_dir = config["output_root"] / "03_extracted_registers"
     segmentation_dir = config["output_root"] / "04_source_entries"
     match_dir = config["output_root"] / "05_db_candidate_matches"
     qa_dir = config["output_root"] / "06_qa_packet"
@@ -3029,8 +4533,9 @@ def run_qa_packet(args: argparse.Namespace) -> int:
     source_entries = read_jsonl(segmentation_dir / "source_entries.jsonl")
     entry_matches = read_jsonl(match_dir / "entry_db_matches.jsonl")
     match_candidates = read_jsonl(match_dir / "match_candidates.jsonl")
+    link_candidates = read_jsonl(match_dir / "source_entry_db_link_candidates.jsonl")
     db_only_rows = read_jsonl(match_dir / "db_only_rows.jsonl")
-    duplicate_top_matches = read_jsonl(match_dir / "duplicate_top_matches.jsonl")
+    alignment_diagnostics = read_jsonl(match_dir / "alignment_diagnostics.jsonl")
     image_link_rows = read_jsonl(config["output_root"] / "07_image_links" / "source_entry_image_candidates.jsonl")
     if not source_entries or not entry_matches:
         issues = [
@@ -3047,27 +4552,58 @@ def run_qa_packet(args: argparse.Namespace) -> int:
     candidates_by_entry: dict[str, list[dict[str, Any]]] = {}
     for candidate in match_candidates:
         candidates_by_entry.setdefault(candidate["source_entry_id"], []).append(candidate)
+    link_candidates_by_entry: dict[str, list[dict[str, Any]]] = {}
+    for link_candidate in link_candidates:
+        link_candidates_by_entry.setdefault(link_candidate["source_entry_id"], []).append(link_candidate)
+    diagnostics_by_entry: dict[str, list[dict[str, Any]]] = {}
+    diagnostics_by_db: dict[str, list[dict[str, Any]]] = {}
+    for diagnostic in alignment_diagnostics:
+        if diagnostic.get("source_entry_id"):
+            diagnostics_by_entry.setdefault(diagnostic["source_entry_id"], []).append(diagnostic)
+        if diagnostic.get("db_row_id"):
+            diagnostics_by_db.setdefault(diagnostic["db_row_id"], []).append(diagnostic)
     image_candidates_by_entry: dict[str, list[dict[str, Any]]] = {}
     for image_link in image_link_rows:
         image_candidates_by_entry.setdefault(image_link["source_entry_id"], []).append(image_link)
-    duplicate_db_ids = {row["db_row_id"] for row in duplicate_top_matches}
     db_documents = load_db_documents(config["db_path"])
+    comments_by_key = {
+        (str(row.get("register_id")), str(row.get("comment_id"))): row
+        for row in read_jsonl(extraction_dir / "comments.jsonl")
+    }
+    notes_by_key = {
+        (str(row.get("register_id")), str(row.get("note_id"))): row
+        for row in read_jsonl(extraction_dir / "footnotes.jsonl")
+    }
     word_register_ids = {row["register_id"] for row in entry_matches}
     matched_main_contract_ids = {
-        int(row["top_db_main_contract_id"])
-        for row in entry_matches
-        if row.get("top_db_table") == "sub_contract" and row.get("top_db_main_contract_id") is not None
+        int(row["db_main_contract_id"])
+        for row in link_candidates
+        if row.get("db_table") == "sub_contract" and row.get("db_main_contract_id") is not None
     }
 
     qa_rows = qa_rows_for_matches(
         entry_matches,
         source_entries_by_id,
         candidates_by_entry,
+        link_candidates_by_entry,
+        diagnostics_by_entry,
         image_candidates_by_entry,
         db_documents,
-        duplicate_db_ids,
+        comments_by_key,
+        notes_by_key,
     )
-    qa_rows.extend(qa_rows_for_db_only(db_only_rows, db_documents, word_register_ids, matched_main_contract_ids))
+    qa_rows.extend(
+        qa_rows_for_db_only(
+            db_only_rows,
+            source_entries_by_id,
+            db_documents,
+            word_register_ids,
+            matched_main_contract_ids,
+            diagnostics_by_db,
+            comments_by_key,
+            notes_by_key,
+        )
+    )
     priority_order = {"High": 0, "Medium": 1, "Low": 2}
     qa_rows.sort(
         key=lambda row: (
@@ -3080,11 +4616,15 @@ def run_qa_packet(args: argparse.Namespace) -> int:
 
     summary_lines = [
         f"Generated {len(qa_rows)} QA rows from {len(entry_matches)} Word-entry match rows and {len(db_only_rows)} DB-only rows.",
+        f"Loaded {len(link_candidates)} source-entry/DB link candidate rows.",
+        f"Loaded {len(alignment_diagnostics)} alignment diagnostic rows.",
         f"Loaded {len(image_link_rows)} source-entry image candidate rows.",
         "This packet is for human review only. It does not approve matches or update SQLite.",
         "Use the priority and recommended-review-bucket fields to work through the hardest rows first.",
     ]
-    write_csv(qa_dir / "word_db_match_qa_packet.csv", qa_rows)
+    csv_exclude = {"word_entry_revision_summary", "word_entry_comments", "word_entry_notes"}
+    csv_fieldnames = sorted({key for row in qa_rows for key in row if key not in csv_exclude})
+    write_csv(qa_dir / "word_db_match_qa_packet.csv", qa_rows, fieldnames=csv_fieldnames)
     write_jsonl(qa_dir / "word_db_match_qa_packet.jsonl", qa_rows)
     write_qa_packet_html(qa_dir / "word_db_match_qa_packet.html", qa_rows, summary_lines)
     write_summary(
@@ -3098,6 +4638,9 @@ def run_qa_packet(args: argparse.Namespace) -> int:
             f"- Low priority/control rows: {sum(1 for row in qa_rows if row['review_priority'] == 'Low')}",
             f"- QA rows with image candidates: {sum(1 for row in qa_rows if row.get('image_candidate_paths'))}",
             f"- QA rows with image candidates needing review: {sum(1 for row in qa_rows if row.get('image_candidates_need_review'))}",
+            f"- QA rows with multiple suggested DB links: {sum(1 for row in qa_rows if int(row.get('suggested_link_count') or 0) > 1)}",
+            f"- QA rows with structured DB field overlap: {sum(1 for row in qa_rows if int(row.get('field_overlap_count') or 0) > 0)}",
+            f"- QA rows with alignment diagnostics: {sum(1 for row in qa_rows if row.get('alignment_diagnostic_types'))}",
             "",
             "Outputs:",
             "- `word_db_match_qa_packet.csv` for filtering and sorting;",
