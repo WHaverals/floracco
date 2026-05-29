@@ -238,10 +238,10 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
-
-# Streamlit
-.streamlit/secrets.toml
+# Node / Vite frontend
+node_modules/
+apps/review/dist/
+docs/schema/DB structure and input rules.xls
+docs/2025.12.10 Memo Kernighan.pdf
+docs/project-charter.pdf
+docs/schema/schema Feb. 2014.xlsb
