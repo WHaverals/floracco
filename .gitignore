@@ -241,6 +241,7 @@ tempCodeRunnerFile.py
 # Node / Vite frontend
 node_modules/
 apps/review/dist/
+*.tsbuildinfo
 docs/schema/DB structure and input rules.xls
 docs/2025.12.10 Memo Kernighan.pdf
 docs/project-charter.pdf
