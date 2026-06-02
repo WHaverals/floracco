@@ -8,6 +8,150 @@ Run with an ephemeral pytest (no project dependency added):
 from __future__ import annotations
 
 from workflows.review_server import build_word_entry_rich, parse_revision_segments
+from workflows.word_pipeline import (
+    classify_match,
+    event_components_for_text,
+    event_label_guesses,
+    has_matched_multiple,
+    is_dual_contract_sub_combined_act,
+    split_compound_event_label_inner,
+)
+
+
+def _dual_act_candidates_entry_00042() -> list[dict]:
+    """Top candidates for Camera_di_Commercio_1262_entry_00042 (disdetta + nuova)."""
+    return [
+        {
+            "score": 146.25,
+            "db_table": "contract",
+            "db_contract_id": 2682,
+            "db_main_contract_id": None,
+            "narrative_similarity_ratio": 0.9624,
+            "signals": ["component_contract_id_exact", "registration_date_exact", "folio_exact"],
+            "conflicts": [],
+        },
+        {
+            "score": 140.78,
+            "db_table": "sub_contract",
+            "db_contract_id": 1667,
+            "db_main_contract_id": 2658,
+            "narrative_similarity_ratio": 0.939,
+            "signals": ["main_contract_id_referenced", "registration_date_exact", "folio_exact"],
+            "conflicts": [],
+        },
+        {
+            "score": 32.91,
+            "db_table": "sub_contract",
+            "db_contract_id": 1674,
+            "db_main_contract_id": 2656,
+            "narrative_similarity_ratio": 0.0362,
+            "signals": [],
+            "conflicts": ["registration_date_differs"],
+        },
+    ]
+
+
+def test_is_dual_contract_sub_combined_act_positive() -> None:
+    candidates = _dual_act_candidates_entry_00042()
+    assert is_dual_contract_sub_combined_act(candidates) is True
+    assert classify_match(candidates) == "matched_high_confidence"
+    assert classify_match(candidates) != "ambiguous"
+
+
+def test_is_dual_contract_sub_combined_act_rejects_two_sub_contracts() -> None:
+    candidates = [
+        {
+            "score": 140.0,
+            "db_table": "sub_contract",
+            "narrative_similarity_ratio": 0.95,
+            "signals": ["main_contract_id_referenced"],
+            "conflicts": [],
+        },
+        {
+            "score": 135.0,
+            "db_table": "sub_contract",
+            "narrative_similarity_ratio": 0.94,
+            "signals": ["main_contract_id_referenced"],
+            "conflicts": [],
+        },
+        {"score": 30.0, "db_table": "contract", "narrative_similarity_ratio": 0.05, "signals": [], "conflicts": []},
+    ]
+    assert is_dual_contract_sub_combined_act(candidates) is False
+
+
+def test_is_dual_contract_sub_combined_act_rejects_third_candidate_too_close() -> None:
+    base = _dual_act_candidates_entry_00042()
+    candidates = [base[0], base[1], {**base[1], "score": 138.0, "db_contract_id": 9999}]
+    assert is_dual_contract_sub_combined_act(candidates) is False
+
+
+def test_is_dual_contract_sub_combined_act_rejects_low_text_similarity() -> None:
+    candidates = _dual_act_candidates_entry_00042()
+    candidates[1]["narrative_similarity_ratio"] = 0.70
+    assert is_dual_contract_sub_combined_act(candidates) is False
+
+
+def test_has_matched_multiple_regression() -> None:
+    candidates = [
+        {
+            "score": 120.0,
+            "db_table": "sub_contract",
+            "db_main_contract_id": 100,
+            "db_registration_date": "1641-04-19",
+            "db_folio_start": 12,
+            "db_folio_end": 12,
+            "narrative_similarity_ratio": 0.95,
+            "signals": ["main_contract_id_referenced"],
+            "conflicts": [],
+        },
+        {
+            "score": 118.0,
+            "db_table": "sub_contract",
+            "db_main_contract_id": 100,
+            "db_registration_date": "1641-04-19",
+            "db_folio_start": 12,
+            "db_folio_end": 12,
+            "narrative_similarity_ratio": 0.94,
+            "signals": ["main_contract_id_referenced"],
+            "conflicts": [],
+        },
+    ]
+    assert has_matched_multiple(candidates) is True
+    assert classify_match(candidates) == "matched_multiple"
+
+
+def test_split_compound_event_label_inner_plus_and_slash() -> None:
+    assert split_compound_event_label_inner("nuovo + variazione") == ["nuovo", "variazione"]
+    assert split_compound_event_label_inner("Disdetta/Rinnovo") == ["Disdetta", "Rinnovo"]
+    assert split_compound_event_label_inner("bilancio+rinnovo+modifica") == [
+        "bilancio",
+        "rinnovo",
+        "modifica",
+    ]
+
+
+def test_split_compound_event_label_inner_e_conjunction() -> None:
+    assert split_compound_event_label_inner("Bilancio e modifica") == ["Bilancio", "modifica"]
+
+
+def test_split_compound_event_label_inner_skips_editorial_brackets() -> None:
+    editorial = "Verifica compiuta in ASF: il contratto registrato fuori ordine cronologico"
+    assert split_compound_event_label_inner(editorial) == [editorial]
+
+
+def test_event_label_guesses_compound_bracket() -> None:
+    assert set(event_label_guesses("[Bilancio e modifica]")) == {"modification", "balance"}
+    assert event_label_guesses("[Disdetta/Rinnovo]") == ["termination", "renewal"]
+
+
+def test_event_components_for_text_splits_single_compound_bracket() -> None:
+    text = "[nuovo / disdetta] 4018 +  [nuovo] 5097\n\tNarrative body."
+    components = event_components_for_text(text)
+    raw_labels = [component["raw_label"] for component in components]
+    assert raw_labels.count("[nuovo]") >= 2
+    assert "[disdetta]" in raw_labels
+    guesses = {component["label_guess"] for component in components if component["raw_label"] == "[nuovo]"}
+    assert "new_contract" in guesses
 
 
 def _text_tokens(parsed: dict) -> list[dict]:
