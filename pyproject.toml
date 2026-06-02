@@ -5,10 +5,10 @@ description = "Code and workflows for the Florentine Accomandite Project (1445â€
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "marimo",
+    "fastapi>=0.136.3",
     "openpyxl>=3.1.5",
     "pandas",
     "python-dotenv",
-    "streamlit>=1.58.0",
+    "uvicorn>=0.48.0",
     "xlrd>=2.0.2",
 ]
