@@ -55,9 +55,15 @@ uv sync
 cp .env.example .env   # configure local paths
 ```
 
+Place the live IAS MySQL export at `data/sqlite/projects_at.sql` (see `.env.example`), then build the working SQLite mirror:
+
+```bash
+uv run python workflows/db_import.py build
+```
+
 The Python project is named **floracco** (`pyproject.toml`). The virtualenv lives in `.floracco/` (uv default is `.venv`; we set the name above).
 
-Run the first safe Word pipeline stages:
+Run the Word pipeline stages (after `db_import.py build`, or re-run `match-db` when only the database changed):
 
 ```bash
 uv run python workflows/word_pipeline.py inventory
