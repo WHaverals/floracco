@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   dismissCandidate,
   loadCandidates,
@@ -16,6 +16,10 @@ import type {
   CorrectionProposal,
   CorrectionStatus,
 } from "../types";
+import {
+  DATE_FOLIO_REASON_CODES,
+  reconcileReviewId,
+} from "../utils/reviewLinks";
 
 const STATUS_LABEL: Record<CorrectionStatus, string> = {
   draft: "Draft",
@@ -39,6 +43,35 @@ const REASON_LABEL: Record<string, string> = {
   numerical_discrepancy: "Numbers flag",
   missing_firm_name: "Firm missing",
 };
+
+const DATE_FOLIO_REASON_PRIORITY = ["registration_date_differs", "folio_differs"] as const;
+
+function pickCandidateForHandoff(
+  candidates: CorrectionCandidate[],
+  sourceEntryId: string,
+  dbRowId: string,
+  field?: string | null,
+): string {
+  const matches = candidates.filter(
+    (candidate) => candidate.source_entry_id === sourceEntryId && candidate.db_row_id === dbRowId,
+  );
+  if (!matches.length) {
+    return "";
+  }
+  if (field) {
+    const exact = matches.find((candidate) => candidate.field === field);
+    if (exact) {
+      return exact.candidate_key;
+    }
+  }
+  for (const reason of DATE_FOLIO_REASON_PRIORITY) {
+    const preferred = matches.find((candidate) => candidate.reason_code === reason);
+    if (preferred) {
+      return preferred.candidate_key;
+    }
+  }
+  return matches[0].candidate_key;
+}
 
 // The tracked change that touches this field: deleted spans → inserted spans.
 // This is *why* a date/folio conflict is worth a close look; it never decides anything.
@@ -108,6 +141,11 @@ export default function Corrections() {
 // ---------------------------------------------------------------------------
 
 function CandidateQueue() {
+  const [searchParams] = useSearchParams();
+  const handoffSourceEntryId = searchParams.get("source_entry_id");
+  const handoffDbRowId = searchParams.get("db_row_id");
+  const handoffField = searchParams.get("field");
+
   const [strength, setStrength] = useState<"All" | CorrectionCandidateStrength>("All");
   const [reason, setReason] = useState("All");
   const [table, setTable] = useState("All");
@@ -122,6 +160,7 @@ function CandidateQueue() {
   const [dismissReason, setDismissReason] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [handoffMiss, setHandoffMiss] = useState("");
   const [openSourceId, setOpenSourceId] = useState<string | null>(null);
   const [proposeSeed, setProposeSeed] = useState<ProposeSeed | null>(null);
 
@@ -141,22 +180,52 @@ function CandidateQueue() {
         setCandidates(res.candidates);
         setReasons(res.reasons);
         setCounts({ total: res.total_all, dismissed: res.dismissed_count, handled: res.handled_count });
-        setSelectedKey((prev) =>
-          res.candidates.some((c) => c.candidate_key === prev) ? prev : res.candidates[0]?.candidate_key ?? "",
-        );
+        setSelectedKey((prev) => {
+          if (handoffSourceEntryId && handoffDbRowId) {
+            const picked = pickCandidateForHandoff(
+              res.candidates,
+              handoffSourceEntryId,
+              handoffDbRowId,
+              handoffField,
+            );
+            if (picked) {
+              setHandoffMiss("");
+              return picked;
+            }
+            setHandoffMiss(
+              "No correction candidate matched this Reconcile handoff — try All reasons or show dismissed.",
+            );
+          } else if (res.candidates.some((candidate) => candidate.candidate_key === prev)) {
+            return prev;
+          }
+          return res.candidates[0]?.candidate_key ?? "";
+        });
         setError("");
       })
       .catch((err: Error) => setError(err.message));
-  }, [params]);
+  }, [params, handoffSourceEntryId, handoffDbRowId, handoffField]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   const selected = useMemo(
-    () => candidates.find((c) => c.candidate_key === selectedKey) ?? null,
+    () => candidates.find((candidate) => candidate.candidate_key === selectedKey) ?? null,
     [candidates, selectedKey],
   );
+
+  const siblingCandidates = useMemo(() => {
+    if (!selected) {
+      return [];
+    }
+    return candidates.filter(
+      (candidate) =>
+        candidate.candidate_key !== selected.candidate_key &&
+        candidate.source_entry_id === selected.source_entry_id &&
+        candidate.db_row_id === selected.db_row_id &&
+        DATE_FOLIO_REASON_CODES.has(candidate.reason_code),
+    );
+  }, [candidates, selected]);
 
   const draft = (cand: CorrectionCandidate) => {
     if (!cand.field || !cand.editable) return;
@@ -218,6 +287,9 @@ function CandidateQueue() {
       <aside className="db-rail">
         <div className="db-rail-head">
           <p className="eyebrow">Possibly needs correction · hypotheses, not changes</p>
+          {handoffSourceEntryId && handoffDbRowId ? (
+            <p className="muted cand-handoff-note">Opened from Reconcile.</p>
+          ) : null}
           <div className="db-tabs">
             {(["All", "high", "medium", "low"] as const).map((s) => (
               <button
@@ -261,7 +333,8 @@ function CandidateQueue() {
             </label>
           </div>
           <p className="db-count muted">
-            {candidates.length} shown · {counts.total} total · {counts.handled} handled · {counts.dismissed} dismissed
+            {candidates.length} shown · {counts.total} total · {counts.handled} handled · {counts.dismissed}{" "}
+            dismissed
           </p>
         </div>
         <ul className="db-results">
@@ -307,11 +380,31 @@ function CandidateQueue() {
               >
                 {selected.db_row_id} ↗
               </Link>
+              {selected.source_entry_key ? (
+                <Link
+                  className="cand-reconcile-link"
+                  to={`/reconcile/${encodeURIComponent(reconcileReviewId(selected.source_entry_key, selected.db_row_id))}`}
+                >
+                  Open reconcile case →
+                </Link>
+              ) : null}
             </header>
 
+            {handoffMiss && <div className="notice error">{handoffMiss}</div>}
             {message && <div className="notice success">{message}</div>}
             {error && <p className="error-text">{error}</p>}
 
+            {!selected.link_confirmed && selected.source_entry_key && (
+              <div className="notice info">
+                Link not confirmed yet —{" "}
+                <Link
+                  to={`/reconcile/${encodeURIComponent(reconcileReviewId(selected.source_entry_key, selected.db_row_id))}`}
+                >
+                  confirm in Reconcile first
+                </Link>
+                , then decide whether the DB field should change.
+              </div>
+            )}
             {selected.link_confirmed && (
               <div className="notice info">
                 This DB row is on a <strong>reviewer-confirmed link</strong> — identity is settled, so the field
@@ -329,6 +422,22 @@ function CandidateQueue() {
             )}
 
             <p className="reading-text cand-explanation">{selected.explanation}</p>
+
+            {siblingCandidates.length > 0 && (
+              <div className="cand-siblings">
+                <span className="muted">Also for this row:</span>
+                {siblingCandidates.map((candidate) => (
+                  <button
+                    key={candidate.candidate_key}
+                    type="button"
+                    className="pill-button"
+                    onClick={() => setSelectedKey(candidate.candidate_key)}
+                  >
+                    {REASON_LABEL[candidate.reason_code] ?? candidate.reason_code}
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="correction-diff cand-compare">
               <div className="diff-side diff-before">

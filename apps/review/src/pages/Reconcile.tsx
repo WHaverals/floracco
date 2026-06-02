@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams } from "react-router-dom";
 import { loadCase, loadCases, loadSummary, saveDecision } from "../api";
 import CaseBar from "../components/CaseBar";
 import DatabasePanel from "../components/DatabasePanel";
 import DecisionBar from "../components/DecisionBar";
 import ImagePanel from "../components/ImagePanel";
 import MatchSummary from "../components/MatchSummary";
+import ReconcileHandoffStrip from "../components/ReconcileHandoffStrip";
 import ReviewQueue from "../components/ReviewQueue";
+import VerifyDateFolioHint from "../components/VerifyDateFolioHint";
 import WordPanel from "../components/WordPanel";
 import type { CasePreview, DecisionPayload, ReviewCase, ReviewSummary } from "../types";
+import { isVerifyDateFolioBucket } from "../utils/reviewLinks";
 
 const DEFAULT_FILTERS = {
   priority: "All",
@@ -17,7 +21,13 @@ const DEFAULT_FILTERS = {
   search: "",
 };
 
+type HandoffTarget = {
+  sourceEntryId: string;
+  dbRowId: string;
+};
+
 export default function Reconcile() {
+  const { reviewId: routeReviewId } = useParams<{ reviewId?: string }>();
   const [summary, setSummary] = useState<ReviewSummary | null>(null);
   const [cases, setCases] = useState<CasePreview[]>([]);
   const [total, setTotal] = useState(0);
@@ -29,6 +39,7 @@ export default function Reconcile() {
   const [error, setError] = useState("");
   const [showImage, setShowImage] = useState(false);
   const [queueOpen, setQueueOpen] = useState(true);
+  const [handoff, setHandoff] = useState<HandoffTarget | null>(null);
 
   const selectedIndex = cases.findIndex((item) => item.review_id === selectedReviewId);
   const currentIndex = selectedIndex >= 0 ? selectedIndex : 0;
@@ -55,10 +66,14 @@ export default function Reconcile() {
       .then((response) => {
         setCases(response.cases);
         setTotal(response.total);
-        setSelectedReviewId(response.cases[0]?.review_id ?? "");
+        const preferred =
+          routeReviewId && response.cases.some((item) => item.review_id === routeReviewId)
+            ? routeReviewId
+            : response.cases[0]?.review_id ?? "";
+        setSelectedReviewId(preferred);
       })
       .catch((err: Error) => setError(err.message));
-  }, [params]);
+  }, [params, routeReviewId]);
 
   useEffect(() => {
     if (!selectedReviewId) {
@@ -66,6 +81,7 @@ export default function Reconcile() {
       return;
     }
     setShowImage(false);
+    setHandoff(null);
     loadCase(selectedReviewId)
       .then((response) => {
         setReviewCase(response);
@@ -76,6 +92,7 @@ export default function Reconcile() {
   }, [selectedReviewId]);
 
   const goPrevious = useCallback(() => {
+    setHandoff(null);
     setSelectedReviewId((current) => {
       const index = cases.findIndex((item) => item.review_id === current);
       const previous = cases[(index >= 0 ? index : 0) - 1];
@@ -84,6 +101,7 @@ export default function Reconcile() {
   }, [cases]);
 
   const goNext = useCallback(() => {
+    setHandoff(null);
     setSelectedReviewId((current) => {
       const index = cases.findIndex((item) => item.review_id === current);
       const next = cases[(index >= 0 ? index : 0) + 1];
@@ -100,13 +118,25 @@ export default function Reconcile() {
   const save = async (decision: DecisionPayload) => {
     try {
       await saveDecision(decision);
-      setMessage("Decision saved.");
       const latestSummary = await loadSummary();
       setSummary(latestSummary);
       setCases((current) =>
         current.map((item) => (item.review_id === selectedReviewId ? { ...item, is_reviewed: true } : item)),
       );
-      goNext();
+
+      const bucket = String(reviewCase?.row.recommended_review_bucket ?? "");
+      const confirmed =
+        decision.next_action === "approve_link" && (decision.selected_db_row_ids?.length ?? 0) > 0;
+      if (isVerifyDateFolioBucket(bucket) && confirmed && reviewCase) {
+        setHandoff({
+          sourceEntryId: String(reviewCase.row.source_entry_id ?? decision.source_entry_id),
+          dbRowId: decision.selected_db_row_ids![0],
+        });
+        setMessage("");
+      } else {
+        setMessage("Decision saved.");
+        goNext();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -114,6 +144,9 @@ export default function Reconcile() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (handoff) {
+        return;
+      }
       const target = event.target as HTMLElement | null;
       if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
         return;
@@ -126,10 +159,12 @@ export default function Reconcile() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [goNext, goPrevious]);
+  }, [goNext, goPrevious, handoff]);
 
   const hasImage = (reviewCase?.image_paths.length ?? 0) > 0;
   const isReviewed = currentCase?.is_reviewed ?? false;
+  const showVerifyHint =
+    reviewCase && isVerifyDateFolioBucket(String(reviewCase.row.recommended_review_bucket ?? ""));
 
   return (
     <div className={`app-shell${queueOpen ? "" : " queue-collapsed"}`}>
@@ -165,6 +200,15 @@ export default function Reconcile() {
               canNext={canNext}
             />
             <div className="reconcile-body">
+              {showVerifyHint ? <VerifyDateFolioHint reviewCase={reviewCase} /> : null}
+              {handoff ? (
+                <ReconcileHandoffStrip
+                  dbRowId={handoff.dbRowId}
+                  sourceEntryId={handoff.sourceEntryId}
+                  onNext={goNext}
+                  onDismiss={() => setHandoff(null)}
+                />
+              ) : null}
               <div className={`reconcile-compare${showImage && hasImage ? " with-image" : ""}`}>
                 <WordPanel reviewCase={reviewCase} />
                 <DatabasePanel reviewCase={reviewCase} selectedDbRows={selectedDbRows} onToggle={toggleDbRow} />
@@ -175,7 +219,9 @@ export default function Reconcile() {
             </div>
           </>
         ) : (
-          <div className="empty-state large">No cases match the current filters.</div>
+          <div className="empty-state large">
+            {routeReviewId ? "Case not in the current filter — reset filters or search." : "No cases match the current filters."}
+          </div>
         )}
       </section>
 

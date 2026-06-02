@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { imageUrl, loadWordEntry } from "../api";
 import type { WordEntryDetail } from "../types";
+import ManuscriptLightbox from "./ManuscriptLightbox";
 
 export default function WordSourceDrawer({
   sourceEntryId,
@@ -12,7 +13,7 @@ export default function WordSourceDrawer({
   const [entry, setEntry] = useState<WordEntryDetail | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [zoomed, setZoomed] = useState<string | null>(null);
+  const [lightboxPath, setLightboxPath] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -26,14 +27,13 @@ export default function WordSourceDrawer({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (zoomed) setZoomed(null);
-        else onClose();
+      if (event.key === "Escape" && !lightboxPath) {
+        onClose();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, zoomed]);
+  }, [onClose, lightboxPath]);
 
   const meta = entry
     ? [entry.date, entry.folio, entry.register_id].filter(Boolean).join(" · ")
@@ -82,7 +82,7 @@ export default function WordSourceDrawer({
                     <button
                       type="button"
                       className="image-zoom-button"
-                      onClick={() => setZoomed(img.path)}
+                      onClick={() => setLightboxPath(img.path)}
                     >
                       <img src={imageUrl(img.path)} alt={img.file || "manuscript folio"} />
                     </button>
@@ -98,10 +98,12 @@ export default function WordSourceDrawer({
         )}
       </aside>
 
-      {zoomed && (
-        <div className="image-lightbox" onClick={() => setZoomed(null)}>
-          <img src={imageUrl(zoomed)} alt="manuscript folio enlarged" />
-        </div>
+      {lightboxPath && (
+        <ManuscriptLightbox
+          src={imageUrl(lightboxPath)}
+          alt="Manuscript folio enlarged"
+          onClose={() => setLightboxPath(null)}
+        />
       )}
     </div>
   );

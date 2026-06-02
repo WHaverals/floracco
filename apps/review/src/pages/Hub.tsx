@@ -14,7 +14,8 @@ const TOOLS: Tool[] = [
   {
     to: "/reconcile",
     title: "Word–Database reconciliation",
-    blurb: "Decide which database record(s), if any, each Word entry supports. Side-by-side reading, evidence, and image.",
+    blurb:
+      "Decide which database record(s), if any, each Word entry supports. Medium “verify date/folio” cases hand off to Corrections after you confirm the link.",
     status: "ready",
   },
   {
@@ -32,7 +33,8 @@ const TOOLS: Tool[] = [
   {
     to: "/corrections",
     title: "Database corrections",
-    blurb: "Propose, review, and apply field-level corrections with a source quote and full audit trail.",
+    blurb:
+      "Fix dates, folios, and other DB fields with Word evidence beside each proposal — includes date/folio checks from matching.",
     status: "ready",
   },
   {

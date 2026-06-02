@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { imageUrl } from "../api";
 import type { ReviewCase } from "../types";
+import ManuscriptLightbox from "./ManuscriptLightbox";
 
 function value(row: ReviewCase["row"], key: string): string {
   return String(row[key] ?? "");
@@ -19,6 +20,28 @@ export default function ImagePanel({ reviewCase }: { reviewCase: ReviewCase }) {
 
   const previousImage = () => setActiveIndex((index) => Math.max(index - 1, 0));
   const nextImage = () => setActiveIndex((index) => Math.min(index + 1, imageCount - 1));
+
+  const imageNav =
+    imageCount > 1 ? (
+      <>
+        <button
+          type="button"
+          className="manuscript-lightbox-btn"
+          disabled={activeIndex === 0}
+          onClick={previousImage}
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          className="manuscript-lightbox-btn"
+          disabled={activeIndex >= imageCount - 1}
+          onClick={nextImage}
+        >
+          Next
+        </button>
+      </>
+    ) : null;
 
   return (
     <section className="panel image-panel">
@@ -44,29 +67,13 @@ export default function ImagePanel({ reviewCase }: { reviewCase: ReviewCase }) {
           ) : null}
           <p className="muted">{value(reviewCase.row, "image_candidates_plain_language")}</p>
           {isZoomed ? (
-            <div className="image-modal" role="dialog" aria-modal="true" aria-label="Zoomed manuscript image">
-              <div className="image-modal-toolbar">
-                <span>
-                  Image {activeIndex + 1} of {imageCount}
-                </span>
-                <div>
-                  {imageCount > 1 ? (
-                    <>
-                      <button disabled={activeIndex === 0} onClick={previousImage} type="button">
-                        Previous
-                      </button>
-                      <button disabled={activeIndex >= imageCount - 1} onClick={nextImage} type="button">
-                        Next
-                      </button>
-                    </>
-                  ) : null}
-                  <button onClick={() => setIsZoomed(false)} type="button">
-                    Close
-                  </button>
-                </div>
-              </div>
-              <img alt="Zoomed manuscript page candidate" src={imageUrl(path)} />
-            </div>
+            <ManuscriptLightbox
+              src={imageUrl(path)}
+              alt="Zoomed manuscript page candidate"
+              label={`Image ${activeIndex + 1} of ${imageCount}`}
+              toolbarExtra={imageNav}
+              onClose={() => setIsZoomed(false)}
+            />
           ) : null}
         </>
       ) : (
