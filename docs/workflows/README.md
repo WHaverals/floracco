@@ -624,8 +624,10 @@ Goal: candidate alignment, not automatic truth.
 Why this stage exists:
 
 - Word entries and SQLite rows are close but not identical evidence layers;
+- one Word narrative can summarize more than one act, while SQLite may split those acts across `contract` and `sub_contract` rows;
 - new contracts usually point to `contract.contract_id`, while many later acts point to `sub_contract.main_contract_id`;
 - folder, folio, date, event number, event type, and narrative text can disagree, so every match must remain inspectable.
+- combined Word entries are matched component by component where possible: for example, `[Disdetta] ... + [Nuovo] 4325` may correctly propose both a `sub_contract` row for the disdetta component and a `contract` row for the nuovo component.
 
 Command:
 
@@ -640,17 +642,32 @@ Matching signals:
 - `registration_date`;
 - event number;
 - event type;
-- text similarity against DB `document`;
+- text similarity against DB `document`, backed by explicit metrics rather than an uninspected label;
+- directional token coverage (`word_token_coverage_in_db`, `db_token_coverage_in_word`);
+- shared phrase counts and longest shared phrase length;
+- structured DB field overlap: firm/sub-firm names, person names, professions, places, addresses, cash amounts, totals, duration/renewal fields, and currency;
 - subcontracts via `sub_contract.main_contract_id` and references like "di 3488."
+- component-aware labels and IDs inside combined Word entries, so a secondary `[Nuovo]`, `[Rinnovo]`, `[Bilancio]`, or `[Disdetta]` component can support an additional DB link.
 - exact ID fallback for DB rows with missing/malformed register metadata, kept as a conflict rather than a clean match.
+
+Important interpretation:
+
+- the DB `document` field is useful evidence because it often mirrors the Word narrative closely;
+- it is not a separate archival source, so a literal text match should help align records but should not overrule the authoritative Word narrative;
+- field-overlap evidence is interpretable support for a suggestion, not proof that the row is correct;
+- the review unit is now the Word source entry plus its proposed DB link group, not only the single highest-scoring DB row.
 
 Outputs:
 
 - `data/derived/word-pipeline/05_db_candidate_matches/entry_db_matches.jsonl`
 - `data/derived/word-pipeline/05_db_candidate_matches/entry_db_matches.csv`
 - `data/derived/word-pipeline/05_db_candidate_matches/match_candidates.jsonl`
+- `data/derived/word-pipeline/05_db_candidate_matches/source_entry_db_link_candidates.jsonl`
+- `data/derived/word-pipeline/05_db_candidate_matches/source_entry_db_link_candidates.csv`
+- `data/derived/word-pipeline/05_db_candidate_matches/alignment_diagnostics.jsonl`
+- `data/derived/word-pipeline/05_db_candidate_matches/alignment_diagnostics.csv`
 - `data/derived/word-pipeline/05_db_candidate_matches/db_only_rows.jsonl`
-- `data/derived/word-pipeline/05_db_candidate_matches/duplicate_top_matches.jsonl`
+- `data/derived/word-pipeline/05_db_candidate_matches/duplicate_link_candidates.jsonl`
 - `data/derived/word-pipeline/05_db_candidate_matches/review_buckets.csv`
 - `data/derived/word-pipeline/05_db_candidate_matches/register_match_summary.csv`
 - `data/derived/word-pipeline/05_db_candidate_matches/issues.jsonl`
@@ -667,12 +684,29 @@ Match states:
 Diagnostics:
 
 - `word_only`: source entry has no plausible DB row yet.
-- `db_only_rows.jsonl`: DB row was not accepted as a top match.
-- `duplicate_top_matches.jsonl`: one DB row is the accepted top candidate for multiple Word entries.
+- `db_only_rows.jsonl`: DB row was not proposed as a Word-entry link candidate.
+- `duplicate_link_candidates.jsonl`: one DB row is proposed for multiple Word entries.
 - `review_buckets.csv`: interpretable buckets for expected Word-only rows, true unresolved rows, DB metadata problems, and multi-match cases.
 - `top_conflicts`: visible disagreement such as `registration_date_differs`, `folio_differs`, `event_type_table_differs`, `db_register_missing`, or `text_similarity_low`.
 - `ambiguous`: plausible candidates exist, but the margin is too weak or the signals conflict.
 - `matched_multiple`: one Word entry plausibly maps to multiple DB rows with equivalent evidence, often because a combined Word act is represented as separate DB subcontracts.
+
+Alignment diagnostics:
+
+- these are part of `match-db`, not a separate segmentation stage;
+- they do not change Word segmentation or approve DB links;
+- they explain unresolved or suspicious alignment cases in reviewer-facing language;
+- examples include DB rows whose text appears in a Word entry but were not linked, marginal-date confusion, original/current folio numbering problems, one Word entry combining multiple DB rows, and one DB row being suggested for multiple Word entries.
+
+Alignment layer:
+
+- `match_candidates.jsonl` keeps the ranked scoring evidence for audit and debugging;
+- `source_entry_db_link_candidates.csv/jsonl` is the review alignment layer, with one row per proposed Word-entry to DB-row link;
+- `match_group_id` groups all proposed links for the same Word source entry;
+- `relationship_type` records whether the proposal is `simple_one_to_one`, `word_entry_to_multiple_subcontracts`, `word_entry_to_contract_and_subcontract`, or another one-Word-to-many-DB relationship;
+- strong secondary candidates from the same Word entry are promoted into the grouped link layer when component labels/IDs and text or structured-field evidence support them;
+- each link row records narrative metrics, shared-phrase counts, and structured field-overlap evidence so every similarity claim is auditable;
+- `needs_review` stays `True` for grouped links, candidate matches, or visible conflicts. It does not mean the link is wrong; it means a person should approve the relationship before field reconciliation.
 
 Do not:
 
@@ -695,32 +729,31 @@ Command:
 uv run python workflows/word_pipeline.py qa-packet
 ```
 
-Optional interactive notebook:
-
-```bash
-uv run marimo edit notebooks/word_db_match_qa.py
-```
-
 Outputs:
 
 - `data/derived/word-pipeline/06_qa_packet/word_db_match_qa_packet.csv`
 - `data/derived/word-pipeline/06_qa_packet/word_db_match_qa_packet.jsonl`
 - `data/derived/word-pipeline/06_qa_packet/word_db_match_qa_packet.html`
 - `data/derived/word-pipeline/06_qa_packet/qa_packet_summary.md`
-- `notebooks/word_db_match_qa.py`
+
+The full field-by-field reference is in [qa_packet_schema.md](qa_packet_schema.md)
+(the documented contract between the pipeline and the review platform).
 
 What each QA row contains:
 
 - the review priority and recommended review bucket in plain language;
 - a suggested reviewer action;
 - source entry ID, register, raw Word label, date, and folio;
-- top DB row ID, table/type, IDs, and score;
+- top DB row ID, table/type, IDs, and score for backward-readable summaries;
+- suggested DB row ID(s), suggested relationship type, and grouped DB-link explanation from `source_entry_db_link_candidates`;
+- narrative similarity ratio, directional token coverage, shared-phrase metrics, and structured DB field overlap in plain language;
+- alignment diagnostics explaining unresolved or suspicious cases without creating a separate review stage;
 - signals and conflicts translated into prose;
 - a top-candidates summary;
 - optional image candidate paths and image-review notes, when `workflows/image_pipeline.py all` has been run;
-- side-by-side Word entry text and top DB `document` text.
+- side-by-side Word entry text and suggested DB `document` text.
 
-The generated packet intentionally includes all `word_only`, `ambiguous`, `matched_multiple`, duplicated-top-match, and DB-only diagnostics. It also includes targeted candidate-conflict rows and small control samples of clean matches. It is a review queue, not an approval file.
+The generated packet intentionally includes all `word_only`, `ambiguous`, `matched_multiple`, duplicate-link-candidate, and DB-only diagnostics. It also includes targeted candidate-conflict rows, small high-confidence control samples, and a small `Word-DB-image success control` sample where the Word entry, DB row, and image candidate all align cleanly. It is a review queue, not an approval file.
 
 ### Stage 5: Extract structured field proposals
 
@@ -762,37 +795,25 @@ Do not:
 
 ### Stage 6: Human review
 
-Goal: turn candidate Word-DB-image links and later field proposals into durable human decisions.
+Goal: turn proposals into approved corrections.
 
-For Word-DB-image match review, use the Streamlit app:
+The review app is split into a local Python API and a browser interface:
 
 ```bash
-uv run streamlit run apps/word_db_match_review.py
+uv run uvicorn workflows.review_server:app --reload
+cd apps/review && npm install && npm run dev
 ```
 
-The app is designed for nontechnical review. It shows one case at a time:
+The API reads the QA packet and SQLite for display only. The browser interface is designed as a calm one-case-at-a-time review desk, not a dense spreadsheet.
 
-- Word source entry text and basic source metadata;
-- structured database fields, plus DB narrative text when present;
-- manuscript image candidate and page/folio notes;
-- plain-language signals, conflicts, and shared phrases;
-- reviewer-facing judgment questions.
+Review UI shows:
 
-Match-review decisions are written to:
-
-- `data/derived/word-pipeline/08_review_decisions/review_decisions.csv`
-
-The app does **not** update SQLite, Word files, or images.
-
-Review UI should show:
-
-- DB value;
-- Word value;
-- source quote;
-- revision state;
-- folio;
-- eventually image candidate;
-- proposed change;
+- Word source-entry text and metadata;
+- one or more suggested DB rows for that Word entry;
+- source quote and DB narrative text when available;
+- revision state and folio;
+- image candidate;
+- proposed relationship type;
 - reviewer decision.
 
 Review decisions:
@@ -806,8 +827,13 @@ Review decisions:
 
 Outputs:
 
-- `review_decisions.jsonl`
-- audit trail with reviewer, timestamp, source, old value, new value.
+- `data/derived/word-pipeline/08_review_decisions/review_decisions.csv`
+- audit trail with reviewer, timestamp, Word source entry, selected/rejected DB rows, image check status, and notes.
+
+Code:
+
+- `workflows/review_server.py`
+- `apps/review/`
 
 Do not:
 
@@ -941,6 +967,102 @@ Example LLM extraction object:
 - Do not normalize economic activity without preserving the raw phrase.
 - Do not assume image scan order equals folio order without calibration.
 - Do not use LLM output without source quotes and human review.
+
+## Interpretive layers requiring review
+
+These are points where the pipeline encodes an **editorial or historical judgment**
+rather than a mechanical fact. They are not bugs; they are decisions that a human
+(FT for historical/legal questions) should confirm, because downstream matching,
+field reconciliation, and eventual DB updates inherit them. Keep this list current
+as the pipeline evolves.
+
+### 1. Narrative label → DB `sub_type` mapping (`DB_EVENT_TYPE_MAP`)
+
+The matcher decides whether a Word event label is "compatible" with a DB row's
+`sub_type`. The DB only stores four sub_types (`balance`, `renewal`,
+`termination`, `variation`), so every Italian act label is folded into one or more
+of those four. Several of these groupings are interpretive and **FT review
+pending**:
+
+- `assignment` (*cessione*) → `variation` / `termination`
+- `ratification` (*ratifica*) → `variation`
+- `confirmation` (*conferma*) and `continuation` (*continuazione*) → `renewal` / `variation`
+- `extension` (*proroga*) → `renewal` / `variation`
+- `capital_return` (*restituzione capitali*) → `variation` / `termination`
+- `winding_up` (*stralcio*) → `termination` / `variation`
+
+The map is intentionally permissive (recall over precision); a wrong grouping only
+weakens a +10 signal, it does not by itself force or block a match. Confirm the
+historical intent before this hardens into anything authoritative. See also the
+glossary entries marked **FT review pending** and `docs/data_dictionary.md`.
+
+### 2. What a text match does and does not prove
+
+- The matcher now scores text on `max(symmetric_ratio, text_containment_ratio)` so
+  that a DB `document` that is a faithful **snippet** of the Word narrative is not
+  mis-scored as dissimilar. A reviewer should still sanity-check that a
+  high-containment match reflects genuine shared narrative, not coincidental
+  shared vocabulary.
+- The DB `document` field is a **mirror of the Word narrative, not an independent
+  archival source**. A strong text match therefore supports *alignment* (this Word
+  entry corresponds to this DB row); it does **not** prove the DB's structured
+  fields are correct. Field-level correctness is decided against the Word narrative
+  and the manuscript image, not against `document`.
+
+### 3. Folio agreement and disagreement
+
+- A Word source entry usually spans the **whole act** (often several folia),
+  while a DB row sits on one folio inside that span. Folio comparison therefore
+  treats folios as **ranges** and compares intervals, not endpoints:
+  `exact` > `within` (one range contains the other) > `overlap` (ranges
+  intersect) > `off_by_one` (adjacent folios) > `different`. Only a truly
+  non-overlapping `different` raises the `folio_differs` conflict.
+- `folio_differs` is **not** an automatic rejection. It is tolerated in the link
+  layer only when the event number/main-contract id, the registration date, and
+  the narrative all corroborate the link — the signature of **original vs.
+  current foliation** in the same register (the DB often stores both, e.g.
+  `94r[ORIG.93r]`). A `folio_differs` with weak text still blocks. Treat any
+  surviving `folio_differs` or `off_by_one` (`folio_adjacent`) match as a review
+  item; the original-numbering diagnostic flags the likely cases.
+- Some DB folios use a different physical system entirely (page numbers such as
+  `pp.20-21`) and will not reconcile to recto/verso foliation; these remain
+  review items rather than matches.
+
+### 4. Dates and the Florentine calendar
+
+- Italian dates are parsed to ISO, including double-dated forms (e.g. `1640/41`).
+- The systematic *stile fiorentino* year shift **is now modeled**: the Florentine
+  year began 25 March, so a document date in [1 Jan – 24 Mar] lags the modern year
+  by one. The DB stores the modern calendar; the Word narratives keep the document's
+  stated date. For pre-1750 Word dates in that window the matcher also tries the
+  modern-equivalent year and, on a match, records the **`registration_date_stile_fiorentino`**
+  signal (a slightly softer +20 vs. the +25 literal match) instead of raising
+  `registration_date_differs`. The 1750 cutoff (the Tuscan reform) protects later
+  registers. This is an editorial call: a `possible_stile_fiorentino_date_alignment`
+  diagnostic is emitted so a reviewer confirms the calendar-style alignment rather
+  than trusting it blindly. Any *remaining* `registration_date_differs` in early
+  Mercanzia registers should still be checked for other calendar/transcription causes.
+
+### 5. Source-entry ID stability
+
+- Entries now carry a content-stable **`source_entry_key`** alongside the
+  human-readable `source_entry_id`. `source_entry_id` is `register_id` + a sequential
+  ordinal and is **renumbered** whenever segmentation changes; `source_entry_key` is
+  derived from the entry's stable coordinates (register, folio span, earliest ISO
+  date, event label, event number), with a text content-hash suffix only for the rare
+  full-coordinate collision. It is reproducible across re-segmentation. **Human review
+  persistence should key on `source_entry_key`, not `source_entry_id`.** Store a snapshot
+  of the reviewed content (e.g. `current_text_sha256`) with each decision so that a
+  later content change can be detected and re-confirmed.
+
+### 6. One Word entry → several DB rows
+
+- A single Word narrative can describe several acts (e.g. a termination plus a new
+  contract), which the DB splits across `contract` and `sub_contract` rows. The
+  `relationship_type` assigned to a link group (`simple_one_to_one`,
+  `word_entry_to_multiple_subcontracts`,
+  `word_entry_to_contract_and_subcontract`, …) is a heuristic and should be
+  confirmed during review.
 
 ## Open Questions
 

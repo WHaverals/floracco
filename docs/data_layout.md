@@ -12,6 +12,7 @@ data/
 ├── sqlite/                 # Structured database
 │   ├── main.db             # Working SQLite database (~4,867 contracts)
 │   └── new.sql             # Text dump to rebuild the DB
+├── derived/                # Regenerable outputs (normalized Word, extracted JSONL)
 └── reference/              # Local reference copies (optional)
     ├── sql-formulas/       # Legacy analytical SQL in Word (.docx); MariaDB syntax
     └── Accomandite.pdf     # Background lecture (optional local copy)
@@ -29,6 +30,8 @@ Configure paths in `.env` (see `.env.example`).
 | Analytical queries | `data/reference/sql-formulas/` | Port to `queries/` as SQLite |
 
 Linking: DB fields `archive`, `series`, `folder`, `folio` ↔ Word file ↔ image folder (use a register map).
+
+Workflow plan: [workflows/README.md](workflows/README.md) describes the staged Word → extracted entries → DB matching → reviewable JSONL process. Original Word files remain untouched; derived copies and JSONL outputs belong under a gitignored derived-data area.
 
 ### Rebuild database
 
@@ -65,6 +68,7 @@ sqlite3 data/sqlite/main.db ".read data/sqlite/new.sql"
 | `schema/` | Database field specs (Excel) |
 | `data_dictionary.md` | Field glossary (in progress) |
 | `data_layout.md` | This file |
+| `workflows/README.md` | Word ↔ DB reconciliation plan |
 
 ## Query cookbook (in git)
 
