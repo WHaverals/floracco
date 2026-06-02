@@ -1606,6 +1606,47 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+COMPOUND_LABEL_SPLIT_PLUS_SLASH_RE = re.compile(r"\s*[+/]\s*")
+COMPOUND_LABEL_SPLIT_E_RE = re.compile(r"\s+e\s+", flags=re.IGNORECASE)
+EDITORIAL_LABEL_PREFIXES = (
+    "manca ",
+    "nuova formula",
+    "senza data",
+    "senza testimoni",
+    "non ci sono testimoni",
+)
+
+
+def looks_like_event_label_part(part: str) -> bool:
+    cleaned = re.sub(r"[^\w\sàèéìòù'-]+", " ", part.strip(), flags=re.IGNORECASE)
+    label = re.sub(r"\s+", " ", cleaned).strip().lower()
+    if not label or len(label) > 50:
+        return False
+    if label in EVENT_LABEL_MAP:
+        return True
+    return any(pattern.search(label) for _, pattern in EVENT_LABEL_KEYWORDS)
+
+
+def split_compound_event_label_inner(label_inner: str) -> list[str]:
+    """Split one bracket label on +, /, or e when each part looks like an act label.
+
+    Grounded in source_entries: ~64 labels use [X+Y], [X/Y], or [X e Y] (e.g.
+    [Bilancio e modifica], [Disdetta/Rinnovo], [nuovo + variazione]).
+    """
+    inner = label_inner.strip()
+    if COMPOUND_LABEL_SPLIT_PLUS_SLASH_RE.search(inner):
+        parts = [part.strip() for part in COMPOUND_LABEL_SPLIT_PLUS_SLASH_RE.split(inner) if part.strip()]
+    elif COMPOUND_LABEL_SPLIT_E_RE.search(inner):
+        parts = [part.strip() for part in COMPOUND_LABEL_SPLIT_E_RE.split(inner) if part.strip()]
+    else:
+        return [inner]
+    if len(parts) < 2:
+        return [inner]
+    if all(looks_like_event_label_part(part) for part in parts):
+        return parts
+    return [inner]
+
+
 def normalize_event_label(raw_label: str | None) -> str | None:
     if raw_label is None:
         return None
@@ -1623,18 +1664,8 @@ def normalize_event_label(raw_label: str | None) -> str | None:
     return "combined_event"
 
 
-def event_label_guesses(raw_label: str) -> list[str]:
-    label = re.sub(r"\s+", " ", raw_label.strip().strip("[]").strip()).lower()
-    if label.startswith(
-        (
-            "manca ",
-            "nuova formula",
-            "senza data",
-            "senza testimoni",
-            "non ci sono testimoni",
-        )
-    ):
-        return []
+def event_label_guesses_single(label: str) -> list[str]:
+    label = re.sub(r"\s+", " ", label.strip().strip("[]").strip()).lower()
     exact_label = EVENT_LABEL_MAP.get(label)
     if exact_label is not None:
         return [exact_label]
@@ -1645,6 +1676,21 @@ def event_label_guesses(raw_label: str) -> list[str]:
         if pattern.search(label) and guess not in guesses:
             guesses.append(guess)
     return guesses
+
+
+def event_label_guesses(raw_label: str) -> list[str]:
+    label_inner = re.sub(r"\s+", " ", raw_label.strip().strip("[]").strip())
+    if label_inner.lower().startswith(EDITORIAL_LABEL_PREFIXES):
+        return []
+    parts = split_compound_event_label_inner(label_inner)
+    if len(parts) > 1:
+        guesses: list[str] = []
+        for part in parts:
+            for guess in event_label_guesses_single(part):
+                if guess not in guesses:
+                    guesses.append(guess)
+        return guesses
+    return event_label_guesses_single(label_inner)
 
 
 def count_event_labels(text: str) -> int:
@@ -1675,24 +1721,27 @@ def event_components_for_text(text: str) -> list[dict[str, Any]]:
     components: list[dict[str, Any]] = []
     matches = list(re.finditer(r"\[(?P<label>[^\]]+)\]", text or ""))
     for index, match in enumerate(matches):
-        raw_label = f"[{match.group('label').strip()}]"
-        guesses = event_label_guesses(raw_label)
-        if not guesses:
-            continue
+        label_inner = match.group("label").strip()
+        label_parts = split_compound_event_label_inner(label_inner)
+        part_labels = [f"[{part}]" for part in label_parts]
         next_start = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         segment = text[match.end() : next_start]
         referenced_number = immediate_component_reference_number(segment)
         event_number = immediate_component_number(segment)
-        for guess in guesses:
-            components.append(
-                {
-                    "raw_label": raw_label,
-                    "label_guess": guess,
-                    "event_number": event_number,
-                    "referenced_event_number": referenced_number,
-                    "segment_text": segment.strip()[:500],
-                }
-            )
+        for raw_label in part_labels:
+            guesses = event_label_guesses(raw_label)
+            if not guesses:
+                continue
+            for guess in guesses:
+                components.append(
+                    {
+                        "raw_label": raw_label,
+                        "label_guess": guess,
+                        "event_number": event_number,
+                        "referenced_event_number": referenced_number,
+                        "segment_text": segment.strip()[:500],
+                    }
+                )
     return components
 
 
@@ -3082,6 +3131,8 @@ def classify_match(candidates: list[dict[str, Any]]) -> str:
     margin = best["score"] - second_score
     if has_matched_multiple(candidates):
         return "matched_multiple"
+    if is_dual_contract_sub_combined_act(candidates):
+        return "matched_high_confidence"
     if best["score"] >= 85 and margin >= 12 and not best["conflicts"]:
         return "matched_high_confidence"
     if best["score"] >= 65 and margin >= 8:
@@ -3112,6 +3163,35 @@ def has_matched_multiple(candidates: list[dict[str, Any]]) -> bool:
         and best.get("db_folio_end") == second.get("db_folio_end")
     )
     return same_main and same_date and same_folio
+
+
+def is_dual_contract_sub_combined_act(candidates: list[dict[str, Any]]) -> bool:
+    """True when top two candidates are a contract + sub_contract combined act.
+
+    Word entries like [disdetta + nuova] often link one sub_contract (termination)
+    and one contract (new) with close scores but different main_contract_ids, so
+    has_matched_multiple() does not apply and the default margin rule marks them ambiguous.
+    """
+    if len(candidates) < 2:
+        return False
+    first = candidates[0]
+    second = candidates[1]
+    if {first.get("db_table"), second.get("db_table")} != {"contract", "sub_contract"}:
+        return False
+    for candidate in (first, second):
+        if candidate["score"] < 100:
+            return False
+        if candidate.get("conflicts"):
+            return False
+        if not (ID_SIGNALS & set(candidate.get("signals") or [])):
+            return False
+        if candidate_text_strength(candidate) < 0.85:
+            return False
+    if first["score"] - second["score"] > 25:
+        return False
+    if len(candidates) > 2 and second["score"] - candidates[2]["score"] < 40:
+        return False
+    return True
 
 
 def is_combined_word_label(entry_or_match: dict[str, Any]) -> bool:
