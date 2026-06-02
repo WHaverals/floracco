@@ -10,8 +10,9 @@ data/
 │   ├── word/               # Authoritative contract narratives (.doc/.docx)
 │   └── img/                # Folio photographs, one folder per register
 ├── sqlite/                 # Structured database
-│   ├── main.db             # Working SQLite database (~4,867 contracts)
-│   └── new.sql             # Text dump to rebuild the DB
+│   ├── main.db             # Working SQLite database (~4,866 contracts)
+│   ├── projects_at.sql     # Live IAS MySQL export (phpMyAdmin; canonical source)
+│   └── archive/            # Optional retired dumps (e.g. old `new.sql`)
 ├── derived/                # Regenerable outputs (normalized Word, extracted JSONL)
 └── reference/              # Local reference copies (optional)
     ├── sql-formulas/       # Legacy analytical SQL in Word (.docx); MariaDB syntax
@@ -35,8 +36,20 @@ Workflow plan: [workflows/README.md](workflows/README.md) describes the staged W
 
 ### Rebuild database
 
+From the live IAS MySQL export (`projects_at.sql` — 11 research tables only; skips `admin` and MySQL views):
+
 ```bash
-sqlite3 data/sqlite/main.db ".read data/sqlite/new.sql"
+uv run python workflows/db_import.py build
+```
+
+Optional: set `FLORACCO_DB_DUMP_PATH` if the dump is not at `data/sqlite/projects_at.sql`. The script backs up the existing `main.db` to `main.db.bak`, validates row counts, and exits non-zero on failure.
+
+After import, rebuild derived Word-DB artifacts (do not re-run Word stages 00–04 unless the corpus changed):
+
+```bash
+uv run python workflows/word_pipeline.py match-db
+uv run python workflows/word_pipeline.py qa-packet
+uv run python workflows/correction_candidates.py build
 ```
 
 ## Database schema (in git)
