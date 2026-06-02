@@ -46,6 +46,21 @@ const REASON_LABEL: Record<string, string> = {
 
 const DATE_FOLIO_REASON_PRIORITY = ["registration_date_differs", "folio_differs"] as const;
 
+function showCandidateExplanation(candidate: CorrectionCandidate): boolean {
+  if (!candidate.explanation?.trim()) {
+    return false;
+  }
+  if (
+    candidate.field &&
+    candidate.word_value != null &&
+    candidate.word_value !== "" &&
+    candidate.db_value != null
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function pickCandidateForHandoff(
   candidates: CorrectionCandidate[],
   sourceEntryId: string,
@@ -368,60 +383,46 @@ function CandidateQueue() {
         {!selected && <p className="muted">{error || "Select a candidate."}</p>}
         {selected && (
           <article className="db-record correction-detail">
-            <header className="db-record-head">
-              <p className="eyebrow">
-                {selected.family === "word_db_conflict" ? "Word ↔ database conflict" : "Database health"} ·{" "}
-                <span className={`cand-strength-label is-${selected.strength}`}>{selected.strength} signal</span>
-              </p>
-              <h2>{selected.title}</h2>
-              <Link
-                className="db-row-id"
-                to={`/database/${selected.db_table}/${selected.db_row_id.split(":")[1]}`}
-              >
-                {selected.db_row_id} ↗
-              </Link>
-              {selected.source_entry_key ? (
+            <header className="db-record-head cand-record-head">
+              <h2 className="cand-title">
+                {selected.title}
+                <span className={`cand-meta-strength is-${selected.strength}`}>{selected.strength}</span>
+              </h2>
+              <div className="cand-meta-row">
                 <Link
-                  className="cand-reconcile-link"
-                  to={`/reconcile/${encodeURIComponent(reconcileReviewId(selected.source_entry_key, selected.db_row_id))}`}
+                  className="cand-badge-link"
+                  to={`/database/${selected.db_table}/${selected.db_row_id.split(":")[1]}`}
                 >
-                  Open reconcile case →
+                  {selected.db_row_id} ↗
                 </Link>
-              ) : null}
+                {selected.source_entry_key ? (
+                  <Link
+                    className="cand-badge-link"
+                    to={`/reconcile/${encodeURIComponent(reconcileReviewId(selected.source_entry_key, selected.db_row_id))}`}
+                  >
+                    Reconcile →
+                  </Link>
+                ) : null}
+                {selected.link_confirmed ? (
+                  <span className="cand-tag is-confirmed">Link confirmed</span>
+                ) : selected.source_entry_key ? (
+                  <span className="cand-tag is-pending">Confirm link first</span>
+                ) : null}
+                {selected.existing_proposal ? (
+                  <span className="cand-tag is-handled" title={selected.existing_proposal.proposed_value ?? undefined}>
+                    {selected.existing_proposal.status}
+                    {selected.existing_proposal.proposed_value
+                      ? ` → ${selected.existing_proposal.proposed_value}`
+                      : ""}
+                  </span>
+                ) : null}
+                {selected.dismissed ? <span className="cand-tag is-dismissed">Dismissed</span> : null}
+              </div>
             </header>
 
             {handoffMiss && <div className="notice error">{handoffMiss}</div>}
             {message && <div className="notice success">{message}</div>}
             {error && <p className="error-text">{error}</p>}
-
-            {!selected.link_confirmed && selected.source_entry_key && (
-              <div className="notice info">
-                Link not confirmed yet —{" "}
-                <Link
-                  to={`/reconcile/${encodeURIComponent(reconcileReviewId(selected.source_entry_key, selected.db_row_id))}`}
-                >
-                  confirm in Reconcile first
-                </Link>
-                , then decide whether the DB field should change.
-              </div>
-            )}
-            {selected.link_confirmed && (
-              <div className="notice info">
-                This DB row is on a <strong>reviewer-confirmed link</strong> — identity is settled, so the field
-                really should agree with the Word source.
-              </div>
-            )}
-            {selected.existing_proposal && (
-              <div className="notice info">
-                A correction is already <strong>{selected.existing_proposal.status}</strong> for this field
-                {selected.existing_proposal.proposed_value
-                  ? ` (→ ${selected.existing_proposal.proposed_value})`
-                  : ""}
-                .
-              </div>
-            )}
-
-            <p className="reading-text cand-explanation">{selected.explanation}</p>
 
             {siblingCandidates.length > 0 && (
               <div className="cand-siblings">
@@ -439,17 +440,23 @@ function CandidateQueue() {
               </div>
             )}
 
-            <div className="correction-diff cand-compare">
-              <div className="diff-side diff-before">
-                <span className="propose-label">In the database (the truth to perfect)</span>
-                <span>{selected.db_value || "— (empty)"}</span>
+            {(selected.db_value != null || selected.word_value != null || selected.field) && (
+              <div className="correction-diff cand-compare">
+                <div className="diff-side diff-before">
+                  <span className="propose-label">In the database (the truth to perfect)</span>
+                  <span>{selected.db_value || "— (empty)"}</span>
+                </div>
+                <span className="diff-arrow">vs</span>
+                <div className="diff-side diff-after">
+                  <span className="propose-label">Word source (evidence — not applied)</span>
+                  <span>{selected.word_value || "— open the narrative to read"}</span>
+                </div>
               </div>
-              <span className="diff-arrow">vs</span>
-              <div className="diff-side diff-after">
-                <span className="propose-label">Word source (evidence — not applied)</span>
-                <span>{selected.word_value || "— open the narrative to read"}</span>
-              </div>
-            </div>
+            )}
+
+            {showCandidateExplanation(selected) && (
+              <p className="reading-text cand-explanation">{selected.explanation}</p>
+            )}
 
             {selected.suggested_value && (
               <p className="muted cand-suggested">

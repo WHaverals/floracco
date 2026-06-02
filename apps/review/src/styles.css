@@ -2509,8 +2509,13 @@ progress {
 }
 
 .cand-tag.is-confirmed {
-  background: #d7e3f4;
-  color: #2c4a73;
+  background: #e4eddc;
+  color: #3d5c34;
+}
+
+.cand-tag.is-pending {
+  background: #f3e6cf;
+  color: #8a6238;
 }
 
 .cand-tag.is-handled {
@@ -2524,13 +2529,13 @@ progress {
 }
 
 .notice.info {
-  background: #e2ecf6;
-  color: #2c4a73;
+  background: #f3e6cf;
+  color: #5a472f;
 }
 
-.notice.info {
-  background: #e2ecf6;
-  color: #2c4a73;
+.notice.info a {
+  color: #6b5840;
+  font-weight: 600;
 }
 
 .case-bar-conflicts {
@@ -2595,10 +2600,61 @@ progress {
   gap: 8px;
 }
 
-.cand-reconcile-link {
-  display: inline-block;
-  margin-top: 6px;
-  font-size: 0.86rem;
+.cand-record-head h2.cand-title {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+
+.cand-meta-strength {
+  background: #efe6d6;
+  border-radius: 999px;
+  color: #6b5840;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  text-transform: uppercase;
+}
+
+.cand-meta-strength.is-high {
+  background: #f3ddd4;
+  color: #9a4230;
+}
+
+.cand-meta-strength.is-medium {
+  background: #f0e4d0;
+  color: #8a6238;
+}
+
+.cand-meta-strength.is-low {
+  background: #e8eddf;
+  color: #5f6f47;
+}
+
+.cand-meta-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cand-badge-link {
+  background: #efe6d6;
+  border-radius: 6px;
+  color: #6b5840;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  text-decoration: none;
+}
+
+.cand-badge-link:hover {
+  background: #e5d9c6;
+  color: #4a3722;
 }
 
 .cand-siblings {
@@ -2610,17 +2666,19 @@ progress {
 }
 
 .cand-explanation {
-  margin: 6px 0 4px;
+  margin: 12px 0 4px;
 }
 
-/* The candidate compare is "DB truth vs Word evidence", not a deletion. */
+/* DB truth vs Word evidence — warm palette on both sides. */
 .cand-compare .diff-before {
-  background: #e6edf5;
+  background: #efe6d6;
+  border: 1px solid #e0d0bc;
   text-decoration: none;
 }
 
 .cand-compare .diff-after {
   background: #f4ead8;
+  border: 1px solid #e8dcc8;
 }
 
 .cand-source-meta {
