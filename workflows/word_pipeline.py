@@ -1836,6 +1836,13 @@ def is_date_context_paragraph(paragraph: dict[str, Any]) -> bool:
     return False
 
 
+def trim_trailing_blank_paragraphs(paragraphs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    end = len(paragraphs)
+    while end > 0 and not str(paragraphs[end - 1].get("current_text") or "").strip():
+        end -= 1
+    return paragraphs[:end]
+
+
 def group_rows_by_register(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -2086,7 +2093,7 @@ def segment_register(
         nonlocal active_start, active_label, next_ordinal
         if active_start is None or active_label is None:
             return
-        block = paragraphs[active_start:end_exclusive]
+        block = trim_trailing_blank_paragraphs(paragraphs[active_start:end_exclusive])
         if not block:
             return
         entry, mapping, entry_issues = build_entry_from_paragraphs(

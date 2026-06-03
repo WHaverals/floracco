@@ -14,7 +14,9 @@ from workflows.word_pipeline import (
     event_label_guesses,
     has_matched_multiple,
     is_dual_contract_sub_combined_act,
+    segment_register,
     split_compound_event_label_inner,
+    trim_trailing_blank_paragraphs,
 )
 
 
@@ -319,6 +321,51 @@ def test_group_word_entry_images_merges_opening_spread() -> None:
     assert grouped[0]["path"] == "Mercanzia/122.jpg"
     assert grouped[0]["needs_review"] is True
     assert [f["folio"] for f in grouped[0]["folios"]] == ["122v", "123r"]
+
+
+def test_trim_trailing_blank_paragraphs() -> None:
+    paragraphs = [
+        {"paragraph_index": 0, "current_text": "body"},
+        {"paragraph_index": 1, "current_text": ""},
+        {"paragraph_index": 2, "current_text": "   "},
+    ]
+    trimmed = trim_trailing_blank_paragraphs(paragraphs)
+    assert [p["paragraph_index"] for p in trimmed] == [0]
+    assert trim_trailing_blank_paragraphs([{"paragraph_index": 0, "current_text": ""}]) == []
+
+
+def test_segment_register_trims_trailing_blank_paragraphs() -> None:
+    register = {
+        "register_id": "Test_Register",
+        "source_file": "test.docx",
+        "normalized_path": "test.docx",
+        "front_matter_paragraph_count": 0,
+    }
+    paragraphs = [
+        {"paragraph_index": 0, "current_text": "1 gennaio 1600", "date_candidates": ["1 gennaio 1600"]},
+        {"paragraph_index": 1, "current_text": "[Nuova] 100"},
+        {"paragraph_index": 2, "current_text": "Primo att."},
+        {"paragraph_index": 3, "current_text": ""},
+        {"paragraph_index": 4, "current_text": ""},
+        {"paragraph_index": 5, "current_text": "2 gennaio 1600", "date_candidates": ["2 gennaio 1600"]},
+        {"paragraph_index": 6, "current_text": "[Nuova] 101"},
+        {"paragraph_index": 7, "current_text": "Secondo att."},
+        {"paragraph_index": 8, "current_text": ""},
+        {"paragraph_index": 9, "current_text": ""},
+        {"paragraph_index": 10, "current_text": ""},
+    ]
+    entries, entry_paragraphs, unsegmented, _issues = segment_register(register, paragraphs)
+    assert len(entries) == 2
+    assert entries[0]["paragraph_count"] == 3
+    assert entries[0]["end_paragraph_index"] == 2
+    # Blanks before the next label are absorbed as leading context for entry 2.
+    assert entries[1]["paragraph_count"] == 5
+    assert entries[1]["end_paragraph_index"] == 7
+    blank_unassigned = [
+        row for row in unsegmented if row["classification"] == "blank_unassigned"
+    ]
+    assert [row["paragraph_index"] for row in blank_unassigned] == [8, 9, 10]
+    assert len(entry_paragraphs) == 8
 
 
 def test_group_word_entry_images_keeps_distinct_files() -> None:
