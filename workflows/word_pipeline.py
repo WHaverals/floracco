@@ -1788,6 +1788,112 @@ def component_sub_contract_main_ids(entry: dict[str, Any]) -> set[int]:
     return ids
 
 
+GUESS_TO_LINK_COMPONENT_TYPES: dict[str, frozenset[str]] = {
+    "new_contract": frozenset({"contract", "new contract"}),
+    "termination": frozenset({"termination"}),
+    "balance": frozenset({"balance"}),
+    "modification": frozenset({"modification", "variation"}),
+    "renewal": frozenset({"renewal"}),
+    "assignment": frozenset({"assignment", "cession"}),
+    "ratification": frozenset({"ratification"}),
+}
+
+
+def format_act_component_display(component: dict[str, Any]) -> str:
+    label = str(component.get("raw_label") or "").strip()
+    number = component.get("event_number")
+    if number is None:
+        number = component.get("referenced_event_number")
+    if number is not None and str(number) not in label:
+        return f"{label} {number}".strip()
+    return label
+
+
+def component_link_id_exact(component: dict[str, Any], link: dict[str, Any]) -> bool:
+    guess = str(component.get("label_guess") or "")
+    event_number = component.get("event_number")
+    referenced_event_number = component.get("referenced_event_number")
+    db_table = str(link.get("db_table") or "")
+    db_contract_id = link.get("db_contract_id")
+    db_main_contract_id = link.get("db_main_contract_id")
+    if guess == "new_contract":
+        return (
+            db_table == "contract"
+            and event_number is not None
+            and db_contract_id is not None
+            and int(db_contract_id) == int(event_number)
+        )
+    target = referenced_event_number if referenced_event_number is not None else event_number
+    if target is None or db_main_contract_id is None:
+        return False
+    return db_table == "sub_contract" and int(db_main_contract_id) == int(target)
+
+
+def component_link_type_heuristic(component: dict[str, Any], link: dict[str, Any]) -> bool:
+    guess = str(component.get("label_guess") or "")
+    allowed = GUESS_TO_LINK_COMPONENT_TYPES.get(guess)
+    if not allowed:
+        return False
+    link_types = {
+        str(link.get("component_label") or "").strip().lower(),
+        str(link.get("db_sub_type") or "").strip().lower(),
+    }
+    return bool(allowed & link_types)
+
+
+def act_components_for_review(
+    entry: dict[str, Any],
+    links: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Map parsed Word act components to suggested DB link rows for review UI."""
+    parsed_components = event_components_for_entry(entry)
+    if not parsed_components:
+        return []
+
+    used_link_ids: set[str] = set()
+    rows: list[dict[str, Any]] = []
+    for component in parsed_components:
+        matched_link: dict[str, Any] | None = None
+        mapping_confidence = "unmapped"
+
+        for link in links:
+            link_id = str(link.get("db_row_id") or "")
+            if not link_id or link_id in used_link_ids:
+                continue
+            if component_link_id_exact(component, link):
+                matched_link = link
+                mapping_confidence = "exact"
+                break
+
+        if matched_link is None:
+            for link in links:
+                link_id = str(link.get("db_row_id") or "")
+                if not link_id or link_id in used_link_ids:
+                    continue
+                if component_link_type_heuristic(component, link):
+                    matched_link = link
+                    mapping_confidence = "heuristic"
+                    break
+
+        if matched_link is not None:
+            used_link_ids.add(str(matched_link.get("db_row_id") or ""))
+
+        rows.append(
+            {
+                "raw_label": component.get("raw_label"),
+                "label_guess": component.get("label_guess"),
+                "label_display": format_act_component_display(component),
+                "event_number": component.get("event_number"),
+                "referenced_event_number": component.get("referenced_event_number"),
+                "suggested_db_row_id": matched_link.get("db_row_id") if matched_link else None,
+                "link_component_label": matched_link.get("component_label") if matched_link else None,
+                "mapping_confidence": mapping_confidence,
+                "link_score": matched_link.get("score") if matched_link else None,
+            }
+        )
+    return rows
+
+
 def parse_entry_label(text: str) -> dict[str, Any] | None:
     stripped_text = text.strip()
     if re.match(r"^Senza accomandita\b", stripped_text, flags=re.IGNORECASE):
