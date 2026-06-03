@@ -169,13 +169,18 @@ export type DbWordSource = {
   via_row_id?: string | null;
 };
 
+export type WordEntryImageFolio = {
+  folio: string | null;
+  page_position: string | null;
+  entry_folio_role: string | null;
+};
+
 export type WordEntryImage = {
   path: string;
   file: string | null;
   role: string | null;
-  page_position: string | null;
-  folio: string | null;
   needs_review: boolean;
+  folios: WordEntryImageFolio[];
 };
 
 export type WordEntryDetail = {

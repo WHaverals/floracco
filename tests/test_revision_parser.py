@@ -7,7 +7,7 @@ Run with an ephemeral pytest (no project dependency added):
 
 from __future__ import annotations
 
-from workflows.review_server import build_word_entry_rich, parse_revision_segments
+from workflows.review_server import build_word_entry_rich, group_word_entry_images, parse_revision_segments
 from workflows.word_pipeline import (
     classify_match,
     event_components_for_text,
@@ -291,3 +291,51 @@ def test_build_word_entry_rich_handles_missing_fields() -> None:
     assert rich["tokens"] == []
     assert rich["comments"] == []
     assert rich["notes"] == []
+
+
+def test_group_word_entry_images_merges_opening_spread() -> None:
+    rows = [
+        {
+            "image_path": "Mercanzia/122.jpg",
+            "image_file": "122.jpg",
+            "image_role": "folio_opening",
+            "matched_folio": "122v",
+            "page_position": "left",
+            "entry_folio_role": "start",
+            "needs_review": False,
+        },
+        {
+            "image_path": "Mercanzia/122.jpg",
+            "image_file": "122.jpg",
+            "image_role": "folio_opening",
+            "matched_folio": "123r",
+            "page_position": "right",
+            "entry_folio_role": "end",
+            "needs_review": True,
+        },
+    ]
+    grouped = group_word_entry_images(rows)
+    assert len(grouped) == 1
+    assert grouped[0]["path"] == "Mercanzia/122.jpg"
+    assert grouped[0]["needs_review"] is True
+    assert [f["folio"] for f in grouped[0]["folios"]] == ["122v", "123r"]
+
+
+def test_group_word_entry_images_keeps_distinct_files() -> None:
+    rows = [
+        {
+            "image_path": "Mercanzia/122.jpg",
+            "matched_folio": "122v",
+            "page_position": "left",
+            "needs_review": False,
+        },
+        {
+            "image_path": "Mercanzia/124.jpg",
+            "matched_folio": "124v",
+            "page_position": "left",
+            "needs_review": False,
+        },
+    ]
+    grouped = group_word_entry_images(rows)
+    assert len(grouped) == 2
+    assert [item["path"] for item in grouped] == ["Mercanzia/122.jpg", "Mercanzia/124.jpg"]

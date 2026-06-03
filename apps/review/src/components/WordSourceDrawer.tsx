@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { imageUrl, loadWordEntry } from "../api";
 import type { WordEntryDetail } from "../types";
+import { manuscriptImageCaption, manuscriptImageCountLabel } from "../utils/manuscriptImages";
 import ManuscriptLightbox from "./ManuscriptLightbox";
 
 export default function WordSourceDrawer({
@@ -38,6 +39,7 @@ export default function WordSourceDrawer({
   const meta = entry
     ? [entry.date, entry.folio, entry.register_id].filter(Boolean).join(" · ")
     : "";
+  const manuscriptLabel = entry ? manuscriptImageCountLabel(entry.images) : "";
 
   return (
     <div className="drawer-scrim" onClick={onClose}>
@@ -72,7 +74,10 @@ export default function WordSourceDrawer({
             </section>
 
             <section>
-              <h4>Manuscript {entry.images.length > 0 ? `(${entry.images.length})` : ""}</h4>
+              <h4>
+                Manuscript
+                {manuscriptLabel ? ` (${manuscriptLabel})` : ""}
+              </h4>
               {entry.images.length === 0 && (
                 <p className="muted">No manuscript image is linked to this entry.</p>
               )}
@@ -84,12 +89,9 @@ export default function WordSourceDrawer({
                       className="image-zoom-button"
                       onClick={() => setLightboxPath(img.path)}
                     >
-                      <img src={imageUrl(img.path)} alt={img.file || "manuscript folio"} />
+                      <img src={imageUrl(img.path)} alt={manuscriptImageCaption(img)} />
                     </button>
-                    <figcaption>
-                      {[img.folio, img.page_position].filter(Boolean).join(" · ")}
-                      {img.needs_review ? " · needs review" : ""}
-                    </figcaption>
+                    <figcaption>{manuscriptImageCaption(img)}</figcaption>
                   </figure>
                 ))}
               </div>

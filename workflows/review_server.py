@@ -1607,6 +1607,64 @@ def contract_persons(contract_id: str) -> dict[str, Any]:
         connection.close()
 
 
+def group_word_entry_images(link_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse folio link rows that share one physical scan (opening spread).
+
+    The image pipeline emits one row per folio side (left/right) with the same
+    ``image_path``. Word entries spanning both pages of an opening therefore
+    produce duplicate photos in the UI unless grouped here.
+    """
+    position_order = {"left": 0, "right": 1}
+    grouped: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+
+    for row in link_rows:
+        path = row.get("image_path")
+        if not path:
+            continue
+        if path not in grouped:
+            grouped[path] = {
+                "path": path,
+                "file": row.get("image_file"),
+                "role": row.get("image_role"),
+                "needs_review": bool(row.get("needs_review")),
+                "folios": [],
+            }
+            order.append(str(path))
+        else:
+            item = grouped[path]
+            item["needs_review"] = item["needs_review"] or bool(row.get("needs_review"))
+            if not item.get("file"):
+                item["file"] = row.get("image_file")
+            if not item.get("role"):
+                item["role"] = row.get("image_role")
+
+        folios: list[dict[str, Any]] = grouped[path]["folios"]
+        candidate = {
+            "folio": row.get("matched_folio"),
+            "page_position": row.get("page_position"),
+            "entry_folio_role": row.get("entry_folio_role"),
+        }
+        if not any(
+            f.get("folio") == candidate["folio"] and f.get("page_position") == candidate["page_position"]
+            for f in folios
+        ):
+            folios.append(candidate)
+
+    def folio_sort_key(folio_row: dict[str, Any]) -> tuple[int, int, str]:
+        pos = str(folio_row.get("page_position") or "").lower()
+        role = str(folio_row.get("entry_folio_role") or "")
+        role_order = 0 if role == "start" else 1 if role == "end" else 2
+        return (position_order.get(pos, 2), role_order, str(folio_row.get("folio") or ""))
+
+    result: list[dict[str, Any]] = []
+    for path in order:
+        item = grouped[path]
+        item["folios"].sort(key=folio_sort_key)
+        result.append(item)
+    return result
+
+
 @app.get("/api/word-entry/{source_entry_id}")
 def word_entry(source_entry_id: str) -> dict[str, Any]:
     """Clean reading text + manuscript image(s) for one Word source entry.
@@ -1617,18 +1675,7 @@ def word_entry(source_entry_id: str) -> dict[str, Any]:
     entry = source_entries_by_id().get(source_entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Word source entry not found.")
-    images = [
-        {
-            "path": img.get("image_path"),
-            "file": img.get("image_file"),
-            "role": img.get("image_role"),
-            "page_position": img.get("page_position"),
-            "folio": img.get("matched_folio"),
-            "needs_review": bool(img.get("needs_review")),
-        }
-        for img in image_candidates_by_entry().get(source_entry_id, [])
-        if img.get("image_path")
-    ]
+    images = group_word_entry_images(image_candidates_by_entry().get(source_entry_id, []))
     return {
         "source_entry_id": entry.get("source_entry_id"),
         "source_entry_key": entry.get("source_entry_key"),
