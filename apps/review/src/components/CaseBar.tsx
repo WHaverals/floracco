@@ -1,5 +1,6 @@
 import type { ReviewCase } from "../types";
-import { isVerifyDateFolioBucket } from "../utils/reviewLinks";
+import { isConfirmMultiRowBucket, isVerifyDateFolioBucket } from "../utils/reviewLinks";
+import { shouldShowActComponentMap } from "../utils/actComponents";
 
 function value(row: ReviewCase["row"], key: string): string {
   return String(row[key] ?? "");
@@ -38,7 +39,16 @@ export default function CaseBar({
 }: Props) {
   const row = reviewCase.row;
   const verifyDateFolio = isVerifyDateFolioBucket(value(row, "recommended_review_bucket"));
+  const confirmMultiRow =
+    isConfirmMultiRowBucket(value(row, "recommended_review_bucket")) || shouldShowActComponentMap(reviewCase);
   const conflicts = value(row, "top_match_conflicts_plain_language");
+  let question = "Is this database record supported by the Word segment?";
+  if (verifyDateFolio) {
+    question =
+      "Link looks correct — only date or folio differs. Confirm the link, then fix the field in Corrections.";
+  } else if (confirmMultiRow) {
+    question = "Two or more acts in one Word entry — confirm each database row matches the bracket label.";
+  }
   return (
     <header className="case-bar">
       <div className="case-bar-main">
@@ -52,11 +62,7 @@ export default function CaseBar({
           ☰
         </button>
         <div className="case-bar-titles">
-          <h1 className="case-bar-question">
-            {verifyDateFolio
-              ? "Link looks correct — only date or folio differs. Confirm the link, then fix the field in Corrections."
-              : "Is this database record supported by the Word segment?"}
-          </h1>
+          <h1 className="case-bar-question">{question}</h1>
           <p className="case-bar-context">
             <strong>{value(row, "register_id")}</strong>
             {verifyDateFolio && conflicts ? <span className="case-bar-conflicts"> · {conflicts}</span> : null}

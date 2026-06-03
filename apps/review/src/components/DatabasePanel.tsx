@@ -1,4 +1,5 @@
 import type { ReviewCase } from "../types";
+import ActComponentBadges from "./ActComponentBadges";
 import HighlightedText from "./HighlightedText";
 
 const FACT_FIELDS: [string, string][] = [
@@ -31,8 +32,11 @@ export default function DatabasePanel({
   return (
     <section className="panel segment-panel db-segment">
       <div className="segment-head">
-        <p className="eyebrow">
-          Database record{count === 1 ? "" : "s"} · {count || "none"} to check
+        <p className="eyebrow db-segment-eyebrow">
+          <span>
+            Database record{count === 1 ? "" : "s"} · {count || "none"} to check
+          </span>
+          <ActComponentBadges reviewCase={reviewCase} />
         </p>
       </div>
       <div className="db-record-list">

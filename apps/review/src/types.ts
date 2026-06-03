@@ -33,8 +33,23 @@ export type ReviewCase = {
   image_paths: string[];
   evidence_items: EvidenceItem[];
   highlight_values: HighlightValue[];
+  act_components: ActComponent[];
   word_entry_rich?: WordEntryRich | null;
   decision?: Record<string, string> | null;
+};
+
+export type ActComponentMappingConfidence = "exact" | "heuristic" | "unmapped";
+
+export type ActComponent = {
+  raw_label: string | null;
+  label_guess: string | null;
+  label_display: string;
+  event_number: number | null;
+  referenced_event_number: number | null;
+  suggested_db_row_id: string | null;
+  link_component_label: string | null;
+  mapping_confidence: ActComponentMappingConfidence;
+  link_score: number | null;
 };
 
 export type RevisionChangeKind = "insertion" | "deletion" | "move_from" | "move_to";

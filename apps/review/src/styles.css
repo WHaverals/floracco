@@ -410,6 +410,58 @@ a.hub-card:hover {
   padding: 16px 22px 18px;
 }
 
+.db-segment-eyebrow {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.act-badge-row {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.act-badge-pair {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.act-badge-arrow {
+  color: #b09878;
+  font-size: 0.75rem;
+}
+
+.act-chip-sm {
+  border-radius: 999px;
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 2px 8px;
+}
+
+.act-chip-word {
+  background: #f3e4cf;
+  border: 1px solid #dcc5a3;
+  color: #4a3728;
+}
+
+.act-chip-db {
+  background: #ebe2d4;
+  border: 1px solid #cdbda6;
+  color: #3d3228;
+}
+
+.act-chip-unmapped {
+  background: #f8ecec;
+  border: 1px solid #e0c3c3;
+  color: #8a4a4a;
+}
+
 .reconcile-compare {
   display: grid;
   flex: 1;

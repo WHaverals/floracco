@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from workflows.review_server import build_word_entry_rich, group_word_entry_images, parse_revision_segments
 from workflows.word_pipeline import (
+    act_components_for_review,
     classify_match,
     event_components_for_text,
     event_label_guesses,
@@ -366,6 +367,78 @@ def test_segment_register_trims_trailing_blank_paragraphs() -> None:
     ]
     assert [row["paragraph_index"] for row in blank_unassigned] == [8, 9, 10]
     assert len(entry_paragraphs) == 8
+
+
+def test_act_components_for_review_dual_act() -> None:
+    entry = {
+        "current_text": (
+            "30 ottobre 1778\n"
+            "[disdetta] di 2658 + [nuova] 2682\n"
+            "Il signor Francesco Cornacchi dice che i signori Tommaso Guarducci..."
+        ),
+        "event_label_raw": "[disdetta]",
+        "event_label_guess": "termination",
+        "event_number_raw": "2658",
+    }
+    links = [
+        {
+            "db_row_id": "contract:2682",
+            "db_table": "contract",
+            "db_contract_id": 2682,
+            "db_main_contract_id": None,
+            "component_label": "contract",
+            "score": 146.25,
+        },
+        {
+            "db_row_id": "sub_contract:1667",
+            "db_table": "sub_contract",
+            "db_contract_id": 1667,
+            "db_main_contract_id": 2658,
+            "component_label": "termination",
+            "score": 140.78,
+        },
+    ]
+    rows = act_components_for_review(entry, links)
+    assert len(rows) == 2
+    by_label = {row["raw_label"]: row for row in rows}
+    assert by_label["[disdetta]"]["suggested_db_row_id"] == "sub_contract:1667"
+    assert by_label["[disdetta]"]["mapping_confidence"] == "exact"
+    assert by_label["[nuova]"]["suggested_db_row_id"] == "contract:2682"
+    assert by_label["[nuova]"]["mapping_confidence"] == "exact"
+
+
+def test_act_components_for_review_compound_heuristic() -> None:
+    entry = {
+        "current_text": "[bilancio+modifica] 2948\nBody text.",
+        "event_label_raw": "[bilancio+modifica]",
+        "event_label_guess": "balance",
+        "event_number_raw": "2948",
+    }
+    links = [
+        {
+            "db_row_id": "sub_contract:2114",
+            "db_table": "sub_contract",
+            "db_contract_id": 2114,
+            "db_main_contract_id": 2948,
+            "db_sub_type": "balance",
+            "component_label": "balance",
+            "score": 149.5,
+        },
+        {
+            "db_row_id": "sub_contract:2115",
+            "db_table": "sub_contract",
+            "db_contract_id": 2115,
+            "db_main_contract_id": 2948,
+            "db_sub_type": "variation",
+            "component_label": "variation",
+            "score": 149.5,
+        },
+    ]
+    rows = act_components_for_review(entry, links)
+    assert len(rows) == 2
+    mapped_ids = {row["suggested_db_row_id"] for row in rows}
+    assert mapped_ids == {"sub_contract:2114", "sub_contract:2115"}
+    assert all(row["mapping_confidence"] == "exact" for row in rows)
 
 
 def test_group_word_entry_images_keeps_distinct_files() -> None:

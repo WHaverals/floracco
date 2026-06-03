@@ -27,6 +27,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from workflows.word_pipeline import act_components_for_review
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 QA_PACKET_PATH = PROJECT_ROOT / "data/derived/word-pipeline/06_qa_packet/word_db_match_qa_packet.jsonl"
@@ -542,12 +544,54 @@ def build_word_entry_rich(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_link_candidates_by_entry: dict[str, list[dict[str, Any]]] | None = None
+_source_entries_by_id: dict[str, dict[str, Any]] | None = None
+
+
+def link_candidates_by_entry() -> dict[str, list[dict[str, Any]]]:
+    global _link_candidates_by_entry
+    if _link_candidates_by_entry is None:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for link_row in load_jsonl(LINK_CANDIDATES_PATH):
+            grouped.setdefault(str(link_row["source_entry_id"]), []).append(link_row)
+        for links in grouped.values():
+            links.sort(key=lambda item: int(item.get("link_ordinal") or 0))
+        _link_candidates_by_entry = grouped
+    return _link_candidates_by_entry
+
+
+def source_entries_by_id() -> dict[str, dict[str, Any]]:
+    global _source_entries_by_id
+    if _source_entries_by_id is None:
+        _source_entries_by_id = {
+            str(entry["source_entry_id"]): entry for entry in load_jsonl(SOURCE_ENTRIES_PATH)
+        }
+    return _source_entries_by_id
+
+
+def entry_stub_for_act_components(row: dict[str, Any]) -> dict[str, Any]:
+    source_entry_id = str(row.get("source_entry_id") or "")
+    source_entry = source_entries_by_id().get(source_entry_id)
+    if source_entry:
+        return source_entry
+    return {
+        "current_text": row.get("word_entry_text"),
+        "event_label_raw": row.get("entry_label"),
+        "event_label_guess": row.get("entry_type_interpretation"),
+        "event_number_raw": row.get("entry_number"),
+        "referenced_event_number_raw": row.get("referenced_entry_number"),
+    }
+
+
 def case_payload(row: dict[str, Any], decision: dict[str, Any] | None = None) -> dict[str, Any]:
     suggested_db_row_ids = split_semicolon_values(row.get("suggested_db_row_ids")) or split_semicolon_values(
         row.get("top_db_row_id")
     )
     image_paths = split_semicolon_values(row.get("image_candidate_paths"))
     evidence_items = evidence_items_for_row(row)
+    source_entry_id = str(row.get("source_entry_id") or "")
+    link_candidates = link_candidates_by_entry().get(source_entry_id, [])
+    act_components = act_components_for_review(entry_stub_for_act_components(row), link_candidates)
     return {
         "row": row,
         "suggested_db_row_ids": suggested_db_row_ids,
@@ -556,6 +600,7 @@ def case_payload(row: dict[str, Any], decision: dict[str, Any] | None = None) ->
         "evidence_items": evidence_items,
         "highlight_values": highlight_values_for_evidence(evidence_items),
         "word_entry_rich": build_word_entry_rich(row),
+        "act_components": act_components,
         "decision": decision,
     }
 
