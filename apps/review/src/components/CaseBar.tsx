@@ -14,8 +14,6 @@ type Props = {
   hasImage: boolean;
   showImage: boolean;
   onToggleImage: () => void;
-  queueOpen: boolean;
-  onToggleQueue: () => void;
   onPrevious: () => void;
   onNext: () => void;
   canPrevious: boolean;
@@ -30,8 +28,6 @@ export default function CaseBar({
   hasImage,
   showImage,
   onToggleImage,
-  queueOpen,
-  onToggleQueue,
   onPrevious,
   onNext,
   canPrevious,
@@ -51,24 +47,13 @@ export default function CaseBar({
   }
   return (
     <header className="case-bar">
-      <div className="case-bar-main">
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={queueOpen ? "Hide queue" : "Show queue"}
-          aria-pressed={queueOpen}
-          onClick={onToggleQueue}
-        >
-          ☰
-        </button>
-        <div className="case-bar-titles">
-          <h1 className="case-bar-question">{question}</h1>
-          <p className="case-bar-context">
-            <strong>{value(row, "register_id")}</strong>
-            {verifyDateFolio && conflicts ? <span className="case-bar-conflicts"> · {conflicts}</span> : null}
-            {isReviewed ? <span className="reviewed-flag"> · Reviewed</span> : null}
-          </p>
-        </div>
+      <div className="case-bar-titles">
+        <h1 className="case-bar-question">{question}</h1>
+        <p className="case-bar-context">
+          <strong>{value(row, "register_id")}</strong>
+          {verifyDateFolio && conflicts ? <span className="case-bar-conflicts"> · {conflicts}</span> : null}
+          {isReviewed ? <span className="reviewed-flag"> · Reviewed</span> : null}
+        </p>
       </div>
 
       <div className="case-bar-tools">

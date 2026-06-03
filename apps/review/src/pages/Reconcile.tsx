@@ -178,6 +178,8 @@ export default function Reconcile() {
         selectedReviewId={selectedReviewId}
         onNext={goNext}
         onPrevious={goPrevious}
+        queueOpen={queueOpen}
+        onToggleQueue={() => setQueueOpen((value) => !value)}
         summary={summary}
         total={total}
       />
@@ -192,8 +194,6 @@ export default function Reconcile() {
               hasImage={hasImage}
               showImage={showImage}
               onToggleImage={() => setShowImage((value) => !value)}
-              queueOpen={queueOpen}
-              onToggleQueue={() => setQueueOpen((value) => !value)}
               onPrevious={goPrevious}
               onNext={goNext}
               canPrevious={canPrevious}

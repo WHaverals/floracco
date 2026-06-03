@@ -1,4 +1,5 @@
 import type { CasePreview, ReviewSummary } from "../types";
+import { shortReviewBucket } from "../utils/reviewBuckets";
 
 type Filters = {
   priority: string;
@@ -16,6 +17,8 @@ type Props = {
   total: number;
   filters: Filters;
   selectedReviewId: string;
+  queueOpen: boolean;
+  onToggleQueue: () => void;
   onFilterChange: (filters: Filters) => void;
   onSelect: (reviewId: string) => void;
   onPrevious: () => void;
@@ -30,6 +33,8 @@ export default function ReviewQueue({
   total,
   filters,
   selectedReviewId,
+  queueOpen,
+  onToggleQueue,
   onFilterChange,
   onSelect,
   onPrevious,
@@ -41,108 +46,133 @@ export default function ReviewQueue({
   const progress = allCases ? Math.round((reviewed / allCases) * 100) : 0;
 
   return (
-    <aside className="queue">
-      <div className="queue-title">
-        <div>
-          <p className="eyebrow">Review queue</p>
-          <h2>One case at a time</h2>
-        </div>
+    <aside className={`queue${queueOpen ? "" : " is-collapsed"}`}>
+      <div className="queue-header">
+        {queueOpen ? <p className="eyebrow">Review queue</p> : null}
+        <button
+          type="button"
+          className="queue-collapse-btn"
+          aria-label={queueOpen ? "Hide review queue" : "Show review queue"}
+          aria-expanded={queueOpen}
+          onClick={onToggleQueue}
+          title={queueOpen ? "Collapse queue" : "Expand queue"}
+        >
+          {queueOpen ? "‹" : "›"}
+        </button>
       </div>
 
-      <div className="progress-card">
-        <div className="progress-label">
-          <span>Overall progress</span>
-          <strong>{progress}%</strong>
-        </div>
-        <progress max={allCases || 1} value={reviewed} />
-        <span>
-          {reviewed} of {allCases} reviewed
-        </span>
-      </div>
+      {queueOpen ? (
+        <div className="queue-content">
+          <div className="progress-card">
+            <div className="progress-label">
+              <span>Overall progress</span>
+              <strong>{progress}%</strong>
+            </div>
+            <progress max={allCases || 1} value={reviewed} />
+            <span>
+              {reviewed} of {allCases} reviewed
+            </span>
+          </div>
 
-      <label>
-        Search
-        <input value={filters.search} onChange={(event) => update("search", event.target.value)} placeholder="Name, ID, folio..." />
-      </label>
-      <label>
-        Priority
-        <select value={filters.priority} onChange={(event) => update("priority", event.target.value)}>
-          <option>All</option>
-          {summary?.priorities.map((priority) => <option key={priority}>{priority}</option>)}
-        </select>
-      </label>
-      <label>
-        Bucket
-        <select value={filters.bucket} onChange={(event) => update("bucket", event.target.value)}>
-          <option>All</option>
-          {summary?.buckets.map((bucket) => <option key={bucket}>{bucket}</option>)}
-        </select>
-      </label>
-      <label>
-        Register
-        <select value={filters.register} onChange={(event) => update("register", event.target.value)}>
-          <option>All</option>
-          {summary?.registers.map((register) => <option key={register}>{register}</option>)}
-        </select>
-      </label>
-      <label>
-        Status
-        <select value={filters.reviewed} onChange={(event) => update("reviewed", event.target.value)}>
-          <option value="unreviewed">Unreviewed</option>
-          <option value="reviewed">Reviewed</option>
-          <option value="all">All</option>
-        </select>
-      </label>
+          <label>
+            Search
+            <input value={filters.search} onChange={(event) => update("search", event.target.value)} placeholder="Name, ID, folio..." />
+          </label>
+          <label>
+            Priority
+            <select value={filters.priority} onChange={(event) => update("priority", event.target.value)}>
+              <option>All</option>
+              {summary?.priorities.map((priority) => (
+                <option key={priority}>{priority}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Bucket
+            <select value={filters.bucket} onChange={(event) => update("bucket", event.target.value)}>
+              <option>All</option>
+              {summary?.buckets.map((bucket) => (
+                <option key={bucket} value={bucket} title={bucket}>
+                  {shortReviewBucket(bucket)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Register
+            <select value={filters.register} onChange={(event) => update("register", event.target.value)}>
+              <option>All</option>
+              {summary?.registers.map((register) => (
+                <option key={register}>{register}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Status
+            <select value={filters.reviewed} onChange={(event) => update("reviewed", event.target.value)}>
+              <option value="unreviewed">Unreviewed</option>
+              <option value="reviewed">Reviewed</option>
+              <option value="all">All</option>
+            </select>
+          </label>
 
-      <div className="queue-navigation">
-        <span>
-          Case {cases.length ? currentIndex + 1 : 0} of {total} in this filtered queue
-        </span>
-        <div className="nav-buttons">
-          <button disabled={currentIndex <= 0} onClick={onPrevious} type="button">
-            Previous
-          </button>
-          <button disabled={!cases.length || currentIndex >= cases.length - 1} onClick={onNext} type="button">
-            Next
-          </button>
-        </div>
-      </div>
-
-      <div className="current-case-card">
-        <p className="eyebrow">Current case</p>
-        {currentCase ? (
-          <>
-            <strong>{currentCase.recommended_review_bucket}</strong>
-            <span>{currentCase.register_id}</span>
-            <span>{currentCase.source_entry_id || currentCase.suggested_db_row_ids}</span>
-          </>
-        ) : (
-          <span>No case matches the current filters.</span>
-        )}
-      </div>
-
-      <ul className="queue-list" aria-label="Cases in this filtered queue">
-        {cases.map((item) => {
-          const isActive = item.review_id === selectedReviewId;
-          return (
-            <li key={item.review_id}>
-              <button
-                type="button"
-                className={`queue-list-item${isActive ? " is-active" : ""}${item.is_reviewed ? " is-reviewed" : ""}`}
-                onClick={() => onSelect(item.review_id)}
-                aria-current={isActive}
-              >
-                <span className={`queue-dot priority-${item.review_priority.toLowerCase()}`} aria-hidden="true" />
-                <span className="queue-list-text">
-                  <strong>{item.source_entry_id || item.suggested_db_row_ids || item.register_id}</strong>
-                  <span>{item.recommended_review_bucket}</span>
-                </span>
-                {item.is_reviewed ? <span className="queue-check" aria-label="Reviewed">✓</span> : null}
+          <div className="queue-navigation">
+            <span>
+              Case {cases.length ? currentIndex + 1 : 0} of {total} in this filtered queue
+            </span>
+            <div className="nav-buttons">
+              <button disabled={currentIndex <= 0} onClick={onPrevious} type="button">
+                Previous
               </button>
-            </li>
-          );
-        })}
-      </ul>
+              <button disabled={!cases.length || currentIndex >= cases.length - 1} onClick={onNext} type="button">
+                Next
+              </button>
+            </div>
+          </div>
+
+          <div className="current-case-card">
+            <p className="eyebrow">Current case</p>
+            {currentCase ? (
+              <>
+                <strong title={currentCase.recommended_review_bucket}>
+                  {shortReviewBucket(currentCase.recommended_review_bucket)}
+                </strong>
+                <span>{currentCase.register_id}</span>
+                <span>{currentCase.source_entry_id || currentCase.suggested_db_row_ids}</span>
+              </>
+            ) : (
+              <span>No case matches the current filters.</span>
+            )}
+          </div>
+
+          <ul className="queue-list" aria-label="Cases in this filtered queue">
+            {cases.map((item) => {
+              const isActive = item.review_id === selectedReviewId;
+              return (
+                <li key={item.review_id}>
+                  <button
+                    type="button"
+                    className={`queue-list-item${isActive ? " is-active" : ""}${item.is_reviewed ? " is-reviewed" : ""}`}
+                    onClick={() => onSelect(item.review_id)}
+                    aria-current={isActive}
+                  >
+                    <span className={`queue-dot priority-${item.review_priority.toLowerCase()}`} aria-hidden="true" />
+                    <span className="queue-list-text">
+                      <strong>{item.source_entry_id || item.suggested_db_row_ids || item.register_id}</strong>
+                      <span title={item.recommended_review_bucket}>{shortReviewBucket(item.recommended_review_bucket)}</span>
+                    </span>
+                    {item.is_reviewed ? (
+                      <span className="queue-check" aria-label="Reviewed">
+                        ✓
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
     </aside>
   );
 }

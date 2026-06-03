@@ -11,7 +11,7 @@ export default function WordPanel({ reviewCase }: { reviewCase: ReviewCase }) {
   return (
     <section className="panel segment-panel">
       <div className="segment-head">
-        <p className="eyebrow">Word segment · the source</p>
+        <p className="eyebrow">Word segment</p>
         <dl className="fact-row">
           <div>
             <dt>Date</dt>

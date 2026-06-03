@@ -97,11 +97,12 @@ textarea {
 }
 
 .app-shell.queue-collapsed {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 44px minmax(0, 1fr);
 }
 
 .app-shell.queue-collapsed .queue {
-  display: none;
+  align-items: center;
+  padding: 14px 6px;
 }
 
 .queue {
@@ -111,8 +112,80 @@ textarea {
   flex-direction: column;
   gap: 14px;
   height: 100%;
+  min-width: 0;
   overflow: auto;
   padding: 22px;
+}
+
+.queue.is-collapsed {
+  gap: 0;
+  overflow: hidden;
+}
+
+.queue-header {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 28px;
+}
+
+.queue-header .eyebrow {
+  margin: 0;
+}
+
+.queue.is-collapsed .queue-header {
+  justify-content: center;
+  width: 100%;
+}
+
+.queue-collapse-btn {
+  background: #2a221c;
+  border: 1px solid #4a3d32;
+  border-radius: 10px;
+  color: #f8f3ea;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  height: 34px;
+  line-height: 1;
+  min-width: 34px;
+  padding: 0;
+}
+
+.queue-collapse-btn:hover {
+  background: #352b24;
+}
+
+.queue-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.queue label,
+.decision-panel label {
+  display: grid;
+  gap: 7px;
+  font-size: 0.85rem;
+}
+
+.queue input,
+.queue select,
+.decision-panel input,
+.decision-panel select,
+.decision-panel textarea {
+  background: #fffaf3;
+  border: 1px solid #d8cab9;
+  border-radius: 12px;
+  color: #241d18;
+  max-width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  width: 100%;
 }
 
 .queue-title,
@@ -138,25 +211,6 @@ textarea {
   letter-spacing: 0.12em;
   margin: 0 0 6px;
   text-transform: uppercase;
-}
-
-.queue label,
-.decision-panel label {
-  display: grid;
-  gap: 7px;
-  font-size: 0.85rem;
-}
-
-.queue input,
-.queue select,
-.decision-panel input,
-.decision-panel select,
-.decision-panel textarea {
-  background: #fffaf3;
-  border: 1px solid #d8cab9;
-  border-radius: 12px;
-  color: #241d18;
-  padding: 10px 12px;
 }
 
 .muted,
@@ -296,18 +350,10 @@ a.hub-card:hover {
   align-items: center;
   background: #fffaf3;
   border-bottom: 1px solid #eadfcc;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 16px;
-  justify-content: space-between;
+  grid-template-columns: minmax(0, 1fr) auto;
   padding: 12px 22px;
-}
-
-.case-bar-main {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  min-width: 0;
 }
 
 .case-bar-titles {
@@ -343,8 +389,10 @@ a.hub-card:hover {
 .case-bar-tools {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
   gap: 10px;
+  justify-self: end;
 }
 
 .case-bar-nav {
