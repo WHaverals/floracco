@@ -74,7 +74,7 @@ export default function Dashboard() {
     );
   }
 
-  const { reconcile, coverage, corrections, freshness } = data;
+  const { reconcile, coverage, corrections } = data;
   const reconcilePct = pct(reconcile.reviewed_cases, reconcile.total_cases);
   const wordTotal = coverage.word_entry_total || 1;
   const candidates = corrections.candidates;
@@ -91,13 +91,6 @@ export default function Dashboard() {
           </p>
         </div>
       </header>
-
-      <p className="dash-freshness muted">
-        Pipeline built {formatWhen(freshness.matches_built_at)} · queue {formatWhen(freshness.qa_packet_built_at)} ·
-        last decision {formatWhen(freshness.decisions_updated_at)} · corrections {formatWhen(
-          freshness.corrections_updated_at,
-        )}
-      </p>
 
       {/* Reconcile progress */}
       <section className="dash-section">

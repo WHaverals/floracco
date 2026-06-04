@@ -1,7 +1,4 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { loadSummary } from "../api";
-import type { ReviewSummary } from "../types";
 
 type Tool = {
   to: string;
@@ -13,66 +10,48 @@ type Tool = {
 const TOOLS: Tool[] = [
   {
     to: "/reconcile",
-    title: "Word–Database reconciliation",
-    blurb:
-      "Decide which database record(s), if any, each Word entry supports. Medium “verify date/folio” cases hand off to Corrections after you confirm the link.",
+    title: "Match Word to database",
+    blurb: "Does this summary belong to this database record?",
     status: "ready",
   },
   {
     to: "/changes",
-    title: "Tracked-changes review",
-    blurb: "Read each act with its editorial history and accept or reject insertions, deletions, and comments.",
+    title: "Word edits",
+    blurb: "Accept or reject tracked changes in the summaries.",
     status: "planned",
   },
   {
     to: "/database",
-    title: "Database browser",
-    blurb: "Explore contracts, sub-contracts, and people. Read-only, entity-centric, with links back to the sources.",
+    title: "Browse database",
+    blurb: "Look up contracts and people. Read-only.",
     status: "ready",
   },
   {
     to: "/corrections",
-    title: "Database corrections",
-    blurb:
-      "Fix dates, folios, and other DB fields with Word evidence beside each proposal — includes date/folio checks from matching.",
+    title: "Fix database fields",
+    blurb: "Correct dates, folios, and other details using the Word text as evidence.",
     status: "ready",
   },
   {
     to: "/dashboard",
-    title: "Dashboard & exports",
-    blurb: "Track progress and coverage across registers and export review decisions.",
+    title: "Progress & exports",
+    blurb: "Overview of review work and download logs.",
     status: "ready",
   },
 ];
 
 export default function Hub() {
-  const [summary, setSummary] = useState<ReviewSummary | null>(null);
-
-  useEffect(() => {
-    loadSummary()
-      .then(setSummary)
-      .catch(() => setSummary(null));
-  }, []);
-
-  const reviewed = summary?.reviewed_cases ?? 0;
-  const totalCases = summary?.total_cases ?? 0;
-  const progress = totalCases ? Math.round((reviewed / totalCases) * 100) : 0;
-
   return (
     <div className="hub">
       <header className="hub-header">
         <p className="eyebrow">Florentine Accomandite · review platform</p>
         <h1>What would you like to work on?</h1>
-        <p className="muted">
-          Each tool does one job. Pick a task below — you can move between them at any time from the top bar.
-        </p>
+        <p className="muted">Pick a task below — you can switch anytime from the top bar.</p>
       </header>
 
       <div className="hub-grid">
         {TOOLS.map((tool) => {
           const isReady = tool.status === "ready";
-          const meta =
-            tool.to === "/reconcile" && totalCases ? `${totalCases - reviewed} of ${totalCases} open` : null;
           const card = (
             <>
               <div className="hub-card-top">
@@ -80,7 +59,6 @@ export default function Hub() {
                 {isReady ? null : <span className="hub-tag">Planned</span>}
               </div>
               <p>{tool.blurb}</p>
-              {meta ? <span className="hub-card-meta">{meta}</span> : null}
             </>
           );
           return isReady ? (
@@ -94,19 +72,6 @@ export default function Hub() {
           );
         })}
       </div>
-
-      {totalCases ? (
-        <footer className="hub-progress">
-          <div className="progress-label">
-            <span>Reconciliation progress</span>
-            <strong>{progress}%</strong>
-          </div>
-          <progress max={totalCases || 1} value={reviewed} />
-          <span className="muted">
-            {reviewed} of {totalCases} cases reviewed
-          </span>
-        </footer>
-      ) : null}
     </div>
   );
 }
