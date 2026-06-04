@@ -26,6 +26,17 @@ export type CaseListResponse = {
   cases: CasePreview[];
 };
 
+export type LinkMetric = {
+  narrative_similarity_ratio: number | null;
+  text_containment_ratio: number | null;
+  match_strength: number | null;
+  longest_shared_phrase_words: number | null;
+  score: number | null;
+  relationship_type: string | null;
+  link_role: "primary" | "alternative" | null;
+  link_ordinal: number | null;
+};
+
 export type ReviewCase = {
   row: Record<string, string | number | boolean | null>;
   suggested_db_row_ids: string[];
@@ -34,6 +45,7 @@ export type ReviewCase = {
   evidence_items: EvidenceItem[];
   highlight_values: HighlightValue[];
   act_components: ActComponent[];
+  link_metrics?: Record<string, LinkMetric>;
   word_entry_rich?: WordEntryRich | null;
   decision?: Record<string, string> | null;
 };

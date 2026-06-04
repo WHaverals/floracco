@@ -1,5 +1,6 @@
 import type { ReviewCase } from "../types";
 import HighlightedText from "./HighlightedText";
+import WordActBadges from "./WordActBadges";
 
 function value(row: ReviewCase["row"], key: string): string {
   return String(row[key] ?? "");
@@ -26,6 +27,10 @@ export default function WordPanel({ reviewCase }: { reviewCase: ReviewCase }) {
             <dd>{value(row, "entry_label") || "—"}</dd>
           </div>
         </dl>
+        <WordActBadges reviewCase={reviewCase} />
+        {reviewCase.highlight_values.length ? (
+          <p className="muted word-highlight-hint">Green highlights also appear in the database text.</p>
+        ) : null}
       </div>
       <article className="reading-text narrative">
         <HighlightedText highlights={reviewCase.highlight_values} text={text} />

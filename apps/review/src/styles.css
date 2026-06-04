@@ -368,9 +368,18 @@ a.hub-card:hover {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 0;
   margin: 0;
   font-size: 0.9rem;
+}
+
+.case-bar-bucket {
+  color: #6a4a2a;
+  font-weight: 700;
+}
+
+.case-bar-context-sep {
+  color: #c3b09a;
 }
 
 .case-bar-context .dot {
@@ -465,11 +474,51 @@ a.hub-card:hover {
   gap: 8px 12px;
 }
 
+.db-segment-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.db-supported-count {
+  color: #8a7760;
+  font-weight: 500;
+  text-transform: none;
+}
+
+.db-record-index {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.db-record-index-chip {
+  align-items: center;
+  background: #ebe2d4;
+  border: 1px solid #cdbda6;
+  border-radius: 999px;
+  color: #3d3228;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.2;
+  min-height: 24px;
+  padding: 2px 10px;
+  text-transform: none;
+}
+
+.db-record-index-chip.is-supported {
+  background: #e2eddc;
+  border-color: #b6cda8;
+}
+
 .act-badge-row {
   align-items: center;
   display: inline-flex;
   flex-wrap: wrap;
   gap: 6px 8px;
+  text-transform: none;
 }
 
 .act-badge-pair {
@@ -484,12 +533,15 @@ a.hub-card:hover {
 }
 
 .act-chip-sm {
+  align-items: center;
   border-radius: 999px;
-  display: inline-block;
-  font-size: 0.72rem;
+  display: inline-flex;
+  font-size: 0.74rem;
   font-weight: 600;
   line-height: 1.2;
+  min-height: 24px;
   padding: 2px 8px;
+  text-transform: none;
 }
 
 .act-chip-word {
@@ -504,10 +556,52 @@ a.hub-card:hover {
   color: #3d3228;
 }
 
+button.act-chip-jump {
+  cursor: pointer;
+  font: inherit;
+}
+
+button.act-chip-jump:hover {
+  background: #e0d4c4;
+  border-color: #b8a48a;
+}
+
+button.act-chip-jump.is-supported {
+  background: #e2eddc;
+  border-color: #b6cda8;
+}
+
 .act-chip-unmapped {
   background: #f8ecec;
   border: 1px solid #e0c3c3;
   color: #8a4a4a;
+}
+
+.word-act-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.word-highlight-hint {
+  font-size: 0.82rem;
+  margin: 0 0 8px;
+}
+
+.type-mismatch-callout {
+  background: #fff3e6;
+  border: 1px solid #e8c9a0;
+  border-radius: 12px;
+  color: #5c3d1e;
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  padding: 10px 14px;
+}
+
+.type-mismatch-callout em {
+  font-style: normal;
+  font-weight: 700;
 }
 
 .reconcile-compare {
@@ -597,9 +691,22 @@ a.hub-card:hover {
   transition: border-color 0.1s ease, box-shadow 0.1s ease;
 }
 
+.db-record.is-clickable {
+  cursor: pointer;
+}
+
+.db-record.is-clickable:hover {
+  border-color: #cdbda6;
+  box-shadow: 0 2px 10px rgba(66, 45, 28, 0.08);
+}
+
 .db-record.is-supported {
   border-color: #b6cda8;
   box-shadow: 0 0 0 1px #b6cda8 inset;
+}
+
+.db-record.is-supported.is-clickable:hover {
+  box-shadow: 0 0 0 1px #b6cda8 inset, 0 2px 10px rgba(66, 45, 28, 0.08);
 }
 
 .db-record-head {
@@ -617,14 +724,18 @@ a.hub-card:hover {
 }
 
 .support-toggle {
+  align-items: center;
   background: #efe3d3;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 999px;
   color: #5b4a39;
   cursor: pointer;
-  font-size: 0.8rem;
+  display: inline-flex;
+  font-size: 0.78rem;
   font-weight: 700;
-  padding: 5px 12px;
+  line-height: 1.2;
+  min-height: 24px;
+  padding: 2px 12px;
   white-space: nowrap;
 }
 
@@ -633,11 +744,45 @@ a.hub-card:hover {
   color: #fff;
 }
 
+.db-record-strength {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-left: auto;
+  min-height: 24px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+.db-record-best {
+  align-items: center;
+  background: #e7dcc6;
+  border: 1px solid #cdbda6;
+  border-radius: 999px;
+  color: #5b4a39;
+  display: inline-flex;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.2;
+  min-height: 24px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+.db-record-strength + .db-record-best {
+  margin-left: 0;
+}
+
 .db-facts {
   margin-bottom: 8px;
 }
 
 .db-record-text {
+  cursor: text;
   font-size: 0.95rem;
   line-height: 1.55;
 }
@@ -1304,12 +1449,25 @@ dd {
   padding: 14px;
 }
 
+/* Bound the image column the same way segment panels are bounded, so a tall
+ * manuscript scan cannot overflow the compare grid and paint over the match
+ * summary below it (especially with the signals drawer open). */
+.image-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .image-button {
   background: transparent;
   border: 0;
   cursor: zoom-in;
   display: grid;
+  flex: 1;
   gap: 8px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
   padding: 0;
   text-align: left;
   width: 100%;
@@ -1324,7 +1482,9 @@ dd {
   background: #efe3d2;
   border-radius: 18px;
   display: block;
+  height: 100%;
   max-height: 560px;
+  min-height: 0;
   object-fit: contain;
   width: 100%;
 }
@@ -2462,9 +2622,18 @@ progress {
     grid-template-columns: 1fr;
   }
 
-  .segment-panel {
+  .segment-panel,
+  .image-panel {
     max-height: none;
     overflow: visible;
+  }
+
+  .image-panel .image-button {
+    flex: none;
+  }
+
+  .image-panel img {
+    height: auto;
   }
 
   .segment-panel .reading-text,

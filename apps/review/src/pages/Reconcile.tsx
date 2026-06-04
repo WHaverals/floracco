@@ -8,9 +8,11 @@ import ImagePanel from "../components/ImagePanel";
 import MatchSummary from "../components/MatchSummary";
 import ReconcileHandoffStrip from "../components/ReconcileHandoffStrip";
 import ReviewQueue from "../components/ReviewQueue";
+import TypeMismatchCallout from "../components/TypeMismatchCallout";
 import VerifyDateFolioHint from "../components/VerifyDateFolioHint";
 import WordPanel from "../components/WordPanel";
 import type { CasePreview, DecisionPayload, ReviewCase, ReviewSummary } from "../types";
+import { defaultSelectedDbRowIds } from "../utils/reconcileUx";
 import { isVerifyDateFolioBucket } from "../utils/reviewLinks";
 
 const DEFAULT_FILTERS = {
@@ -85,7 +87,7 @@ export default function Reconcile() {
     loadCase(selectedReviewId)
       .then((response) => {
         setReviewCase(response);
-        setSelectedDbRows(response.suggested_db_row_ids);
+        setSelectedDbRows(defaultSelectedDbRowIds(response));
         setMessage("");
       })
       .catch((err: Error) => setError(err.message));
@@ -133,6 +135,9 @@ export default function Reconcile() {
           dbRowId: decision.selected_db_row_ids![0],
         });
         setMessage("");
+      } else if (decision.next_action === "reject_link") {
+        setMessage("Link rejected — saved. Rejected links show de-emphasised in Database.");
+        goNext();
       } else {
         setMessage("Decision saved.");
         goNext();
@@ -209,6 +214,7 @@ export default function Reconcile() {
                   onDismiss={() => setHandoff(null)}
                 />
               ) : null}
+              <TypeMismatchCallout reviewCase={reviewCase} />
               <div className={`reconcile-compare${showImage && hasImage ? " with-image" : ""}`}>
                 <WordPanel reviewCase={reviewCase} />
                 <DatabasePanel reviewCase={reviewCase} selectedDbRows={selectedDbRows} onToggle={toggleDbRow} />

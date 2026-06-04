@@ -1,6 +1,7 @@
 import type { ReviewCase } from "../types";
-import { isConfirmMultiRowBucket, isVerifyDateFolioBucket } from "../utils/reviewLinks";
-import { shouldShowActComponentMap } from "../utils/actComponents";
+import { caseBarQuestion } from "../utils/reconcileUx";
+import { shortReviewBucket } from "../utils/reviewBuckets";
+import { isVerifyDateFolioBucket } from "../utils/reviewLinks";
 
 function value(row: ReviewCase["row"], key: string): string {
   return String(row[key] ?? "");
@@ -34,22 +35,20 @@ export default function CaseBar({
   canNext,
 }: Props) {
   const row = reviewCase.row;
-  const verifyDateFolio = isVerifyDateFolioBucket(value(row, "recommended_review_bucket"));
-  const confirmMultiRow =
-    isConfirmMultiRowBucket(value(row, "recommended_review_bucket")) || shouldShowActComponentMap(reviewCase);
+  const bucket = value(row, "recommended_review_bucket");
+  const verifyDateFolio = isVerifyDateFolioBucket(bucket);
   const conflicts = value(row, "top_match_conflicts_plain_language");
-  let question = "Is this database record supported by the Word segment?";
-  if (verifyDateFolio) {
-    question =
-      "Link looks correct — only date or folio differs. Confirm the link, then fix the field in Corrections.";
-  } else if (confirmMultiRow) {
-    question = "Two or more acts in one Word entry — confirm each database row matches the bracket label.";
-  }
+  const question = caseBarQuestion(reviewCase);
+
   return (
     <header className="case-bar">
       <div className="case-bar-titles">
         <h1 className="case-bar-question">{question}</h1>
         <p className="case-bar-context">
+          <span className="case-bar-bucket" title={bucket}>
+            {shortReviewBucket(bucket)}
+          </span>
+          <span className="case-bar-context-sep"> · </span>
           <strong>{value(row, "register_id")}</strong>
           {verifyDateFolio && conflicts ? <span className="case-bar-conflicts"> · {conflicts}</span> : null}
           {isReviewed ? <span className="reviewed-flag"> · Reviewed</span> : null}

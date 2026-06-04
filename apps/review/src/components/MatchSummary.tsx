@@ -1,4 +1,6 @@
 import type { ReviewCase } from "../types";
+import { isGenuineMultiAct } from "../utils/actComponents";
+import { formatFlaggedReason } from "../utils/reconcileUx";
 
 function value(row: ReviewCase["row"], key: string): string {
   return String(row[key] ?? "");
@@ -36,6 +38,7 @@ const STATUS_ICONS: Record<string, string> = {
 
 export default function MatchSummary({ reviewCase }: { reviewCase: ReviewCase }) {
   const row = reviewCase.row;
+  const bucket = value(row, "recommended_review_bucket");
   const conflicts = reviewCase.evidence_items.filter(
     (item) => item.kind === "conflict" && item.status === "conflict",
   );
@@ -49,10 +52,28 @@ export default function MatchSummary({ reviewCase }: { reviewCase: ReviewCase })
   const strengthBand = band(strength);
   const phrase = value(row, "longest_shared_phrase_words") || "0";
 
+  const flaggedReason = diagnostics
+    .map((item) => formatFlaggedReason(bucket, String(item.detail ?? "")))
+    .filter((text): text is string => Boolean(text))
+    .join(" ");
+
+  const multiRow = reviewCase.suggested_db_row_ids.length > 1;
+  const genuineMultiAct = isGenuineMultiAct(reviewCase);
+
   let verdict: { tone: "ok" | "mid" | "alert"; text: string };
   if (conflicts.length > 0) {
     const extra = conflicts.length > 1 ? ` (and ${conflicts.length - 1} more)` : "";
     verdict = { tone: "alert", text: `Worth a closer look — ${conflicts[0].label.toLowerCase()}${extra}.` };
+  } else if (multiRow && genuineMultiAct) {
+    verdict = {
+      tone: "mid",
+      text: "Combined act — confirm each database row matches its bracket label.",
+    };
+  } else if (multiRow) {
+    verdict = {
+      tone: "mid",
+      text: "Several sibling rows share this text — pick the one this entry describes (usually one), not all.",
+    };
   } else if (strength !== null && strength >= 0.75) {
     verdict = { tone: "ok", text: "These look like a clear match — the text strongly overlaps and nothing conflicts." };
   } else if (strength !== null && strength >= 0.5) {
@@ -79,10 +100,10 @@ export default function MatchSummary({ reviewCase }: { reviewCase: ReviewCase })
       <details className="match-details">
         <summary>Show signals &amp; why it was flagged</summary>
         <div className="match-details-body">
-          {diagnostics.length ? (
+          {flaggedReason ? (
             <p className="muted why-flagged">
               <strong>Why flagged: </strong>
-              {diagnostics.map((item) => item.detail).join(" ")}
+              {flaggedReason}
             </p>
           ) : null}
           <div className="evidence-table">

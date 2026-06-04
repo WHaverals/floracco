@@ -74,11 +74,7 @@ export default function DecisionBar({
 
   const supportedCount = selectedDbRows.length;
   const confirmLabel =
-    supportedCount === 0
-      ? "Confirm — none supported"
-      : supportedCount === 1
-        ? "Confirm match · next"
-        : `Confirm ${supportedCount} records · next`;
+    supportedCount === 1 ? "Confirm match · next" : `Confirm ${supportedCount} records · next`;
 
   return (
     <section className="decision-bar">
@@ -110,12 +106,35 @@ export default function DecisionBar({
         <button type="button" className="link-button" disabled={!reviewer.trim() || isSaving} onClick={() => submit("unsure")}>
           Not sure
         </button>
-        <button type="button" className="link-button" disabled={!reviewer.trim() || isSaving} onClick={() => submit("none")}>
-          None match
-        </button>
-        <button type="button" className="primary-button" disabled={!reviewer.trim() || isSaving} onClick={() => submit("confirm")}>
-          {isSaving ? "Saving…" : confirmLabel}
-        </button>
+        {supportedCount > 0 ? (
+          <>
+            <button
+              type="button"
+              className="link-button"
+              disabled={!reviewer.trim() || isSaving}
+              onClick={() => submit("none")}
+            >
+              None match
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!reviewer.trim() || isSaving}
+              onClick={() => submit("confirm")}
+            >
+              {isSaving ? "Saving…" : confirmLabel}
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="primary-button"
+            disabled={!reviewer.trim() || isSaving}
+            onClick={() => submit("none")}
+          >
+            {isSaving ? "Saving…" : "None match · next"}
+          </button>
+        )}
       </div>
     </section>
   );
