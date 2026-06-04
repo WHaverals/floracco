@@ -8,6 +8,74 @@ export type ReviewSummary = {
   registers: string[];
 };
 
+export type ProgressCount = {
+  label: string;
+  total: number;
+  reviewed: number;
+};
+
+export type DashboardRegister = {
+  register_id: string;
+  word_entry_count: number;
+  db_row_count: number;
+  matched_high_confidence: number;
+  matched_candidate: number;
+  matched_multiple: number;
+  ambiguous: number;
+  word_only: number;
+  db_only: number;
+  word_entries_with_multiple_link_candidates: number;
+};
+
+export type AppliedWrite = {
+  db_row_id: string | null;
+  field: string | null;
+  pre_image: string | null;
+  post_image: string | null;
+  by: string | null;
+  at: string | null;
+};
+
+export type Dashboard = {
+  freshness: {
+    qa_packet_built_at: string | null;
+    matches_built_at: string | null;
+    decisions_updated_at: string | null;
+    corrections_updated_at: string | null;
+  };
+  reconcile: {
+    total_cases: number;
+    reviewed_cases: number;
+    by_priority: ProgressCount[];
+    by_bucket: ProgressCount[];
+    decisions: { confirmed: number; rejected: number; not_sure: number };
+    decisions_logged: number;
+  };
+  coverage: {
+    word_entry_total: number;
+    word_status_totals: Record<string, number>;
+    word_status_labels: Record<string, string>;
+    db_row_total: number;
+    db_only_total: number;
+    registers: DashboardRegister[];
+    images: { with_candidates: number; need_review: number; queue_rows: number };
+  };
+  corrections: {
+    proposals_total: number;
+    proposals_by_status: Record<string, number>;
+    applied_writes: number;
+    recent_applied: AppliedWrite[];
+    candidates: {
+      total: number;
+      open: number;
+      handled: number;
+      dismissed: number;
+      by_strength: Record<string, number>;
+      by_family: Record<string, number>;
+    };
+  };
+};
+
 export type CasePreview = {
   review_id: string;
   source_entry_id: string;

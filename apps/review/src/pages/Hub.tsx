@@ -41,7 +41,7 @@ const TOOLS: Tool[] = [
     to: "/dashboard",
     title: "Dashboard & exports",
     blurb: "Track progress and coverage across registers and export review decisions.",
-    status: "planned",
+    status: "ready",
   },
 ];
 

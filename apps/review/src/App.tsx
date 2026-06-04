@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom";
 import TopNav from "./components/TopNav";
 import ComingSoon from "./pages/ComingSoon";
 import Corrections from "./pages/Corrections";
+import Dashboard from "./pages/Dashboard";
 import Database from "./pages/Database";
 import Hub from "./pages/Hub";
 import Reconcile from "./pages/Reconcile";
@@ -28,15 +29,7 @@ export default function App() {
           <Route path="/database/:table" element={<Database />} />
           <Route path="/database/:table/:id" element={<Database />} />
           <Route path="/corrections" element={<Corrections />} />
-          <Route
-            path="/dashboard"
-            element={
-              <ComingSoon
-                title="Dashboard & exports"
-                blurb="Track review progress and coverage across registers, and export review decisions."
-              />
-            }
-          />
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="*" element={<ComingSoon title="Page not found" blurb="That route does not exist." />} />
         </Routes>
       </main>

@@ -5,6 +5,7 @@ import type {
   CorrectionCreatePayload,
   CorrectionListResponse,
   CorrectionProposal,
+  Dashboard,
   DbBrowseTable,
   DbRecord,
   DbSearchResponse,
@@ -27,6 +28,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export function loadSummary(): Promise<ReviewSummary> {
   return request<ReviewSummary>("/api/summary");
+}
+
+export function loadDashboard(): Promise<Dashboard> {
+  return request<Dashboard>("/api/dashboard");
+}
+
+export function exportUrl(name: "decisions" | "proposals" | "candidates"): string {
+  return `/api/export/${name}`;
 }
 
 export function loadCases(params: URLSearchParams): Promise<CaseListResponse> {
