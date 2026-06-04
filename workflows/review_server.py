@@ -601,8 +601,39 @@ def case_payload(row: dict[str, Any], decision: dict[str, Any] | None = None) ->
         "highlight_values": highlight_values_for_evidence(evidence_items),
         "word_entry_rich": build_word_entry_rich(row),
         "act_components": act_components,
+        "link_metrics": link_metrics_for_candidates(link_candidates),
         "decision": decision,
     }
+
+
+def link_metrics_for_candidates(link_candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per-candidate match signals keyed by db_row_id, for the review UI.
+
+    These come from the alignment layer (``source_entry_db_link_candidates``) so a
+    reviewer can see how strongly *each* suggested row matches the Word narrative —
+    the signal that separates a real twin from a sibling that merely shares
+    boilerplate. ``match_strength`` mirrors the headline rule
+    ``max(narrative_similarity_ratio, text_containment_ratio)``.
+    """
+    metrics: dict[str, dict[str, Any]] = {}
+    for link in link_candidates:
+        db_row_id = str(link.get("db_row_id") or "")
+        if not db_row_id or db_row_id in metrics:
+            continue
+        similarity = as_float(link.get("narrative_similarity_ratio"))
+        containment = as_float(link.get("text_containment_ratio"))
+        strengths = [value for value in (similarity, containment) if value is not None]
+        metrics[db_row_id] = {
+            "narrative_similarity_ratio": similarity,
+            "text_containment_ratio": containment,
+            "match_strength": max(strengths) if strengths else None,
+            "longest_shared_phrase_words": link.get("longest_shared_phrase_words"),
+            "score": as_float(link.get("score")),
+            "relationship_type": link.get("relationship_type"),
+            "link_role": link.get("link_role"),
+            "link_ordinal": link.get("link_ordinal"),
+        }
+    return metrics
 
 
 @app.get("/api/summary")
