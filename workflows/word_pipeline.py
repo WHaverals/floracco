@@ -3420,6 +3420,74 @@ def has_multiple_event_components(entry: dict[str, Any]) -> bool:
     return len(component_label_guesses(entry)) > 1 or is_combined_word_label(entry)
 
 
+# Minimum narrative-similarity gap for a sibling to win the "primary" link by
+# text alone (when the Word event number does not single one out). Below this,
+# the siblings stay co-equal and the entry is left for an ambiguous "pick one".
+SIBLING_PRIMARY_MIN_GAP = 0.15
+
+
+def entry_component_numbers(entry: dict[str, Any]) -> set[int]:
+    """All event/reference numbers the Word entry names (e.g. `[Bilancio] di 3325`)."""
+    numbers: set[int] = set()
+    for component in event_components_for_entry(entry):
+        for key in ("event_number", "referenced_event_number"):
+            value = integer_or_none(component.get(key))
+            if value is not None:
+                numbers.add(value)
+    for key in ("event_number_raw", "referenced_event_number_raw"):
+        value = integer_or_none(entry.get(key))
+        if value is not None:
+            numbers.add(value)
+    return numbers
+
+
+def is_sibling_link_set(selected: list[dict[str, Any]]) -> bool:
+    """True when links are siblings of one accomandita, not a combined act.
+
+    All `sub_contract` rows that share a `main_contract_id`, or share a single
+    `sub_type` — the boilerplate-driven pile-up shape. A `contract`+`sub_contract`
+    mix (a genuine combined act) is never a sibling set. See
+    `docs/workflows/link_candidate_pruning.md`.
+    """
+    if len(selected) < 2:
+        return False
+    if any(candidate.get("db_table") != "sub_contract" for candidate in selected):
+        return False
+    mains = {candidate.get("db_main_contract_id") for candidate in selected}
+    sub_types = {str(candidate.get("db_sub_type") or "").strip().lower() for candidate in selected}
+    same_parent = len(mains) == 1 and None not in mains
+    same_subtype = len(sub_types) == 1 and "" not in sub_types
+    return same_parent or same_subtype
+
+
+def choose_primary_sibling_index(entry: dict[str, Any], selected: list[dict[str, Any]]) -> int | None:
+    """Index of the single sibling this Word act describes, or None if unresolved.
+
+    1. **Word event number** — if `event_number`/`referenced_event_number` matches
+       exactly one sibling's `contract_id`/`main_contract_id`, that is the primary.
+    2. else **narrative similarity** — the highest `narrative_similarity_ratio`,
+       but only when it clears the runner-up by `SIBLING_PRIMARY_MIN_GAP`.
+       (Symmetric similarity separates siblings; containment is inflated by shared
+       boilerplate and must not be used here.)
+    """
+    numbers = entry_component_numbers(entry)
+    if numbers:
+        id_hits = [
+            index
+            for index, candidate in enumerate(selected)
+            if integer_or_none(candidate.get("db_contract_id")) in numbers
+            or integer_or_none(candidate.get("db_main_contract_id")) in numbers
+        ]
+        if len(id_hits) == 1:
+            return id_hits[0]
+    similarity = lambda candidate: float(candidate.get("narrative_similarity_ratio") or 0)  # noqa: E731
+    ranked = sorted(range(len(selected)), key=lambda index: similarity(selected[index]), reverse=True)
+    best, runner_up = ranked[0], ranked[1]
+    if similarity(selected[best]) - similarity(selected[runner_up]) >= SIBLING_PRIMARY_MIN_GAP:
+        return best
+    return None
+
+
 def relationship_type_for_links(entry: dict[str, Any], links: list[dict[str, Any]]) -> str:
     if not links:
         return (
@@ -3540,12 +3608,25 @@ def source_entry_db_link_candidates(
             filtered.append(candidate)
         selected = filtered
 
-    relationship_type = relationship_type_for_links(entry, selected)
+    # A single Word act linked to several siblings of one accomandita is a
+    # boilerplate-driven pile-up, not a combined act: keep one primary link and
+    # demote the rest to `alternative` (evidence retained, but not co-equal).
+    roles = ["primary"] * len(selected)
+    if not has_multiple_event_components(entry) and is_sibling_link_set(selected):
+        primary_index = choose_primary_sibling_index(entry, selected)
+        if primary_index is not None:
+            primary = selected[primary_index]
+            selected = [primary] + [c for i, c in enumerate(selected) if i != primary_index]
+            roles = ["primary"] + ["alternative"] * (len(selected) - 1)
+
+    primary_selected = [candidate for candidate, role in zip(selected, roles) if role == "primary"]
+    relationship_type = relationship_type_for_links(entry, primary_selected)
     group_id = f"{entry['source_entry_id']}__{relationship_type}"
     rows: list[dict[str, Any]] = []
-    for ordinal, candidate in enumerate(selected, start=1):
+    for ordinal, (candidate, role) in enumerate(zip(selected, roles), start=1):
         rows.append(
             {
+                "link_role": role,
                 "match_group_id": group_id,
                 "source_entry_id": entry["source_entry_id"],
                 "source_entry_key": entry.get("source_entry_key"),
@@ -3582,7 +3663,8 @@ def source_entry_db_link_candidates(
                 "field_overlap_count": candidate["field_overlap_count"],
                 "field_overlap": candidate["field_overlap"],
                 "field_overlap_plain_language": candidate["field_overlap_plain_language"],
-                "needs_review": relationship_type != "simple_one_to_one"
+                "needs_review": role == "alternative"
+                or relationship_type != "simple_one_to_one"
                 or bool(candidate.get("conflicts"))
                 or match_status != "matched_high_confidence",
                 "link_reason": link_reason_for_candidate(relationship_type, candidate),
@@ -3759,13 +3841,15 @@ def build_alignment_diagnostics(
                     candidate=top_candidate,
                 )
             )
-        if int(match.get("suggested_link_count") or 0) > 1:
+        if int(match.get("suggested_primary_link_count") or match.get("suggested_link_count") or 0) > 1:
             diagnostics.append(
                 alignment_diagnostic_row(
                     # Informational, not an alarm: one Word narrative legitimately
                     # approving several DB rows (a contract + its termination, etc.)
                     # is the expected combined-act pattern, not a defect. Low so it
-                    # does not force the row into the High-priority queue.
+                    # does not force the row into the High-priority queue. Keyed on
+                    # *primary* links so a pruned sibling pile-up (one primary +
+                    # demoted alternatives) is not mislabelled a combined act.
                     diagnostic_type="word_entry_combines_multiple_db_rows",
                     priority="Low",
                     source_entry_id=match["source_entry_id"],
@@ -3983,7 +4067,14 @@ def run_match_db(args: argparse.Namespace) -> int:
                 "top_field_overlap_plain_language": top["field_overlap_plain_language"] if top else "",
                 "candidate_count": len(scored),
                 "suggested_link_count": len(entry_link_candidates),
-                "suggested_relationship_type": relationship_type_for_links(entry, entry_link_candidates),
+                "suggested_primary_link_count": sum(
+                    1 for row in entry_link_candidates if row.get("link_role", "primary") == "primary"
+                ),
+                "suggested_relationship_type": (
+                    entry_link_candidates[0]["relationship_type"]
+                    if entry_link_candidates
+                    else relationship_type_for_links(entry, [])
+                ),
                 "suggested_db_row_ids": [row["db_row_id"] for row in entry_link_candidates],
             }
         )
@@ -4386,7 +4477,7 @@ def review_bucket_for_match(match: dict[str, Any]) -> tuple[str, str, str]:
             "High",
             "Pick the correct candidate, approve several, or mark unresolved.",
         )
-    if int(match.get("suggested_link_count") or 0) > 1:
+    if int(match.get("suggested_primary_link_count") or match.get("suggested_link_count") or 0) > 1:
         return (
             "Confirm multi-row link",
             "Low",
