@@ -126,6 +126,18 @@ PLUS_EVENT_RE = re.compile(
 )
 EVENT_NUMBER_RE = re.compile(r"\b(?P<number>\d{1,5})(?:\b|[^\d])")
 REFERENCED_EVENT_RE = re.compile(r"\bdi\s+(?P<number>\d{1,5})\b", flags=re.IGNORECASE)
+# Enumerated back-references like "di 669 e 798", "di 3533, 4086, 3243" or
+# "di 3249 e di 3223": one Word act can disdire / cedere / modificare several
+# accomandite at once, each a separate DB row carrying the same narrative. Capture
+# the whole run of numbers (anchored on the first "di N", then comma/semicolon/`e`/
+# `ed`/`di`-joined numbers), not just the first — otherwise a genuine combined act
+# looks like a single-act sibling pile-up and a real co-act gets demoted. The run
+# stops at the first token that is not a separator + number, so it never reaches
+# the narrative body (e.g. "…798 Agnolo di Girolamo" stops after 798).
+ENUMERATED_REFERENCED_RE = re.compile(
+    r"\bdi\s+\d{1,5}(?:\s*(?:,|;|\be\b|\bed\b)\s*(?:di\s+)?\d{1,5})*",
+    flags=re.IGNORECASE,
+)
 ITALIAN_MONTHS = {
     "gennaio": "01",
     "febbraio": "02",
@@ -1902,6 +1914,7 @@ def parse_entry_label(text: str) -> dict[str, Any] | None:
             "event_label_guess": "without_accomandita",
             "event_number_raw": None,
             "referenced_event_number_raw": None,
+            "referenced_event_numbers_raw": [],
             "event_label_trailing_text": stripped_text,
             "event_label_count": 0,
         }
@@ -1915,9 +1928,20 @@ def parse_entry_label(text: str) -> dict[str, Any] | None:
     trailing = match.group("trailing").strip()
     event_number = None
     referenced_event_number = None
+    referenced_event_numbers: list[str] = []
+    enumerated = ENUMERATED_REFERENCED_RE.search(trailing)
+    if enumerated:
+        # Preserve order, drop duplicates (e.g. "di 1263 ; 1263").
+        seen: set[str] = set()
+        for value in re.findall(r"\d{1,5}", enumerated.group(0)):
+            if value not in seen:
+                seen.add(value)
+                referenced_event_numbers.append(value)
     referenced = REFERENCED_EVENT_RE.search(trailing)
     if referenced:
         referenced_event_number = referenced.group("number")
+    elif referenced_event_numbers:
+        referenced_event_number = referenced_event_numbers[0]
     number = EVENT_NUMBER_RE.search(trailing)
     if number:
         event_number = number.group("number")
@@ -1926,6 +1950,7 @@ def parse_entry_label(text: str) -> dict[str, Any] | None:
         "event_label_guess": label_guess,
         "event_number_raw": event_number,
         "referenced_event_number_raw": referenced_event_number,
+        "referenced_event_numbers_raw": referenced_event_numbers,
         "event_label_trailing_text": trailing,
         "event_label_count": count_event_labels(stripped_text),
     }
@@ -3438,6 +3463,13 @@ def entry_component_numbers(entry: dict[str, Any]) -> set[int]:
         value = integer_or_none(entry.get(key))
         if value is not None:
             numbers.add(value)
+    # Enumerated back-references ("[Disdetta] di 669 e 798") — every named act, so
+    # a combined act that names several accomandite keeps all matching DB rows as
+    # primary instead of demoting the co-acts to siblings.
+    for value in entry.get("referenced_event_numbers_raw") or []:
+        number = integer_or_none(value)
+        if number is not None:
+            numbers.add(number)
     return numbers
 
 
@@ -4573,11 +4605,20 @@ def qa_rows_for_matches(
         # High alignment diagnostic still forces a row in as a safety net.
         status = match["match_status"]
         has_conflict = bool(match.get("top_conflicts"))
-        link_count = int(match.get("suggested_link_count") or 0)
+        # Count *primary* links, not total: a clean single-act high-confidence
+        # match often retains demoted `alternative` siblings (kept as evidence by
+        # the pruner), and counting those would force the entry into the queue
+        # only to be bucketed "High-confidence match / no action needed". Use the
+        # same primary-link signal review_bucket_for_match uses for the multi-row
+        # bucket, so inclusion and bucketing agree (genuine combined acts still
+        # surface; clean singles stay out).
+        primary_link_count = int(
+            match.get("suggested_primary_link_count") or match.get("suggested_link_count") or 0
+        )
         include = False
         if status in {"ambiguous", "word_only"} or has_conflict:
             include = True
-        elif link_count > 1:
+        elif primary_link_count > 1:
             include = True
         elif status == "matched_candidate" and float(match.get("top_score") or 0) < 70:
             include = True

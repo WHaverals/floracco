@@ -15,6 +15,12 @@ export function isGenuineMultiAct(reviewCase: ReviewCase): boolean {
   if (components.length >= 2) {
     return true;
   }
+  // The matcher kept ≥2 `primary` links — a confirmed combined act (e.g.
+  // `[Disdetta] di 669 e 798`, one narrative terminating several accomandite).
+  // Distinct from a sibling pile-up, which the matcher reduces to one primary.
+  if (primaryDbRowIds(reviewCase).length >= 2) {
+    return true;
+  }
   const ids = reviewCase.suggested_db_row_ids;
   const hasContract = ids.some((id) => id.startsWith("contract:"));
   const hasSubContract = ids.some((id) => id.startsWith("sub_contract:"));

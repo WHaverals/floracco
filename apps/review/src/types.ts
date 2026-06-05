@@ -468,6 +468,7 @@ export type DecisionPayload = {
   source_entry_key: string;
   source_entry_id: string;
   suggested_db_row_id: string;
+  packet_section: string;
   register_id: string;
   review_priority: string;
   recommended_review_bucket: string;

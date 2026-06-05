@@ -115,6 +115,8 @@ DECISION_FIELDNAMES = [
     "selected_db_row_ids",
     "rejected_db_row_ids",
     "suggested_relationship_type",
+    "reviewed_text_sha256",
+    "packet_section",
 ]
 
 
@@ -125,6 +127,9 @@ class ReviewDecision(BaseModel):
     source_entry_key: str = ""
     source_entry_id: str = ""
     suggested_db_row_id: str = ""
+    # "Word entry review" (default) or "DB-only review"; selects the review_id
+    # scheme so the case identity stays stable across match-db re-runs.
+    packet_section: str = ""
     register_id: str = ""
     review_priority: str = ""
     recommended_review_bucket: str = ""
@@ -321,12 +326,32 @@ def entry_identity(row: dict[str, Any]) -> str:
 
 
 def review_key(row: dict[str, Any]) -> tuple[str, str]:
-    suggested_db_row_id = str(row.get("suggested_db_row_ids") or row.get("top_db_row_id") or "")
-    return entry_identity(row), suggested_db_row_id
+    # Anchor on the single stable DB primary key (top_db_row_id), never the
+    # volatile multi-id suggested-link list — see review_id_for.
+    db_anchor = str(row.get("top_db_row_id") or row.get("suggested_db_row_ids") or "")
+    return entry_identity(row), db_anchor
 
 
-def review_id_for(entry_identity_value: str, suggested_db_row_id: str) -> str:
-    return f"{entry_identity_value}__{suggested_db_row_id}"
+def review_id_for(entry_identity_value: str, db_anchor: str, is_db_only: bool = False) -> str:
+    """Stable review identity for a case.
+
+    A **Word-entry** review case is 1:1 with its content-stable ``source_entry_key``
+    (``entry_identity``), so it is keyed on that alone — it must survive a
+    ``match-db`` re-run that re-prunes, adds, drops, or reorders the suggested DB
+    links (that link list is *not* stable across runs; the key is). The reviewer's
+    actual choice lives in ``selected_db_row_ids`` / ``rejected_db_row_ids``
+    regardless of what the matcher now proposes, and ``reviewed_text_sha256`` flags
+    when the reviewed Word text itself drifted.
+
+    A **DB-only** review case is a specific DB row surfaced for review (often
+    alongside the same Word entry, so it shares its ``source_entry_key``). It is
+    keyed on identity **plus** that single stable DB row id, both to distinguish it
+    from the entry's Word-review case and to keep several DB-only rows for one
+    entry apart.
+    """
+    if is_db_only:
+        return f"{entry_identity_value}__{db_anchor}" if entry_identity_value else f"__{db_anchor}"
+    return entry_identity_value or f"__{db_anchor}"
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -343,9 +368,11 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 def load_qa_rows() -> list[dict[str, Any]]:
     rows = [{key: normalize_empty(value) for key, value in row.items()} for row in load_jsonl(QA_PACKET_PATH)]
     for index, row in enumerate(rows):
-        source_entry_id, suggested_db_row_id = review_key(row)
+        identity, db_anchor = review_key(row)
         row["case_index"] = index
-        row["review_id"] = review_id_for(source_entry_id, suggested_db_row_id)
+        row["review_id"] = review_id_for(
+            identity, db_anchor, is_db_only=(row.get("packet_section") == "DB-only review")
+        )
     return rows
 
 
@@ -934,7 +961,19 @@ def save_decision(decision: ReviewDecision) -> dict[str, Any]:
     decision_row["rejected_db_row_ids"] = "; ".join(decision.rejected_db_row_ids)
     decision_row["updated_at"] = datetime.now(timezone.utc).isoformat()
     entry_identity_value = decision.source_entry_key or decision.source_entry_id
-    decision_row["review_id"] = review_id_for(entry_identity_value, decision.suggested_db_row_id)
+    decision_row["review_id"] = review_id_for(
+        entry_identity_value,
+        decision.suggested_db_row_id,
+        is_db_only=(decision.packet_section == "DB-only review"),
+    )
+    # Snapshot the reviewed Word text so a later content change can be detected
+    # (README §5). Read from the case the decision was made on, not the payload.
+    case_row = next((row for row in load_qa_rows() if row["review_id"] == decision_row["review_id"]), None)
+    decision_row["reviewed_text_sha256"] = (
+        hashlib.sha256(str(case_row.get("word_entry_text") or "").encode("utf-8")).hexdigest()
+        if case_row
+        else ""
+    )
 
     existing_rows = load_decisions()
     kept_rows = [row for row in existing_rows if row.get("review_id") != decision_row["review_id"]]

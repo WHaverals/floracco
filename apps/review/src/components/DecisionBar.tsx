@@ -52,6 +52,7 @@ export default function DecisionBar({
         source_entry_key: value(row, "source_entry_key"),
         source_entry_id: value(row, "source_entry_id"),
         suggested_db_row_id: allIds.join("; ") || value(row, "top_db_row_id"),
+        packet_section: value(row, "packet_section"),
         register_id: value(row, "register_id"),
         review_priority: value(row, "review_priority"),
         recommended_review_bucket: value(row, "recommended_review_bucket"),
