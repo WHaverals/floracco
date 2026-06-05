@@ -3090,8 +3090,10 @@ progress {
 /* Dashboard: progress / coverage / corrections / exports             */
 /* ------------------------------------------------------------------ */
 .dashboard {
+  height: 100%;
   margin: 0 auto;
   max-width: 1100px;
+  overflow: auto;
   padding: 28px 28px 60px;
 }
 
