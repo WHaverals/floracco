@@ -1,6 +1,7 @@
 import type { ReviewCase } from "../types";
 import { isGenuineMultiAct } from "../utils/actComponents";
 import { formatFlaggedReason } from "../utils/reconcileUx";
+import { isVerifyDateFolioBucket } from "../utils/reviewLinks";
 
 function value(row: ReviewCase["row"], key: string): string {
   return String(row[key] ?? "");
@@ -59,9 +60,15 @@ export default function MatchSummary({ reviewCase }: { reviewCase: ReviewCase })
 
   const multiRow = reviewCase.suggested_db_row_ids.length > 1;
   const genuineMultiAct = isGenuineMultiAct(reviewCase);
+  // The verify-date/folio tier is the *benign* one — its conflict is just a
+  // metadata diff the title already explains. Don't alarm ("Worth a closer look")
+  // and don't paint its conflict band red; the title + compare hint carry it.
+  const verifyTier = isVerifyDateFolioBucket(bucket);
 
   let verdict: { tone: "ok" | "mid" | "alert"; text: string };
-  if (conflicts.length > 0) {
+  if (verifyTier) {
+    verdict = { tone: "ok", text: "" };
+  } else if (conflicts.length > 0) {
     const extra = conflicts.length > 1 ? ` (and ${conflicts.length - 1} more)` : "";
     verdict = { tone: "alert", text: `Worth a closer look — ${conflicts[0].label.toLowerCase()}${extra}.` };
   } else if (multiRow && genuineMultiAct) {
@@ -85,14 +92,18 @@ export default function MatchSummary({ reviewCase }: { reviewCase: ReviewCase })
   return (
     <section className="match-summary">
       <div className={`verdict verdict-${verdict.tone}`}>
-        <span className="verdict-dot" aria-hidden="true" />
-        <span className="verdict-text">{verdict.text}</span>
+        {verdict.text ? (
+          <>
+            <span className="verdict-dot" aria-hidden="true" />
+            <span className="verdict-text">{verdict.text}</span>
+          </>
+        ) : null}
         <span className={`match-band band-${strengthBand.tone}`}>
           Text {strengthBand.label}
           {strength === null ? "" : ` · ${pct(strength)}`}
         </span>
         <span className="match-band band-neutral">Longest phrase · {phrase} words</span>
-        <span className={`match-band ${conflicts.length ? "band-alert" : "band-ok"}`}>
+        <span className={`match-band ${conflicts.length ? (verifyTier ? "band-neutral" : "band-alert") : "band-ok"}`}>
           {conflicts.length} conflict{conflicts.length === 1 ? "" : "s"}
         </span>
       </div>

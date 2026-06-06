@@ -110,6 +110,7 @@ export type ReviewCase = {
   suggested_db_row_ids: string[];
   db_rows: Record<string, string | number | null>[];
   image_paths: string[];
+  image_candidates: WordEntryImage[];
   evidence_items: EvidenceItem[];
   highlight_values: HighlightValue[];
   act_components: ActComponent[];

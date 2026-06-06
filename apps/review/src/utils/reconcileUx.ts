@@ -40,9 +40,28 @@ export function humanActType(labelGuess: string): string {
 
 export function caseBarQuestion(reviewCase: ReviewCase): string {
   const bucket = String(reviewCase.row.recommended_review_bucket ?? "");
+  // Field-verification tier: the link is trusted; only metadata differs. The
+  // compare hint below names the specific field, so keep this short.
   if (isVerifyDateFolioBucket(bucket)) {
-    return "Link looks correct — only date or folio differs. Confirm the link, then fix the field in Corrections.";
+    return "Confirm the link — only the date or folio differs. Fix the field afterwards in Corrections.";
   }
+  // Decision tiers come BEFORE the multi-act framing. A conflicting or ambiguous
+  // case must lead with that — "confirm each row" reads as "just approve them",
+  // which is exactly wrong when the rows conflict or are uncertain. (A multi-act
+  // entry can still be ambiguous or conflicting; the bucket is authoritative.)
+  if (bucket === CONFLICTS_BUCKET) {
+    return "This link has a recorded conflict — read both sides before confirming.";
+  }
+  if (bucket === AMBIGUOUS_BUCKET) {
+    return "Several database rows could match — mark only the rows the Word segment supports.";
+  }
+  if (bucket === WEAK_MATCH_BUCKET || bucket === NO_DB_MATCH_BUCKET) {
+    return "The matcher is unsure — decide whether any database row fits this Word segment.";
+  }
+  if (bucket === WORD_ONLY_BUCKET) {
+    return "This Word entry may have no accomandita database row — confirm it should stay Word-only.";
+  }
+  // Confirm tiers: a clean combined act, or a single act with sibling candidates.
   if (isGenuineMultiAct(reviewCase)) {
     return "Two or more acts in one Word entry — confirm each database row matches the bracket label.";
   }
@@ -51,18 +70,6 @@ export function caseBarQuestion(reviewCase: ReviewCase): string {
   }
   if (isConfirmMultiRowBucket(bucket)) {
     return "Confirm whether this Word entry supports the suggested database row.";
-  }
-  if (bucket === AMBIGUOUS_BUCKET) {
-    return "Several database rows could match — mark only the rows the Word segment supports.";
-  }
-  if (bucket === CONFLICTS_BUCKET) {
-    return "This link has a recorded conflict — read both sides before confirming.";
-  }
-  if (bucket === WEAK_MATCH_BUCKET || bucket === NO_DB_MATCH_BUCKET) {
-    return "The matcher is unsure — decide whether any database row fits this Word segment.";
-  }
-  if (bucket === WORD_ONLY_BUCKET) {
-    return "This Word entry may have no accomandita database row — confirm it should stay Word-only.";
   }
   if (bucket === "Candidate match to confirm") {
     return "Spot-check this candidate link before using it for field reconciliation.";

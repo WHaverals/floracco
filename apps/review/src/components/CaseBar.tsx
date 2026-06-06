@@ -1,7 +1,6 @@
 import type { ReviewCase } from "../types";
 import { caseBarQuestion } from "../utils/reconcileUx";
 import { shortReviewBucket } from "../utils/reviewBuckets";
-import { isVerifyDateFolioBucket } from "../utils/reviewLinks";
 
 function value(row: ReviewCase["row"], key: string): string {
   return String(row[key] ?? "");
@@ -36,8 +35,6 @@ export default function CaseBar({
 }: Props) {
   const row = reviewCase.row;
   const bucket = value(row, "recommended_review_bucket");
-  const verifyDateFolio = isVerifyDateFolioBucket(bucket);
-  const conflicts = value(row, "top_match_conflicts_plain_language");
   const question = caseBarQuestion(reviewCase);
 
   return (
@@ -50,7 +47,6 @@ export default function CaseBar({
           </span>
           <span className="case-bar-context-sep"> · </span>
           <strong>{value(row, "register_id")}</strong>
-          {verifyDateFolio && conflicts ? <span className="case-bar-conflicts"> · {conflicts}</span> : null}
           {isReviewed ? <span className="reviewed-flag"> · Reviewed</span> : null}
         </p>
       </div>

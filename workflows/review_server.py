@@ -628,6 +628,10 @@ def case_payload(row: dict[str, Any], decision: dict[str, Any] | None = None) ->
         "suggested_db_row_ids": suggested_db_row_ids,
         "db_rows": [db_row_for_id(db_row_id) for db_row_id in suggested_db_row_ids],
         "image_paths": image_paths,
+        # Grouped by physical scan (an opening spread links two folio sides to one
+        # photo) so the UI shows each scan once with merged folio captions — same
+        # shape /api/word-entry uses. Avoids the panel double-counting one scan.
+        "image_candidates": group_word_entry_images(image_candidates_by_entry().get(source_entry_id, [])),
         "evidence_items": evidence_items,
         "highlight_values": highlight_values_for_evidence(evidence_items),
         "word_entry_rich": build_word_entry_rich(row),

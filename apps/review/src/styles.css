@@ -166,18 +166,14 @@ textarea {
   min-width: 0;
 }
 
-.queue label,
-.decision-panel label {
+.queue label {
   display: grid;
   gap: 7px;
   font-size: 0.85rem;
 }
 
 .queue input,
-.queue select,
-.decision-panel input,
-.decision-panel select,
-.decision-panel textarea {
+.queue select {
   background: #fffaf3;
   border: 1px solid #d8cab9;
   border-radius: 12px;
@@ -188,8 +184,6 @@ textarea {
   width: 100%;
 }
 
-.queue-title,
-.case-header,
 .panel-heading {
   align-items: flex-start;
   display: flex;
@@ -198,9 +192,7 @@ textarea {
 }
 
 .queue h2,
-.case-header h1,
-.panel h2,
-.decision-panel h2 {
+.panel h2 {
   margin: 0;
 }
 
@@ -305,23 +297,6 @@ a.hub-card:hover {
   white-space: nowrap;
 }
 
-.hub-card-meta {
-  color: #8c6239;
-  font-size: 0.82rem;
-  font-weight: 700;
-  margin-top: 4px;
-}
-
-.hub-progress {
-  background: #fffaf3;
-  border: 1px solid #eadfcc;
-  border-radius: 18px;
-  display: grid;
-  gap: 8px;
-  max-width: 460px;
-  padding: 18px 20px;
-}
-
 .coming-soon {
   display: grid;
   gap: 12px;
@@ -410,8 +385,7 @@ a.hub-card:hover {
   gap: 6px;
 }
 
-.case-bar-nav button,
-.icon-button {
+.case-bar-nav button {
   background: #efe3d3;
   border: 0;
   border-radius: 10px;
@@ -465,13 +439,6 @@ a.hub-card:hover {
   gap: 12px;
   min-height: 0;
   padding: 16px 22px 18px;
-}
-
-.db-segment-eyebrow {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
 }
 
 .db-segment-head {
@@ -613,7 +580,7 @@ button.act-chip-jump.is-supported {
 }
 
 .reconcile-compare.with-image {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.15fr);
 }
 
 /* Each side is a flex column whose reading area scrolls independently */
@@ -1057,29 +1024,6 @@ button.act-chip-jump.is-supported {
   margin-left: auto;
 }
 
-.case-header {
-  background: #fffaf3;
-  border: 1px solid #eadfcc;
-  border-radius: 24px;
-  padding: 24px;
-}
-
-.case-header h1 {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.7rem, 3vw, 3.1rem);
-  font-weight: 500;
-  max-width: 900px;
-}
-
-.header-card {
-  background: #f1e5d4;
-  border-radius: 18px;
-  display: grid;
-  gap: 8px;
-  min-width: 260px;
-  padding: 16px;
-}
-
 .priority {
   border-radius: 999px;
   display: inline-flex;
@@ -1105,44 +1049,12 @@ button.act-chip-jump.is-supported {
   color: #f4fff1;
 }
 
-.review-grid {
-  align-items: start;
-  display: grid;
-  gap: 18px;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.1fr) minmax(280px, 0.8fr);
-}
-
-.lower-grid {
-  align-items: start;
-  display: grid;
-  gap: 18px;
-  grid-template-columns: minmax(0, 1fr) 420px;
-}
-
-.panel,
-.decision-panel {
+.panel {
   background: #fffaf3;
   border: 1px solid #eadfcc;
   border-radius: 24px;
   box-shadow: 0 18px 50px rgba(66, 45, 28, 0.08);
   padding: 20px;
-}
-
-.metadata-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 18px 0;
-}
-
-.metadata-grid.compact {
-  grid-template-columns: 1fr;
-  margin: 12px 0 0;
-}
-
-.metadata-grid.compact-2 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 10px 0;
 }
 
 dt {
@@ -1437,98 +1349,77 @@ dd {
   padding-top: 10px;
 }
 
-.db-card-list {
-  display: grid;
-  gap: 12px;
-  margin: 18px 0;
-}
-
-.db-card {
-  background: #f7ebdb;
-  border-radius: 16px;
-  padding: 14px;
-}
-
 /* Bound the image column the same way segment panels are bounded, so a tall
  * manuscript scan cannot overflow the compare grid and paint over the match
  * summary below it (especially with the signals drawer open). */
 .image-panel {
   display: flex;
   flex-direction: column;
+  gap: 10px;
   min-height: 0;
   overflow: hidden;
 }
 
+/* Slim header row: label on the left, compact scan nav on the right. */
+.image-panel-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.image-panel-head .eyebrow {
+  margin: 0 auto 0 0;
+}
+
+.img-nav-btn {
+  background: #efe3d3;
+  border: 0;
+  border-radius: 8px;
+  color: #241d18;
+  cursor: pointer;
+  font-size: 0.78rem;
+  height: 26px;
+  padding: 0;
+  width: 30px;
+}
+
+.img-nav-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.img-counter {
+  color: #806f62;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The image is the hero — it takes the panel's free vertical space. */
 .image-button {
   background: transparent;
   border: 0;
   cursor: zoom-in;
-  display: grid;
+  display: block;
   flex: 1;
-  gap: 8px;
-  grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
   padding: 0;
-  text-align: left;
   width: 100%;
-}
-
-.image-button span {
-  color: #806f62;
-  font-size: 0.85rem;
 }
 
 .image-panel img {
-  background: #efe3d2;
-  border-radius: 18px;
+  border-radius: 14px;
   display: block;
   height: 100%;
-  max-height: 560px;
   min-height: 0;
   object-fit: contain;
+  object-position: top center;
   width: 100%;
 }
 
-.image-controls {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: 1fr 1fr;
-  margin: 12px 0;
-}
-
-.image-controls button {
-  background: #241d18;
-  border: 0;
-  border-radius: 999px;
-  color: #fffaf3;
-  cursor: pointer;
-  font-weight: 700;
-  padding: 10px 12px;
-}
-
-.image-controls button:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-.evidence-strip {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(3, 1fr);
-  margin: 18px 0;
-}
-
-.evidence-strip div {
-  background: #f3e6d4;
-  border-radius: 16px;
-  display: grid;
-  gap: 6px;
-  padding: 14px;
-}
-
-.evidence-strip span {
-  color: #806f62;
-  font-size: 0.8rem;
+.image-caption {
+  color: #6b5d4e;
+  font-size: 0.82rem;
+  margin: 0;
 }
 
 details {
@@ -1624,11 +1515,6 @@ pre {
   background: #ded3c6;
 }
 
-.decision-panel {
-  display: grid;
-  gap: 16px;
-}
-
 fieldset {
   border: 1px solid #eadfcc;
   border-radius: 16px;
@@ -1643,31 +1529,9 @@ legend {
   padding: 0 6px;
 }
 
-.checkbox-row {
-  align-items: center;
-  display: flex !important;
-  flex-direction: row;
-  gap: 8px !important;
-}
-
 textarea {
   min-height: 110px;
   resize: vertical;
-}
-
-.decision-panel button {
-  background: #241d18;
-  border: 0;
-  border-radius: 999px;
-  color: #fffaf3;
-  cursor: pointer;
-  font-weight: 700;
-  padding: 13px 18px;
-}
-
-.decision-panel button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
 }
 
 .progress-card,
@@ -2740,23 +2604,6 @@ progress {
   background: #8a9b6f;
 }
 
-.cand-strength-label {
-  font-weight: 700;
-  text-transform: capitalize;
-}
-
-.cand-strength-label.is-high {
-  color: #b8513a;
-}
-
-.cand-strength-label.is-medium {
-  color: #9d7355;
-}
-
-.cand-strength-label.is-low {
-  color: #5f6f47;
-}
-
 .cand-chip {
   background: #efe6d6;
   border-radius: 6px;
@@ -2807,31 +2654,26 @@ progress {
   font-weight: 600;
 }
 
-.case-bar-conflicts {
-  color: #5a4a32;
-  font-weight: normal;
-}
-
-.verify-date-folio-hint {
+/* Slim single strip showing only the field(s) that actually differ, Word → DB.
+   The case-bar title already states "only date/folio differs — fix in
+   Corrections", so this carries values only, not prose. */
+.verify-date-folio-compare {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 22px;
   margin: 0 0 12px;
-  padding: 12px 14px;
+  padding: 8px 14px;
   border: 1px solid #d8cbb8;
   border-radius: 8px;
   background: #faf6ef;
-  font-size: 0.92rem;
+  font-size: 0.88rem;
 }
 
-.verify-date-folio-conflicts {
-  margin: 6px 0 0;
-  color: #5a4a32;
-}
-
-.verify-date-folio-compare {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px 12px;
-  margin: 10px 0 0;
-  font-size: 0.82rem;
+.verify-date-folio-compare > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .verify-date-folio-compare dt {
@@ -2841,7 +2683,23 @@ progress {
 }
 
 .verify-date-folio-compare dd {
-  margin: 2px 0 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.vdf-word {
+  color: #5a4a32;
+}
+
+.vdf-arrow {
+  color: #b8a88f;
+}
+
+.vdf-db {
+  color: #1f1a12;
+  font-weight: 600;
 }
 
 .reconcile-handoff {
@@ -3099,13 +2957,6 @@ progress {
 
 .dashboard-header h1 {
   margin: 2px 0 6px;
-}
-
-.dash-freshness {
-  border-bottom: 1px solid #eadfcc;
-  font-size: 0.82rem;
-  margin: 14px 0 0;
-  padding-bottom: 16px;
 }
 
 .dash-section {

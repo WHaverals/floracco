@@ -1,5 +1,5 @@
 import type { CasePreview, ReviewSummary } from "../types";
-import { shortReviewBucket } from "../utils/reviewBuckets";
+import { orderReviewBuckets, shortReviewBucket } from "../utils/reviewBuckets";
 
 type Filters = {
   priority: string;
@@ -91,7 +91,7 @@ export default function ReviewQueue({
             Bucket
             <select value={filters.bucket} onChange={(event) => update("bucket", event.target.value)}>
               <option>All</option>
-              {summary?.buckets.map((bucket) => (
+              {orderReviewBuckets(summary?.buckets ?? []).map((bucket) => (
                 <option key={bucket} value={bucket} title={bucket}>
                   {shortReviewBucket(bucket)}
                 </option>

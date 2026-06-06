@@ -80,12 +80,6 @@ export function mappedDbRowIds(reviewCase: ReviewCase): Set<string> {
   );
 }
 
-/** Suggested DB rows not already shown as an act-map target. */
-export function unmappedDbRowIds(reviewCase: ReviewCase): string[] {
-  const mappedIds = mappedDbRowIds(reviewCase);
-  return reviewCase.suggested_db_row_ids.filter((id) => !mappedIds.has(id));
-}
-
 /** DB row ids for the jump index — all rows when no act map, otherwise only unmapped extras. */
 export function jumpIndexDbRowIds(reviewCase: ReviewCase): string[] {
   const seen = new Set<string>();
