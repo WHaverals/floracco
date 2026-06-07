@@ -1,5 +1,6 @@
 import type { ReviewCase } from "../types";
 import HighlightedText from "./HighlightedText";
+import ManuscriptThumb from "./ManuscriptThumb";
 import WordActBadges from "./WordActBadges";
 
 function value(row: ReviewCase["row"], key: string): string {
@@ -12,7 +13,10 @@ export default function WordPanel({ reviewCase }: { reviewCase: ReviewCase }) {
   return (
     <section className="panel segment-panel">
       <div className="segment-head">
-        <p className="eyebrow">Word segment</p>
+        <div className="segment-head-row">
+          <p className="eyebrow">Word segment</p>
+          <ManuscriptThumb reviewCase={reviewCase} />
+        </div>
         <dl className="fact-row">
           <div>
             <dt>Date</dt>

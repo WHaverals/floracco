@@ -89,15 +89,19 @@ export default function MatchSummary({ reviewCase }: { reviewCase: ReviewCase })
     verdict = { tone: "mid", text: "Weak text overlap — read the segment carefully before deciding." };
   }
 
+  // The verdict line IS the disclosure summary: sentence + bands on one row, click
+  // to expand the signals / why-flagged. One compact row instead of two.
   return (
-    <section className="match-summary">
-      <div className={`verdict verdict-${verdict.tone}`}>
+    <details className={`match-summary verdict-${verdict.tone}`}>
+      <summary className="verdict-summary">
         {verdict.text ? (
           <>
             <span className="verdict-dot" aria-hidden="true" />
             <span className="verdict-text">{verdict.text}</span>
           </>
-        ) : null}
+        ) : (
+          <span className="verdict-text verdict-text-muted">Signals &amp; evidence</span>
+        )}
         <span className={`match-band band-${strengthBand.tone}`}>
           Text {strengthBand.label}
           {strength === null ? "" : ` · ${pct(strength)}`}
@@ -106,28 +110,25 @@ export default function MatchSummary({ reviewCase }: { reviewCase: ReviewCase })
         <span className={`match-band ${conflicts.length ? (verifyTier ? "band-neutral" : "band-alert") : "band-ok"}`}>
           {conflicts.length} conflict{conflicts.length === 1 ? "" : "s"}
         </span>
-      </div>
-
-      <details className="match-details">
-        <summary>Show signals &amp; why it was flagged</summary>
-        <div className="match-details-body">
-          {flaggedReason ? (
-            <p className="muted why-flagged">
-              <strong>Why flagged: </strong>
-              {flaggedReason}
-            </p>
-          ) : null}
-          <div className="evidence-table">
-            {evidence.map((item, index) => (
-              <div className="evidence-row" key={`${item.kind}-${index}`}>
-                <span className={`status-chip status-${item.status}`}>{STATUS_ICONS[item.status] ?? "•"}</span>
-                <strong>{item.label}</strong>
-                <span>{item.detail}</span>
-              </div>
-            ))}
-          </div>
+        <span className="verdict-chevron" aria-hidden="true">▾</span>
+      </summary>
+      <div className="match-details-body">
+        {flaggedReason ? (
+          <p className="muted why-flagged">
+            <strong>Why flagged: </strong>
+            {flaggedReason}
+          </p>
+        ) : null}
+        <div className="evidence-table">
+          {evidence.map((item, index) => (
+            <div className="evidence-row" key={`${item.kind}-${index}`}>
+              <span className={`status-chip status-${item.status}`}>{STATUS_ICONS[item.status] ?? "•"}</span>
+              <strong>{item.label}</strong>
+              <span>{item.detail}</span>
+            </div>
+          ))}
         </div>
-      </details>
-    </section>
+      </div>
+    </details>
   );
 }

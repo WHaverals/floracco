@@ -335,6 +335,16 @@ a.hub-card:hover {
   min-width: 0;
 }
 
+/* Compact single-line guidance, not a hero headline — reclaims vertical space
+   for the Word|DB evidence below. (Replaced the removed .case-header h1.) */
+.case-bar-question {
+  color: #2a2018;
+  font-size: 1.02rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0 0 3px;
+}
+
 .case-bar-titles .eyebrow {
   margin: 0 0 2px;
 }
@@ -579,10 +589,6 @@ button.act-chip-jump.is-supported {
   min-height: 0;
 }
 
-.reconcile-compare.with-image {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.15fr);
-}
-
 /* Each side is a flex column whose reading area scrolls independently */
 .segment-panel {
   background: #fffaf3;
@@ -754,20 +760,49 @@ button.act-chip-jump.is-supported {
   line-height: 1.55;
 }
 
-/* One-line verdict + a couple of compact bands */
+/* One compact row: the verdict sentence + evidence bands ARE the disclosure
+   summary; click to expand the signals / why-flagged below. */
 .match-summary {
-  flex-shrink: 0;
-}
-
-.verdict {
-  align-items: center;
   background: #fffaf3;
   border: 1px solid #eadfcc;
   border-radius: 14px;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.verdict-summary {
+  align-items: center;
+  cursor: pointer;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  list-style: none;
   padding: 10px 14px;
+}
+
+.verdict-summary::-webkit-details-marker {
+  display: none;
+}
+
+.verdict-summary:hover {
+  background: #fbf4ea;
+  border-radius: 14px;
+}
+
+.verdict-text-muted {
+  color: #806f62;
+  font-weight: 600;
+}
+
+.verdict-chevron {
+  color: #9d8a72;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  transition: transform 0.15s ease;
+}
+
+.match-summary[open] .verdict-chevron {
+  transform: rotate(180deg);
 }
 
 .verdict-dot {
@@ -825,21 +860,11 @@ button.act-chip-jump.is-supported {
   color: #6b5a4a;
 }
 
-.match-details {
-  margin-top: 6px;
-}
-
-.match-details > summary {
-  color: #806f62;
-  cursor: pointer;
-  font-size: 0.85rem;
-  padding: 4px 2px;
-}
-
 .match-details-body {
+  border-top: 1px solid #eadfcc;
   max-height: 220px;
   overflow: auto;
-  padding: 6px 2px 2px;
+  padding: 10px 14px;
 }
 
 .why-flagged {
@@ -1349,28 +1374,7 @@ dd {
   padding-top: 10px;
 }
 
-/* Bound the image column the same way segment panels are bounded, so a tall
- * manuscript scan cannot overflow the compare grid and paint over the match
- * summary below it (especially with the signals drawer open). */
-.image-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* Slim header row: label on the left, compact scan nav on the right. */
-.image-panel-head {
-  align-items: center;
-  display: flex;
-  gap: 10px;
-}
-
-.image-panel-head .eyebrow {
-  margin: 0 auto 0 0;
-}
-
+/* Compact scan nav inside the manuscript lightbox toolbar. */
 .img-nav-btn {
   background: #efe3d3;
   border: 0;
@@ -1394,32 +1398,56 @@ dd {
   font-variant-numeric: tabular-nums;
 }
 
-/* The image is the hero — it takes the panel's free vertical space. */
-.image-button {
-  background: transparent;
-  border: 0;
+/* Word-segment header: label on the left, manuscript thumbnail on the right. */
+.segment-head-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+/* Small folio thumbnail that opens the full-screen zoom/pan lightbox — the real
+   inspection happens there, not in a cramped inline panel. */
+.manuscript-thumb {
+  align-items: center;
+  background: #f3e8d6;
+  border: 1px solid #e0d2bd;
+  border-radius: 10px;
   cursor: zoom-in;
-  display: block;
-  flex: 1;
-  min-height: 0;
-  padding: 0;
-  width: 100%;
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
 }
 
-.image-panel img {
-  border-radius: 14px;
-  display: block;
-  height: 100%;
-  min-height: 0;
-  object-fit: contain;
-  object-position: top center;
-  width: 100%;
+.manuscript-thumb:hover {
+  background: #ecdfca;
 }
 
-.image-caption {
-  color: #6b5d4e;
-  font-size: 0.82rem;
-  margin: 0;
+.manuscript-thumb img {
+  border-radius: 6px;
+  display: block;
+  height: 42px;
+  object-fit: cover;
+  width: 60px;
+}
+
+.manuscript-thumb-label {
+  align-items: flex-start;
+  color: #6b5a44;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.76rem;
+  font-weight: 700;
+  gap: 2px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.manuscript-thumb-zoom {
+  color: #9d7355;
+  font-size: 0.68rem;
+  font-weight: 600;
 }
 
 details {
@@ -2480,24 +2508,14 @@ progress {
     overflow: visible;
   }
 
-  .reconcile-compare,
-  .reconcile-compare.with-image {
+  .reconcile-compare {
     grid-auto-flow: row;
     grid-template-columns: 1fr;
   }
 
-  .segment-panel,
-  .image-panel {
+  .segment-panel {
     max-height: none;
     overflow: visible;
-  }
-
-  .image-panel .image-button {
-    flex: none;
-  }
-
-  .image-panel img {
-    height: auto;
   }
 
   .segment-panel .reading-text,

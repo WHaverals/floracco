@@ -11,9 +11,6 @@ type Props = {
   index: number;
   total: number;
   isReviewed: boolean;
-  hasImage: boolean;
-  showImage: boolean;
-  onToggleImage: () => void;
   onPrevious: () => void;
   onNext: () => void;
   canPrevious: boolean;
@@ -25,9 +22,6 @@ export default function CaseBar({
   index,
   total,
   isReviewed,
-  hasImage,
-  showImage,
-  onToggleImage,
   onPrevious,
   onNext,
   canPrevious,
@@ -52,16 +46,6 @@ export default function CaseBar({
       </div>
 
       <div className="case-bar-tools">
-        <button
-          type="button"
-          className={`pill-button${showImage ? " is-active" : ""}`}
-          disabled={!hasImage}
-          aria-pressed={showImage}
-          onClick={onToggleImage}
-          title={hasImage ? "Show/hide the manuscript image" : "No image candidate for this case"}
-        >
-          Manuscript
-        </button>
         <div className="case-bar-nav">
           <button type="button" onClick={onPrevious} disabled={!canPrevious} aria-label="Previous case">
             ◀

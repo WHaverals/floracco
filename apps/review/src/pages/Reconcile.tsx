@@ -4,7 +4,6 @@ import { loadCase, loadCases, loadSummary, saveDecision } from "../api";
 import CaseBar from "../components/CaseBar";
 import DatabasePanel from "../components/DatabasePanel";
 import DecisionBar from "../components/DecisionBar";
-import ImagePanel from "../components/ImagePanel";
 import MatchSummary from "../components/MatchSummary";
 import ReconcileHandoffStrip from "../components/ReconcileHandoffStrip";
 import ReviewQueue from "../components/ReviewQueue";
@@ -39,7 +38,6 @@ export default function Reconcile() {
   const [selectedDbRows, setSelectedDbRows] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [showImage, setShowImage] = useState(false);
   const [queueOpen, setQueueOpen] = useState(true);
   const [handoff, setHandoff] = useState<HandoffTarget | null>(null);
 
@@ -82,7 +80,6 @@ export default function Reconcile() {
       setReviewCase(null);
       return;
     }
-    setShowImage(false);
     setHandoff(null);
     loadCase(selectedReviewId)
       .then((response) => {
@@ -166,7 +163,6 @@ export default function Reconcile() {
     return () => window.removeEventListener("keydown", onKey);
   }, [goNext, goPrevious, handoff]);
 
-  const hasImage = (reviewCase?.image_paths.length ?? 0) > 0;
   const isReviewed = currentCase?.is_reviewed ?? false;
   const showVerifyHint =
     reviewCase && isVerifyDateFolioBucket(String(reviewCase.row.recommended_review_bucket ?? ""));
@@ -196,9 +192,6 @@ export default function Reconcile() {
               index={currentIndex}
               total={total}
               isReviewed={isReviewed}
-              hasImage={hasImage}
-              showImage={showImage}
-              onToggleImage={() => setShowImage((value) => !value)}
               onPrevious={goPrevious}
               onNext={goNext}
               canPrevious={canPrevious}
@@ -215,10 +208,9 @@ export default function Reconcile() {
                 />
               ) : null}
               <TypeMismatchCallout reviewCase={reviewCase} />
-              <div className={`reconcile-compare${showImage && hasImage ? " with-image" : ""}`}>
+              <div className="reconcile-compare">
                 <WordPanel reviewCase={reviewCase} />
                 <DatabasePanel reviewCase={reviewCase} selectedDbRows={selectedDbRows} onToggle={toggleDbRow} />
-                {showImage && hasImage ? <ImagePanel reviewCase={reviewCase} /> : null}
               </div>
               <MatchSummary reviewCase={reviewCase} />
               <DecisionBar key={selectedReviewId} reviewCase={reviewCase} selectedDbRows={selectedDbRows} onSave={save} />
