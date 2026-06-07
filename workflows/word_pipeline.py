@@ -3364,6 +3364,12 @@ ID_SIGNALS = {
     "main_contract_id_from_event_number",
     "component_main_contract_id",
 }
+# Corroboration that a pinned link is the right row even when the DB document is
+# terse and scores low on text: an exact (or stile-fiorentino) date AND a person/
+# firm-name overlap. Boundary sampling showed weak-text-but-correct links (terse
+# disdette) hinge on this, not on a text-similarity threshold.
+DATE_CORROBORATE_SIGNALS = {"registration_date_exact", "registration_date_stile_fiorentino"}
+NAME_CORROBORATE_SIGNALS = {"person_name_overlap", "firm_name_overlap"}
 FOLIO_AGREEMENT_RELATIONS = {"exact", "within", "overlap"}
 
 
@@ -4451,80 +4457,89 @@ def source_entry_clean_for_success_control(source_entry: dict[str, Any]) -> bool
     )
 
 
-def review_bucket_for_match(match: dict[str, Any]) -> tuple[str, str, str]:
-    """Lean triage tier for a Word-entry match.
+# Queue order: decision-heavy work first, routine confirms and DB-side last.
+# Mirrors the front-end filter ordering (apps/review/src/utils/reviewBuckets.ts).
+REVIEW_BUCKET_ORDER = [
+    "Choose the right row",
+    "Verify a field",
+    "Investigate — no clear DB match",
+    "Confirm combined act",
+    "Confirm the link",
+    "DB row needs a Word link",
+    "Non-accomandita (Word-only)",
+]
 
-    Only what genuinely needs a human is High. Conflicts and ambiguity come
-    first (a multi-row link with a real conflict is a conflict, not a routine
-    confirm). Clean multi-row links — the normal combined-act pattern — are a
-    low-urgency confirm, not an alarm. Clean single high-confidence matches are
-    auto-eligible and are not surfaced at all (see qa_rows_for_matches).
+
+def review_bucket_for_match(match: dict[str, Any]) -> tuple[str, str]:
+    """Action-first review bucket for a Word-entry match. Returns (bucket, action).
+
+    Organised by what the reviewer DOES, not by the matcher's internal status.
+    The order asks, in turn: is this even an accomandita? can the matcher pin a
+    row? is the pinned link basically right? — instead of letting any recorded
+    conflict dominate (the old conflict-first order scattered correct-link-field-
+    differs cases into a 'Conflicts' grab-bag). Priority is gone: the bucket is
+    the routing. Clean single high-confidence matches stay auto-eligible and are
+    not surfaced at all (see qa_rows_for_matches).
     """
     status = match["match_status"]
+
+    # 1. Not an accomandita at all — a deliberate, label-detected historian category.
+    if status == "word_only" and match.get("event_label_guess") == "without_accomandita":
+        return (
+            "Non-accomandita (Word-only)",
+            "Confirm this is a non-accomandita act and should stay Word-only.",
+        )
+
+    # 2. Word entry the matcher could not place — investigate / forge a link.
     if status == "word_only":
-        if match.get("event_label_guess") == "without_accomandita":
-            return (
-                "Expected Word-only (non-accomandita)",
-                "Low",
-                "Usually mark as expected Word-only unless the text clearly belongs in SQLite.",
-            )
-        if int(match.get("candidate_count") or 0) == 0:
-            return (
-                "Word entry with no DB match",
-                "High",
-                "No ID, date, or folio signal produced a plausible DB row; check Word source and DB coverage.",
-            )
         return (
-            "Word entry with weak or rejected DB candidates",
-            "High",
-            "Decide whether this is a DB mismatch, a true Word-only entry, or a parser issue.",
+            "Investigate — no clear DB match",
+            "Decide: a DB mismatch, a true Word-only entry, a parser miss, or a row to create.",
         )
-    conflicts = set(match.get("top_conflicts") or [])
-    if conflicts:
-        # Soft conflict: the DB id (event number / main-contract id) and the
-        # narrative agree, and the *only* disagreement is the date or folio. That
-        # is a field-verification question (data-entry slip, stile fiorentino,
-        # original foliation) — not "is this the right row". Route to Medium so
-        # High holds genuine linking problems only.
-        soft_only = conflicts.issubset({"registration_date_differs", "folio_differs"})
-        has_id = bool(ID_SIGNALS & set(match.get("top_signals") or []))
-        strength = max(
-            float(match.get("top_narrative_similarity_ratio") or 0),
-            float(match.get("top_text_containment_ratio") or 0),
-        )
-        if soft_only and has_id and strength >= 0.6:
+
+    # 3. Rows were found but the matcher cannot choose among them.
+    primary_links = int(match.get("suggested_primary_link_count") or match.get("suggested_link_count") or 0)
+    if status in ("ambiguous", "matched_multiple"):
+        if primary_links > 1:
             return (
-                "Likely match — verify date/folio",
-                "Medium",
-                "The DB id and narrative agree; only the date or folio differs. Check whether the DB field needs a correction (stile fiorentino, original foliation, data-entry slip) rather than re-linking.",
+                "Confirm combined act",
+                "One narrative covers several acts — confirm each suggested database row.",
             )
         return (
-            "Match has conflicts to resolve",
-            "High",
-            "Review the conflicting register / type / text signal before approving.",
+            "Choose the right row",
+            "Several sibling rows are plausible — mark only the one(s) the narrative supports.",
         )
-    if status == "ambiguous":
+
+    # 4. A single act is pinned (high-confidence or candidate). Is the link right?
+    signals = set(match.get("top_signals") or [])
+    has_id = bool(ID_SIGNALS & signals)
+    date_and_name = bool(DATE_CORROBORATE_SIGNALS & signals) and bool(NAME_CORROBORATE_SIGNALS & signals)
+    strength = max(
+        float(match.get("top_narrative_similarity_ratio") or 0),
+        float(match.get("top_text_containment_ratio") or 0),
+    )
+    link_is_right = has_id or date_and_name or strength >= 0.6
+
+    if match.get("top_conflicts"):
+        if link_is_right:
+            return (
+                "Verify a field",
+                "The link is right; a field disagrees (date, folio, register, or type) — confirm the link, then fix the field in Corrections.",
+            )
         return (
-            "Ambiguous match to choose",
-            "High",
-            "Pick the correct candidate, approve several, or mark unresolved.",
+            "Choose the right row",
+            "Weak evidence and a conflict — check whether this is even the right row before approving.",
         )
-    if int(match.get("suggested_primary_link_count") or match.get("suggested_link_count") or 0) > 1:
+
+    # 5. Clean pinned link, no conflict.
+    if primary_links > 1:
         return (
-            "Confirm multi-row link",
-            "Low",
-            "Confirm this one narrative approves these DB rows together (the normal combined-act pattern).",
-        )
-    if status == "matched_candidate":
-        return (
-            "Candidate match to confirm",
-            "Medium",
-            "Spot-check before using this for field-level reconciliation.",
+            "Confirm combined act",
+            "One narrative approves these database rows together (a combined act).",
         )
     return (
-        "High-confidence match",
-        "Low",
-        "Auto-eligible; no action needed unless the side-by-side text looks wrong.",
+        "Confirm the link",
+        "Spot-check this single match before it is used for field-level reconciliation.",
     )
 
 
@@ -4605,13 +4620,12 @@ def qa_rows_for_matches(
         # High alignment diagnostic still forces a row in as a safety net.
         status = match["match_status"]
         has_conflict = bool(match.get("top_conflicts"))
-        # Count *primary* links, not total: a clean single-act high-confidence
-        # match often retains demoted `alternative` siblings (kept as evidence by
-        # the pruner), and counting those would force the entry into the queue
-        # only to be bucketed "High-confidence match / no action needed". Use the
-        # same primary-link signal review_bucket_for_match uses for the multi-row
-        # bucket, so inclusion and bucketing agree (genuine combined acts still
-        # surface; clean singles stay out).
+        # Count *primary* links, not total: a clean single-act match often retains
+        # demoted `alternative` siblings (kept as evidence by the pruner), and
+        # counting those would force the entry into the queue when it is really a
+        # clean single match. Use the same primary-link signal
+        # review_bucket_for_match uses for the combined-act bucket, so inclusion and
+        # bucketing agree (genuine combined acts still surface; clean singles stay out).
         primary_link_count = int(
             match.get("suggested_primary_link_count") or match.get("suggested_link_count") or 0
         )
@@ -4622,17 +4636,25 @@ def qa_rows_for_matches(
             include = True
         elif status == "matched_candidate" and float(match.get("top_score") or 0) < 70:
             include = True
-        if any(diagnostic.get("priority") == "High" for diagnostic in alignment_diagnostics):
+        # A genuine, non-structural High alignment diagnostic forces a row in as a
+        # safety net — EXCEPT `db_text_found_in_word_but_not_linked`, which is about
+        # an *unlinked DB row* (already surfaced DB-side as "DB row needs a Word
+        # link"); force-including the already-well-matched Word entry just duplicates
+        # the same Word↔DB pair under a second bucket.
+        if any(
+            diagnostic.get("priority") == "High"
+            and diagnostic.get("diagnostic_type") != "db_text_found_in_word_but_not_linked"
+            for diagnostic in alignment_diagnostics
+        ):
             include = True
         if not include:
             continue
-        bucket, priority, recommendation = review_bucket_for_match(match)
+        bucket, recommendation = review_bucket_for_match(match)
         top_db_row_id = match.get("top_db_row_id")
         relationship_type = match.get("suggested_relationship_type") or relationship_type_for_links(match, link_candidates)
         rows.append(
             {
                 "packet_section": "Word entry review",
-                "review_priority": priority,
                 "recommended_review_bucket": bucket,
                 "recommended_reviewer_action": recommendation,
                 "source_entry_id": match["source_entry_id"],
@@ -4690,10 +4712,22 @@ def qa_rows_for_db_only(
     diagnostics_by_db: dict[str, list[dict[str, Any]]],
     comments_by_key: dict[tuple[str, str], dict[str, Any]],
     notes_by_key: dict[tuple[str, str], dict[str, Any]],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], int]:
+    """DB rows with no Word link. Returns (review_rows, out_of_scope_count).
+
+    Out-of-scope rows — a register with no Word file, or no register metadata at
+    all (`_unknown_register`) — have no Word side to review, so they are NOT
+    surfaced as queue cases; only their count is returned for the summary. The
+    rest collapse into one honest bucket: an unlinked DB row whose Word
+    counterpart should be found (or confirmed a duplicate).
+    """
     rows: list[dict[str, Any]] = []
+    out_of_scope = 0
     for db_row in db_only_rows:
         register_id = db_row.get("register_id")
+        if register_id not in word_register_ids or register_id in (None, "", "_unknown_register"):
+            out_of_scope += 1
+            continue
         alignment_diagnostics = diagnostics_by_db.get(db_row["db_row_id"], [])
         diagnostic_source_entry_id = next(
             (diagnostic.get("source_entry_id") for diagnostic in alignment_diagnostics if diagnostic.get("source_entry_id")),
@@ -4701,25 +4735,11 @@ def qa_rows_for_db_only(
         )
         diagnostic_source_entry = source_entries_by_id.get(str(diagnostic_source_entry_id), {})
         primary_diagnostic = alignment_diagnostics[0] if alignment_diagnostics else {}
-        if register_id not in word_register_ids:
-            bucket = "Expected DB-only (outside Word corpus)"
-            priority = "Low"
-            action = "Usually out of scope for this Word matching pass."
-        elif alignment_diagnostics:
-            bucket = "DB row may have Word evidence"
-            priority = "Medium"
-            action = "Review the alignment diagnostic before treating this as a genuinely DB-only row."
-        else:
-            bucket = "DB row not in Word — review"
-            priority = "Medium"
-            action = (
-                "Look for a missing Word entry, a segmentation miss, missing register metadata, "
-                "or a DB row that belongs outside the Word corpus."
-            )
+        bucket = "DB row needs a Word link"
+        action = "An unlinked DB row — check whether a Word entry exists for it (or it is a duplicate)."
         rows.append(
             {
                 "packet_section": "DB-only review",
-                "review_priority": priority,
                 "recommended_review_bucket": bucket,
                 "recommended_reviewer_action": action,
                 "source_entry_id": diagnostic_source_entry_id,
@@ -4764,26 +4784,25 @@ def qa_rows_for_db_only(
                 **entry_revision_fields(diagnostic_source_entry, comments_by_key, notes_by_key),
             }
         )
-    return rows
+    return rows, out_of_scope
 
 
 def write_qa_packet_html(path: Path, rows: list[dict[str, Any]], summary_lines: list[str]) -> None:
     ensure_dir(path.parent)
     cards: list[str] = []
     for index, row in enumerate(rows, start=1):
-        priority_class = str(row["review_priority"]).lower()
         cards.append(
             f"""
-            <section class="card {html.escape(priority_class)}">
+            <section class="card">
               <h2>{index}. {html.escape(str(row['recommended_review_bucket']))}</h2>
-              <p><strong>Priority:</strong> {html.escape(str(row['review_priority']))}
-                 · <strong>Section:</strong> {html.escape(str(row['packet_section']))}
+              <p><strong>Section:</strong> {html.escape(str(row['packet_section']))}
                  · <strong>Register:</strong> {html.escape(str(row['register_id']))}</p>
               <p><strong>Recommended action:</strong> {html.escape(str(row['recommended_reviewer_action']))}</p>
               <dl>
                 <dt>Word entry</dt><dd>{html.escape(str(row.get('source_entry_id') or 'No Word entry'))}</dd>
                 <dt>Label / type</dt><dd>{html.escape(str(row.get('entry_label') or ''))} · {html.escape(str(row.get('entry_type_interpretation') or ''))}</dd>
                 <dt>Date / folio</dt><dd>{html.escape(str(row.get('word_registration_date') or ''))} · {html.escape(str(row.get('word_folio_range') or ''))}</dd>
+                <dt>Bucket</dt><dd>{html.escape(str(row.get('recommended_review_bucket') or ''))}</dd>
                 <dt>Suggested DB rows</dt><dd>{html.escape(str(row.get('suggested_db_row_ids') or row.get('top_db_row_id') or 'No suggested DB row'))}</dd>
                 <dt>Relationship type</dt><dd>{html.escape(str(row.get('suggested_relationship_type') or ''))}</dd>
                 <dt>Match status</dt><dd>{html.escape(str(row.get('match_status') or ''))}</dd>
@@ -4824,9 +4843,6 @@ def write_qa_packet_html(path: Path, rows: list[dict[str, Any]], summary_lines: 
     body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; line-height: 1.45; }}
     .summary {{ background: #f5f5f5; border: 1px solid #ddd; padding: 1rem; margin-bottom: 1.5rem; }}
     .card {{ border: 1px solid #ccc; border-left: 8px solid #999; padding: 1rem; margin: 1rem 0; border-radius: 6px; }}
-    .card.high {{ border-left-color: #b42318; }}
-    .card.medium {{ border-left-color: #b54708; }}
-    .card.low {{ border-left-color: #1f6feb; }}
     dl {{ display: grid; grid-template-columns: 12rem 1fr; column-gap: 1rem; }}
     dt {{ font-weight: 700; }}
     dd {{ margin: 0 0 .35rem 0; }}
@@ -4917,35 +4933,34 @@ def run_qa_packet(args: argparse.Namespace) -> int:
         comments_by_key,
         notes_by_key,
     )
-    qa_rows.extend(
-        qa_rows_for_db_only(
-            db_only_rows,
-            source_entries_by_id,
-            db_documents,
-            word_register_ids,
-            matched_main_contract_ids,
-            diagnostics_by_db,
-            comments_by_key,
-            notes_by_key,
-        )
+    db_only_qa_rows, out_of_scope_count = qa_rows_for_db_only(
+        db_only_rows,
+        source_entries_by_id,
+        db_documents,
+        word_register_ids,
+        matched_main_contract_ids,
+        diagnostics_by_db,
+        comments_by_key,
+        notes_by_key,
     )
-    priority_order = {"High": 0, "Medium": 1, "Low": 2}
+    qa_rows.extend(db_only_qa_rows)
+    bucket_rank = {name: index for index, name in enumerate(REVIEW_BUCKET_ORDER)}
     qa_rows.sort(
         key=lambda row: (
-            priority_order.get(str(row["review_priority"]), 9),
-            str(row["recommended_review_bucket"]),
+            bucket_rank.get(str(row["recommended_review_bucket"]), len(REVIEW_BUCKET_ORDER)),
             str(row["register_id"]),
             str(row.get("source_entry_id") or row.get("top_db_row_id")),
         )
     )
 
     summary_lines = [
-        f"Generated {len(qa_rows)} QA rows from {len(entry_matches)} Word-entry match rows and {len(db_only_rows)} DB-only rows.",
+        f"Generated {len(qa_rows)} QA review rows from {len(entry_matches)} Word-entry match rows and {len(db_only_rows)} DB-only rows.",
+        f"Dropped {out_of_scope_count} out-of-scope DB-only rows (no Word file / no register metadata) from the review queue.",
         f"Loaded {len(link_candidates)} source-entry/DB link candidate rows.",
         f"Loaded {len(alignment_diagnostics)} alignment diagnostic rows.",
         f"Loaded {len(image_link_rows)} source-entry image candidate rows.",
         "This packet is for human review only. It does not approve matches or update SQLite.",
-        "Use the priority and recommended-review-bucket fields to work through the hardest rows first.",
+        "Rows are grouped by recommended_review_bucket (action-first); priority has been removed.",
     ]
     csv_exclude = {"word_entry_revision_summary", "word_entry_comments", "word_entry_notes"}
     csv_fieldnames = sorted({key for row in qa_rows for key in row if key not in csv_exclude})
@@ -4958,9 +4973,11 @@ def run_qa_packet(args: argparse.Namespace) -> int:
         [
             f"- Match input: `{match_dir.relative_to(project_root())}`",
             f"- QA rows: {len(qa_rows)}",
-            f"- High priority rows: {sum(1 for row in qa_rows if row['review_priority'] == 'High')}",
-            f"- Medium priority rows: {sum(1 for row in qa_rows if row['review_priority'] == 'Medium')}",
-            f"- Low priority/control rows: {sum(1 for row in qa_rows if row['review_priority'] == 'Low')}",
+            f"- Out-of-scope DB-only rows dropped from queue: {out_of_scope_count}",
+            *[
+                f"- {bucket}: {sum(1 for row in qa_rows if row['recommended_review_bucket'] == bucket)}"
+                for bucket in REVIEW_BUCKET_ORDER
+            ],
             f"- QA rows with image candidates: {sum(1 for row in qa_rows if row.get('image_candidate_paths'))}",
             f"- QA rows with image candidates needing review: {sum(1 for row in qa_rows if row.get('image_candidates_need_review'))}",
             f"- QA rows with multiple suggested DB links: {sum(1 for row in qa_rows if int(row.get('suggested_link_count') or 0) > 1)}",

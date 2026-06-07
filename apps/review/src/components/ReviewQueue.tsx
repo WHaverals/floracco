@@ -2,7 +2,6 @@ import type { CasePreview, ReviewSummary } from "../types";
 import { orderReviewBuckets, shortReviewBucket } from "../utils/reviewBuckets";
 
 type Filters = {
-  priority: string;
   bucket: string;
   register: string;
   reviewed: string;
@@ -79,15 +78,6 @@ export default function ReviewQueue({
             <input value={filters.search} onChange={(event) => update("search", event.target.value)} placeholder="Name, ID, folio..." />
           </label>
           <label>
-            Priority
-            <select value={filters.priority} onChange={(event) => update("priority", event.target.value)}>
-              <option>All</option>
-              {summary?.priorities.map((priority) => (
-                <option key={priority}>{priority}</option>
-              ))}
-            </select>
-          </label>
-          <label>
             Bucket
             <select value={filters.bucket} onChange={(event) => update("bucket", event.target.value)}>
               <option>All</option>
@@ -156,7 +146,6 @@ export default function ReviewQueue({
                     onClick={() => onSelect(item.review_id)}
                     aria-current={isActive}
                   >
-                    <span className={`queue-dot priority-${item.review_priority.toLowerCase()}`} aria-hidden="true" />
                     <span className="queue-list-text">
                       <strong>{item.source_entry_id || item.suggested_db_row_ids || item.register_id}</strong>
                       <span title={item.recommended_review_bucket}>{shortReviewBucket(item.recommended_review_bucket)}</span>

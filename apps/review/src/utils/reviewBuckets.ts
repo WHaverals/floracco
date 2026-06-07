@@ -1,18 +1,13 @@
 /** Short labels for review buckets — filter values stay the full API string. */
 
 const REVIEW_BUCKET_SHORT: Record<string, string> = {
-  "Confirm multi-row link": "Multi-row",
-  "Likely match — verify date/folio": "Verify date/folio",
-  "Expected Word-only (non-accomandita)": "Word-only (ok)",
-  "Match has conflicts to resolve": "Conflicts",
-  "Expected DB-only (outside Word corpus)": "DB-only (scope)",
-  "Word entry with weak or rejected DB candidates": "Weak match",
-  "DB row may have Word evidence": "DB → Word?",
-  "High-confidence match": "High confidence",
-  "Ambiguous match to choose": "Ambiguous",
-  "DB row not in Word — review": "DB not in Word",
-  "Word entry with no DB match": "No DB match",
-  "Candidate match to confirm": "Candidate",
+  "Choose the right row": "Choose row",
+  "Verify a field": "Verify field",
+  "Investigate — no clear DB match": "Investigate",
+  "Confirm combined act": "Combined act",
+  "Confirm the link": "Confirm link",
+  "DB row needs a Word link": "DB → Word link",
+  "Non-accomandita (Word-only)": "Non-accomandita",
 };
 
 export function shortReviewBucket(bucket: string): string {
@@ -24,22 +19,15 @@ export function shortReviewBucket(bucket: string): string {
  *  far better grouped this way than by the server's alphabetical sort.
  */
 const BUCKET_ORDER = [
-  // Needs a decision
-  "Match has conflicts to resolve",
-  "Ambiguous match to choose",
-  "Word entry with weak or rejected DB candidates",
-  "Word entry with no DB match",
-  // Verify a field
-  "Likely match — verify date/folio",
-  "Candidate match to confirm",
-  // Quick confirm
-  "Confirm multi-row link",
-  "Expected Word-only (non-accomandita)",
-  "High-confidence match",
-  // DB-side (does a Word entry exist?)
-  "DB row may have Word evidence",
-  "DB row not in Word — review",
-  "Expected DB-only (outside Word corpus)",
+  // Decision-heavy work first, routine confirms and DB-side last.
+  // Mirrors REVIEW_BUCKET_ORDER in workflows/word_pipeline.py.
+  "Choose the right row",
+  "Verify a field",
+  "Investigate — no clear DB match",
+  "Confirm combined act",
+  "Confirm the link",
+  "DB row needs a Word link",
+  "Non-accomandita (Word-only)",
 ];
 
 /** Sort bucket strings into workflow order; unknown buckets keep their original

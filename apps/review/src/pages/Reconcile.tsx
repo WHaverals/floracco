@@ -3,19 +3,19 @@ import { useParams } from "react-router-dom";
 import { loadCase, loadCases, loadSummary, saveDecision } from "../api";
 import CaseBar from "../components/CaseBar";
 import DatabasePanel from "../components/DatabasePanel";
+import DbSideHint from "../components/DbSideHint";
 import DecisionBar from "../components/DecisionBar";
 import MatchSummary from "../components/MatchSummary";
 import ReconcileHandoffStrip from "../components/ReconcileHandoffStrip";
 import ReviewQueue from "../components/ReviewQueue";
 import TypeMismatchCallout from "../components/TypeMismatchCallout";
-import VerifyDateFolioHint from "../components/VerifyDateFolioHint";
+import VerifyFieldHint from "../components/VerifyFieldHint";
 import WordPanel from "../components/WordPanel";
 import type { CasePreview, DecisionPayload, ReviewCase, ReviewSummary } from "../types";
 import { defaultSelectedDbRowIds } from "../utils/reconcileUx";
-import { isVerifyDateFolioBucket } from "../utils/reviewLinks";
+import { isVerifyFieldBucket } from "../utils/reviewLinks";
 
 const DEFAULT_FILTERS = {
-  priority: "All",
   bucket: "All",
   register: "All",
   reviewed: "unreviewed",
@@ -49,7 +49,6 @@ export default function Reconcile() {
 
   const params = useMemo(() => {
     const values = new URLSearchParams();
-    values.set("priority", filters.priority);
     values.set("bucket", filters.bucket);
     values.set("register", filters.register);
     values.set("reviewed", filters.reviewed);
@@ -126,7 +125,7 @@ export default function Reconcile() {
       const bucket = String(reviewCase?.row.recommended_review_bucket ?? "");
       const confirmed =
         decision.next_action === "approve_link" && (decision.selected_db_row_ids?.length ?? 0) > 0;
-      if (isVerifyDateFolioBucket(bucket) && confirmed && reviewCase) {
+      if (isVerifyFieldBucket(bucket) && confirmed && reviewCase) {
         setHandoff({
           sourceEntryId: String(reviewCase.row.source_entry_id ?? decision.source_entry_id),
           dbRowId: decision.selected_db_row_ids![0],
@@ -165,7 +164,7 @@ export default function Reconcile() {
 
   const isReviewed = currentCase?.is_reviewed ?? false;
   const showVerifyHint =
-    reviewCase && isVerifyDateFolioBucket(String(reviewCase.row.recommended_review_bucket ?? ""));
+    reviewCase && isVerifyFieldBucket(String(reviewCase.row.recommended_review_bucket ?? ""));
 
   return (
     <div className={`app-shell${queueOpen ? "" : " queue-collapsed"}`}>
@@ -198,7 +197,7 @@ export default function Reconcile() {
               canNext={canNext}
             />
             <div className="reconcile-body">
-              {showVerifyHint ? <VerifyDateFolioHint reviewCase={reviewCase} /> : null}
+              {showVerifyHint ? <VerifyFieldHint reviewCase={reviewCase} /> : null}
               {handoff ? (
                 <ReconcileHandoffStrip
                   dbRowId={handoff.dbRowId}
@@ -207,6 +206,7 @@ export default function Reconcile() {
                   onDismiss={() => setHandoff(null)}
                 />
               ) : null}
+              <DbSideHint reviewCase={reviewCase} />
               <TypeMismatchCallout reviewCase={reviewCase} />
               <div className="reconcile-compare">
                 <WordPanel reviewCase={reviewCase} />

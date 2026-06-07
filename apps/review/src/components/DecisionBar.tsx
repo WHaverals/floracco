@@ -54,7 +54,6 @@ export default function DecisionBar({
         suggested_db_row_id: allIds.join("; ") || value(row, "top_db_row_id"),
         packet_section: value(row, "packet_section"),
         register_id: value(row, "register_id"),
-        review_priority: value(row, "review_priority"),
         recommended_review_bucket: value(row, "recommended_review_bucket"),
         main_judgment: mainJudgment,
         image_judgment: "not_needed",

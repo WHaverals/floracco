@@ -1,6 +1,6 @@
-export const VERIFY_DATE_FOLIO_BUCKET = "Likely match — verify date/folio";
+export const VERIFY_FIELD_BUCKET = "Verify a field";
 
-export const CONFIRM_MULTI_ROW_BUCKET = "Confirm multi-row link";
+export const CONFIRM_COMBINED_BUCKET = "Confirm combined act";
 
 export const DATE_FOLIO_REASON_CODES = new Set(["registration_date_differs", "folio_differs"]);
 
@@ -25,10 +25,10 @@ export function correctionsHandoffUrl(sourceEntryId: string, dbRowId: string, fi
   return `/corrections?${params.toString()}`;
 }
 
-export function isVerifyDateFolioBucket(bucket: string): boolean {
-  return bucket === VERIFY_DATE_FOLIO_BUCKET;
+export function isVerifyFieldBucket(bucket: string): boolean {
+  return bucket === VERIFY_FIELD_BUCKET;
 }
 
-export function isConfirmMultiRowBucket(bucket: string): boolean {
-  return bucket === CONFIRM_MULTI_ROW_BUCKET;
+export function isConfirmCombinedBucket(bucket: string): boolean {
+  return bucket === CONFIRM_COMBINED_BUCKET;
 }

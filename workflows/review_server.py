@@ -104,7 +104,6 @@ DECISION_FIELDNAMES = [
     "source_entry_id",
     "suggested_db_row_id",
     "register_id",
-    "review_priority",
     "recommended_review_bucket",
     "main_judgment",
     "image_judgment",
@@ -131,7 +130,6 @@ class ReviewDecision(BaseModel):
     # scheme so the case identity stays stable across match-db re-runs.
     packet_section: str = ""
     register_id: str = ""
-    review_priority: str = ""
     recommended_review_bucket: str = ""
     main_judgment: str
     image_judgment: str
@@ -680,7 +678,6 @@ def summary() -> dict[str, Any]:
         "decisions_path": str(DECISIONS_PATH.relative_to(PROJECT_ROOT)),
         "total_cases": len(rows),
         "reviewed_cases": sum(1 for row in rows if row["review_id"] in decisions),
-        "priorities": sorted({str(row.get("review_priority") or "") for row in rows if row.get("review_priority")}),
         "buckets": sorted(
             {str(row.get("recommended_review_bucket") or "") for row in rows if row.get("recommended_review_bucket")}
         ),
@@ -704,7 +701,6 @@ WORD_STATUS_LABELS = {
     "ambiguous": "Ambiguous",
     "word_only": "Word-only",
 }
-PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 
 
 def mtime_iso(path: Path) -> str | None:
@@ -762,12 +758,6 @@ def dashboard() -> dict[str, Any]:
                 bucket["reviewed"] += 1
         return groups
 
-    by_priority = [
-        {"label": label, **counts}
-        for label, counts in sorted(
-            grouped("review_priority").items(), key=lambda kv: PRIORITY_ORDER.get(kv[0], 9)
-        )
-    ]
     by_bucket = [
         {"label": label, **counts}
         for label, counts in sorted(grouped("recommended_review_bucket").items(), key=lambda kv: -kv[1]["total"])
@@ -826,7 +816,6 @@ def dashboard() -> dict[str, Any]:
         "reconcile": {
             "total_cases": len(qa_rows),
             "reviewed_cases": sum(1 for row in qa_rows if row["review_id"] in decisions),
-            "by_priority": by_priority,
             "by_bucket": by_bucket,
             "decisions": verdicts,
             "decisions_logged": len(decision_rows),
@@ -889,7 +878,6 @@ def export_file(name: str) -> FileResponse:
 
 @app.get("/api/cases")
 def cases(
-    priority: str = "All",
     bucket: str = "All",
     register: str = "All",
     reviewed: str = Query(default="unreviewed", pattern="^(all|reviewed|unreviewed)$"),
@@ -902,8 +890,6 @@ def cases(
     filtered: list[dict[str, Any]] = []
     for row in rows:
         is_reviewed = row["review_id"] in decisions
-        if priority != "All" and row.get("review_priority") != priority:
-            continue
         if bucket != "All" and row.get("recommended_review_bucket") != bucket:
             continue
         if register != "All" and row.get("register_id") != register:
@@ -932,7 +918,6 @@ def cases(
             "source_entry_id": row.get("source_entry_id"),
             "source_entry_key": row.get("source_entry_key"),
             "register_id": row.get("register_id"),
-            "review_priority": row.get("review_priority"),
             "recommended_review_bucket": row.get("recommended_review_bucket"),
             "word_registration_date": row.get("word_registration_date"),
             "word_folio_range": row.get("word_folio_range"),

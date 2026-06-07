@@ -3,7 +3,6 @@ export type ReviewSummary = {
   decisions_path: string;
   total_cases: number;
   reviewed_cases: number;
-  priorities: string[];
   buckets: string[];
   registers: string[];
 };
@@ -46,7 +45,6 @@ export type Dashboard = {
   reconcile: {
     total_cases: number;
     reviewed_cases: number;
-    by_priority: ProgressCount[];
     by_bucket: ProgressCount[];
     decisions: { confirmed: number; rejected: number; not_sure: number };
     decisions_logged: number;
@@ -81,7 +79,6 @@ export type CasePreview = {
   source_entry_id: string;
   source_entry_key: string;
   register_id: string;
-  review_priority: string;
   recommended_review_bucket: string;
   word_registration_date: string;
   word_folio_range: string;
@@ -471,7 +468,6 @@ export type DecisionPayload = {
   suggested_db_row_id: string;
   packet_section: string;
   register_id: string;
-  review_priority: string;
   recommended_review_bucket: string;
   main_judgment: string;
   image_judgment: string;

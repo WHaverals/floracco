@@ -581,6 +581,28 @@ button.act-chip-jump.is-supported {
   font-weight: 700;
 }
 
+.db-side-hint {
+  background: #eef3f6;
+  border: 1px solid #c7d6df;
+  border-radius: 12px;
+  color: #2f4654;
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  padding: 10px 14px;
+}
+
+.db-side-hint em {
+  font-style: normal;
+  font-weight: 700;
+}
+
+.db-side-hint code {
+  background: #dde8ee;
+  border-radius: 5px;
+  font-size: 0.85em;
+  padding: 1px 5px;
+}
+
 .reconcile-compare {
   display: grid;
   flex: 1;
@@ -977,25 +999,6 @@ button.act-chip-jump.is-supported {
   color: #9d9486;
 }
 
-.queue-dot {
-  border-radius: 999px;
-  flex-shrink: 0;
-  height: 10px;
-  width: 10px;
-}
-
-.queue-dot.priority-high {
-  background: #d77a66;
-}
-
-.queue-dot.priority-medium {
-  background: #d6aa7d;
-}
-
-.queue-dot.priority-low {
-  background: #a9c899;
-}
-
 .queue-list-text {
   display: grid;
   gap: 2px;
@@ -1047,31 +1050,6 @@ button.act-chip-jump.is-supported {
   cursor: pointer;
   font-weight: 700;
   margin-left: auto;
-}
-
-.priority {
-  border-radius: 999px;
-  display: inline-flex;
-  font-size: 0.75rem;
-  font-weight: 700;
-  justify-content: center;
-  padding: 5px 10px;
-  width: max-content;
-}
-
-.priority-high {
-  background: #5f281f;
-  color: #fff4ef;
-}
-
-.priority-medium {
-  background: #8c6239;
-  color: #fff8ed;
-}
-
-.priority-low {
-  background: #587050;
-  color: #f4fff1;
 }
 
 .panel {
@@ -2672,15 +2650,33 @@ progress {
   font-weight: 600;
 }
 
-/* Slim single strip showing only the field(s) that actually differ, Word → DB.
-   The case-bar title already states "only date/folio differs — fix in
-   Corrections", so this carries values only, not prose. */
-.verify-date-folio-compare {
+/* "Which field differs" hint: a named conflict line (register/type/metadata)
+   and/or a slim Word → DB value strip for date/folio. */
+.verify-field-hint {
+  margin: 0 0 12px;
+}
+
+.verify-field-conflict {
+  margin: 0 0 8px;
+  padding: 8px 14px;
+  border: 1px solid #d8cbb8;
+  border-radius: 8px;
+  background: #faf6ef;
+  color: #5a4a32;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.verify-field-hint .verify-field-conflict + .verify-field-compare {
+  margin-top: 0;
+}
+
+.verify-field-compare {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px 22px;
-  margin: 0 0 12px;
+  margin: 0;
   padding: 8px 14px;
   border: 1px solid #d8cbb8;
   border-radius: 8px;
@@ -2688,19 +2684,19 @@ progress {
   font-size: 0.88rem;
 }
 
-.verify-date-folio-compare > div {
+.verify-field-compare > div {
   display: flex;
   align-items: baseline;
   gap: 8px;
 }
 
-.verify-date-folio-compare dt {
+.verify-field-compare dt {
   margin: 0;
   color: #7a6f62;
   font-weight: 600;
 }
 
-.verify-date-folio-compare dd {
+.verify-field-compare dd {
   margin: 0;
   display: inline-flex;
   align-items: baseline;

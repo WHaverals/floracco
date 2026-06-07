@@ -1,7 +1,7 @@
 import type { ReviewCase } from "../types";
 import { isGenuineMultiAct } from "../utils/actComponents";
 import { formatFlaggedReason } from "../utils/reconcileUx";
-import { isVerifyDateFolioBucket } from "../utils/reviewLinks";
+import { isVerifyFieldBucket } from "../utils/reviewLinks";
 
 function value(row: ReviewCase["row"], key: string): string {
   return String(row[key] ?? "");
@@ -63,7 +63,7 @@ export default function MatchSummary({ reviewCase }: { reviewCase: ReviewCase })
   // The verify-date/folio tier is the *benign* one — its conflict is just a
   // metadata diff the title already explains. Don't alarm ("Worth a closer look")
   // and don't paint its conflict band red; the title + compare hint carry it.
-  const verifyTier = isVerifyDateFolioBucket(bucket);
+  const verifyTier = isVerifyFieldBucket(bucket);
 
   let verdict: { tone: "ok" | "mid" | "alert"; text: string };
   if (verifyTier) {

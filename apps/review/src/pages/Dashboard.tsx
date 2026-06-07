@@ -116,12 +116,6 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="dash-card">
-            <h3>By priority</h3>
-            {reconcile.by_priority.map((item) => (
-              <ProgressRow key={item.label} item={item} />
-            ))}
-          </div>
-          <div className="dash-card">
             <h3>By bucket</h3>
             <div className="dash-scroll">
               {reconcile.by_bucket.map((item) => (

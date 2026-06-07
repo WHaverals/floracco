@@ -1,17 +1,18 @@
 import type { ReviewCase } from "../types";
 import {
-  CONFIRM_MULTI_ROW_BUCKET,
-  isConfirmMultiRowBucket,
-  isVerifyDateFolioBucket,
-  VERIFY_DATE_FOLIO_BUCKET,
+  CONFIRM_COMBINED_BUCKET,
+  isConfirmCombinedBucket,
+  VERIFY_FIELD_BUCKET,
 } from "./reviewLinks";
-import { bestDbRowId, isGenuineMultiAct, primaryDbRowIds, shouldShowActComponentMap } from "./actComponents";
+import { bestDbRowId, primaryDbRowIds } from "./actComponents";
 
-export const AMBIGUOUS_BUCKET = "Ambiguous match to choose";
-export const CONFLICTS_BUCKET = "Match has conflicts to resolve";
-export const WEAK_MATCH_BUCKET = "Word entry with weak or rejected DB candidates";
-export const NO_DB_MATCH_BUCKET = "Word entry with no DB match";
-export const WORD_ONLY_BUCKET = "Expected Word-only (non-accomandita)";
+// The seven action-first buckets (mirror workflows/word_pipeline.py).
+// VERIFY_FIELD_BUCKET and CONFIRM_COMBINED_BUCKET are re-exported below.
+export const CHOOSE_ROW_BUCKET = "Choose the right row";
+export const INVESTIGATE_BUCKET = "Investigate — no clear DB match";
+export const CONFIRM_LINK_BUCKET = "Confirm the link";
+export const DB_NEEDS_WORD_BUCKET = "DB row needs a Word link";
+export const NON_ACCOMANDITA_BUCKET = "Non-accomandita (Word-only)";
 
 const GUESS_LABEL: Record<string, string> = {
   new_contract: "nuova",
@@ -38,46 +39,29 @@ export function humanActType(labelGuess: string): string {
   return GUESS_LABEL[labelGuess] ?? labelGuess.replace(/_/g, " ");
 }
 
+/** One-line guidance per bucket. The bucket is authoritative (it already encodes
+ *  combined-act / conflict / ambiguity), so this is a direct lookup, not a stack
+ *  of heuristics. */
 export function caseBarQuestion(reviewCase: ReviewCase): string {
   const bucket = String(reviewCase.row.recommended_review_bucket ?? "");
-  // Field-verification tier: the link is trusted; only metadata differs. The
-  // compare hint below names the specific field, so keep this short.
-  if (isVerifyDateFolioBucket(bucket)) {
-    return "Confirm the link — only the date or folio differs. Fix the field afterwards in Corrections.";
+  switch (bucket) {
+    case VERIFY_FIELD_BUCKET:
+      return "The link looks right — only a field (date, folio, register, or type) differs. Confirm, then fix it in Corrections.";
+    case CHOOSE_ROW_BUCKET:
+      return "Several database rows could match — mark only the row(s) the Word segment supports.";
+    case INVESTIGATE_BUCKET:
+      return "The matcher couldn't place this — decide if it's Word-only, a parser miss, or a database row to create.";
+    case NON_ACCOMANDITA_BUCKET:
+      return "This is a non-accomandita act — confirm it should stay Word-only.";
+    case DB_NEEDS_WORD_BUCKET:
+      return "This database row has no Word link — check whether a Word entry exists for it (or it is a duplicate).";
+    case CONFIRM_COMBINED_BUCKET:
+      return "Two or more acts in one Word entry — confirm each database row matches the bracket label.";
+    case CONFIRM_LINK_BUCKET:
+      return "Spot-check this single match before it is used for field reconciliation.";
+    default:
+      return "Is this database record supported by the Word segment?";
   }
-  // Decision tiers come BEFORE the multi-act framing. A conflicting or ambiguous
-  // case must lead with that — "confirm each row" reads as "just approve them",
-  // which is exactly wrong when the rows conflict or are uncertain. (A multi-act
-  // entry can still be ambiguous or conflicting; the bucket is authoritative.)
-  if (bucket === CONFLICTS_BUCKET) {
-    return "This link has a recorded conflict — read both sides before confirming.";
-  }
-  if (bucket === AMBIGUOUS_BUCKET) {
-    return "Several database rows could match — mark only the rows the Word segment supports.";
-  }
-  if (bucket === WEAK_MATCH_BUCKET || bucket === NO_DB_MATCH_BUCKET) {
-    return "The matcher is unsure — decide whether any database row fits this Word segment.";
-  }
-  if (bucket === WORD_ONLY_BUCKET) {
-    return "This Word entry may have no accomandita database row — confirm it should stay Word-only.";
-  }
-  // Confirm tiers: a clean combined act, or a single act with sibling candidates.
-  if (isGenuineMultiAct(reviewCase)) {
-    return "Two or more acts in one Word entry — confirm each database row matches the bracket label.";
-  }
-  if (reviewCase.suggested_db_row_ids.length > 1) {
-    return "Several sibling rows could match this one act — pick the row this entry describes (usually one).";
-  }
-  if (isConfirmMultiRowBucket(bucket)) {
-    return "Confirm whether this Word entry supports the suggested database row.";
-  }
-  if (bucket === "Candidate match to confirm") {
-    return "Spot-check this candidate link before using it for field reconciliation.";
-  }
-  if (bucket.startsWith("Expected DB-only") || bucket === "DB row may have Word evidence") {
-    return "This database row sits outside the normal Word link — check whether a Word entry exists.";
-  }
-  return "Is this database record supported by the Word segment?";
 }
 
 /** Which DB rows start toggled "supported" when a case opens.
@@ -93,20 +77,23 @@ export function caseBarQuestion(reviewCase: ReviewCase): string {
 export function defaultSelectedDbRowIds(reviewCase: ReviewCase): string[] {
   const bucket = String(reviewCase.row.recommended_review_bucket ?? "");
   const suggestedIds = reviewCase.suggested_db_row_ids;
+  // Uncertain or no-row-needed buckets: pre-select nothing.
   if (
-    bucket === AMBIGUOUS_BUCKET ||
-    bucket === CONFLICTS_BUCKET ||
-    bucket === WEAK_MATCH_BUCKET ||
-    bucket === NO_DB_MATCH_BUCKET
+    bucket === CHOOSE_ROW_BUCKET ||
+    bucket === INVESTIGATE_BUCKET ||
+    bucket === DB_NEEDS_WORD_BUCKET ||
+    bucket === NON_ACCOMANDITA_BUCKET
   ) {
     return [];
   }
-  if (suggestedIds.length <= 1) {
-    return [...suggestedIds];
-  }
-  if (isGenuineMultiAct(reviewCase)) {
+  // Combined act: pre-select every primary (one per act).
+  if (bucket === CONFIRM_COMBINED_BUCKET) {
     const primaries = primaryDbRowIds(reviewCase);
     return primaries.length > 0 ? primaries : [...suggestedIds];
+  }
+  // Confirm-the-link / Verify-a-field: the single best row.
+  if (suggestedIds.length <= 1) {
+    return [...suggestedIds];
   }
   const best = bestDbRowId(reviewCase);
   return best ? [best] : [];
@@ -120,7 +107,7 @@ export function formatFlaggedReason(bucket: string, diagnosticDetail: string): s
   if (!diagnosticDetail.trim()) {
     return null;
   }
-  if (isRoutineMultiRowDiagnostic(diagnosticDetail) && isConfirmMultiRowBucket(bucket)) {
+  if (isRoutineMultiRowDiagnostic(diagnosticDetail) && isConfirmCombinedBucket(bucket)) {
     return "Routine combined act — one Word entry maps to several database rows (expected). Confirm each row below.";
   }
   if (isRoutineMultiRowDiagnostic(diagnosticDetail)) {
@@ -167,4 +154,4 @@ export function wordDbTypeMismatches(reviewCase: ReviewCase): TypeMismatch[] {
   return mismatches;
 }
 
-export { VERIFY_DATE_FOLIO_BUCKET, CONFIRM_MULTI_ROW_BUCKET };
+export { VERIFY_FIELD_BUCKET, CONFIRM_COMBINED_BUCKET };
