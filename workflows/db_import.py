@@ -254,7 +254,10 @@ def replay_corrections(connection: sqlite3.Connection) -> dict:
 
     Idempotent and staleness-aware: an `update` whose recorded pre-image no longer
     matches the seed value is left unapplied and flagged `conflict` for re-review,
-    rather than silently overwriting an upstream change. (create / hard-delete /
+    rather than silently overwriting an upstream change. A `create` (a DB-native
+    row born on the platform after the Word-corpus freeze) is re-INSERTed from its
+    full-row snapshot — unless the seed meanwhile contains a row with that id, in
+    which case it is flagged `conflict` instead of duplicated. (hard-delete /
     relink land in phase 2 and are skipped here.)
     """
     cpath = corrections_db.default_path()
@@ -266,7 +269,7 @@ def replay_corrections(connection: sqlite3.Connection) -> dict:
     try:
         for op in corrections_db.applied_operations(clog):
             table, pk = op["db_table"], op["pk"]
-            key_cols = corrections_db.TABLE_PRIMARY_KEYS.get(table)
+            key_cols = corrections_db.ALL_TABLE_PRIMARY_KEYS.get(table)
             if not key_cols or not all(c in pk for c in key_cols):
                 skipped += 1
                 continue
@@ -295,8 +298,29 @@ def replay_corrections(connection: sqlite3.Connection) -> dict:
             elif op["op"] == "restore":
                 connection.execute(f"UPDATE `{table}` SET {corrections_db.IS_DELETED_COLUMN}=0 WHERE {where}", params)
                 applied += 1
+            elif op["op"] == "create":
+                after = op["after_value"]
+                if not isinstance(after, dict):
+                    skipped += 1
+                    continue
+                if connection.execute(f"SELECT 1 FROM `{table}` WHERE {where}", params).fetchone():
+                    corrections_db.add_event(
+                        clog, op["request_id"], event="conflict_flagged", by="db_import",
+                        new_status="conflict", run_id=run_id,
+                        note="Seed now contains a row with this id; the platform-created row was not re-inserted.",
+                    )
+                    conflicts += 1
+                    continue
+                cols = {row[1] for row in connection.execute(f"PRAGMA table_info(`{table}`)")}
+                data = {k: v for k, v in after.items() if k in cols}
+                for c in key_cols:
+                    data.setdefault(c, pk[c])
+                names = ", ".join(f"`{c}`" for c in data)
+                marks = ", ".join("?" for _ in data)
+                connection.execute(f"INSERT INTO `{table}` ({names}) VALUES ({marks})", list(data.values()))
+                applied += 1
             else:
-                skipped += 1  # create / hard delete / relink → phase 2
+                skipped += 1  # hard delete / relink → phase 2
     finally:
         clog.close()
     return {"applied": applied, "conflicts": conflicts, "skipped": skipped}
@@ -348,6 +372,14 @@ def build(*, backup: bool = True) -> dict:
     finally:
         connection.close()
 
+    # Derived FTS index (separate search.db; regenerable; never part of the
+    # seed+replay equation). Built last so it indexes the replayed state.
+    try:
+        from workflows import search_index
+    except ImportError:  # run as a script from workflows/
+        import search_index  # type: ignore[no-redef]
+    search_stats = search_index.build(out)
+
     pk_hints = {
         "contract": "contract_id",
         "sub_contract": "contract_id",
@@ -372,6 +404,7 @@ def build(*, backup: bool = True) -> dict:
         "insert_statements_rows_est": insert_counts,
         "max_ids": max_ids,
         "corrections_replay": replay_stats,
+        "search_index": search_stats,
     }
 
 

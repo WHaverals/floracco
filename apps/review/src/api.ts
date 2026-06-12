@@ -145,3 +145,42 @@ export function transitionCorrection(
 export function imageUrl(path: string): string {
   return `/api/images?path=${encodeURIComponent(path)}`;
 }
+
+// --- Creating DB-native records ---------------------------------------------
+
+export function loadRegisters(): Promise<{ registers: import("./types").RegisterOption[] }> {
+  return request("/api/db/registers");
+}
+
+export function checkNumber(n: number): Promise<import("./types").NumberCheck> {
+  return request(`/api/db/check-number/${n}`);
+}
+
+export function findSimilar(
+  folder: string,
+  folio: string,
+  date: string,
+): Promise<{ rows: import("./types").SimilarRow[] }> {
+  const params = new URLSearchParams({ folder, folio, date });
+  return request(`/api/db/similar?${params.toString()}`);
+}
+
+export function lookupValues(
+  kind: string,
+  q: string,
+): Promise<{ values: import("./types").LookupValue[]; exact: import("./types").LookupValue | null }> {
+  const params = new URLSearchParams({ q });
+  return request(`/api/db/lookup/${encodeURIComponent(kind)}?${params.toString()}`);
+}
+
+export function createDbRecord(
+  table: "contract" | "sub_contract",
+  payload: import("./types").ContractCreatePayload | import("./types").SubContractCreatePayload,
+): Promise<{ ok: boolean; id: string; row_id: string }> {
+  return request(`/api/db/create/${table}`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function searchGlobal(q: string, expand = ""): Promise<import("./types").SearchResponse> {
+  const params = new URLSearchParams({ q, expand });
+  return request(`/api/search?${params.toString()}`);
+}

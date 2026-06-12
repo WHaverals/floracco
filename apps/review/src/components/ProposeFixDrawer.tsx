@@ -151,6 +151,14 @@ export default function ProposeFixDrawer({
                     </option>
                   ))}
                 </select>
+              ) : seed.inputType === "textarea" ? (
+                <textarea
+                  rows={10}
+                  className="propose-textarea"
+                  value={proposedValue}
+                  onChange={(e) => setProposedValue(e.target.value)}
+                  placeholder="The full corrected narrative text."
+                />
               ) : (
                 <input
                   type={seed.inputType === "date" ? "date" : seed.inputType === "number" ? "number" : "text"}

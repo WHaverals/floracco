@@ -692,3 +692,106 @@ def test_modern_registration_iso_prefill_rules() -> None:
     assert modern_registration_iso("25 marzo 1700") == "1700-03-25"
     assert modern_registration_iso("8 maggio 1778") == "1778-05-08"
     assert modern_registration_iso("10 gennaio 1782") == "1782-01-10"
+
+
+def test_create_op_replays_onto_a_fresh_seed(tmp_path, monkeypatch) -> None:
+    """A DB-native row (applied `create` op) must survive a reseed: replay
+    re-INSERTs it from its snapshot, and flags a conflict instead of duplicating
+    when the seed already carries the id."""
+    import sqlite3
+
+    from workflows import corrections_db, db_import
+
+    monkeypatch.setenv("FLORACCO_CORRECTIONS_DB_PATH", str(tmp_path / "corrections.db"))
+    clog = corrections_db.connect(tmp_path / "corrections.db")
+    corrections_db.record_operation(
+        clog,
+        op="create",
+        db_table="contract",
+        pk={"contract_id": 9999},
+        by="WH-test",
+        after_value={"contract_id": 9999, "folder": "10831", "folio": "1r",
+                     "registration_date": "1500-01-01", "document": "Test regest.",
+                     "temp": 1, "is_deleted": 0, "not_a_column": "dropped"},
+        reason="source: unit test",
+    )
+    assert corrections_db.created_row_ids(clog) == {"contract:9999"}
+    clog.close()
+
+    seed = sqlite3.connect(":memory:")
+    seed.execute(
+        "CREATE TABLE contract (contract_id INTEGER PRIMARY KEY, folder TEXT, folio TEXT,"
+        " registration_date TEXT, document TEXT, temp INTEGER, is_deleted INTEGER DEFAULT 0)"
+    )
+    stats = db_import.replay_corrections(seed)
+    assert stats["applied"] == 1 and stats["conflicts"] == 0
+    row = seed.execute("SELECT folder, folio, document FROM contract WHERE contract_id=9999").fetchone()
+    assert row == ("10831", "1r", "Test regest.")
+
+    # Second replay onto the SAME db: the id is taken → conflict, never a duplicate.
+    stats2 = db_import.replay_corrections(seed)
+    assert stats2["applied"] == 0 and stats2["conflicts"] == 1
+    count = seed.execute("SELECT count(*) FROM contract WHERE contract_id=9999").fetchone()[0]
+    assert count == 1
+
+
+def test_search_index_build_query_and_staleness(tmp_path) -> None:
+    import os
+    import sqlite3
+    import time
+
+    from workflows import search_index
+
+    main = tmp_path / "main.db"
+    con = sqlite3.connect(main)
+    con.executescript("""
+        CREATE TABLE contract (contract_id INTEGER PRIMARY KEY, archive TEXT, series TEXT,
+          folder TEXT, folio TEXT, registration_date TEXT, firm_name TEXT, economic_sector INTEGER,
+          document TEXT, is_deleted INTEGER DEFAULT 0);
+        CREATE TABLE sub_contract (contract_id INTEGER PRIMARY KEY, main_contract_id INTEGER,
+          sub_type TEXT, folder TEXT, folio TEXT, registration_date TEXT, sub_firm_name TEXT,
+          document TEXT, is_deleted INTEGER DEFAULT 0);
+        CREATE TABLE person (person_id INTEGER PRIMARY KEY, first_name TEXT, father_mother TEXT,
+          grandfather TEXT, last_name TEXT, nickname TEXT, is_deleted INTEGER DEFAULT 0);
+        CREATE TABLE investor (investor_id INTEGER PRIMARY KEY, person_id INTEGER, contract_id INTEGER,
+          profession TEXT, husband_first_name TEXT, husband_last_name TEXT, place_of_residence INTEGER);
+        CREATE TABLE investment (investment_id INTEGER PRIMARY KEY);
+        CREATE TABLE contract_place (place_id INTEGER, contract_id INTEGER);
+        CREATE TABLE place (place_id INTEGER PRIMARY KEY, place_name TEXT);
+        CREATE TABLE economic_activity (ec_activity_id INTEGER PRIMARY KEY, activity TEXT);
+        INSERT INTO economic_activity VALUES (1, 'arte di seta');
+        INSERT INTO contract VALUES (100, 'ASF', 'Mercanzia', '10831', '21r', '1451-03-05',
+          'Niccolò Salviati e compagni', 1, 'Giovanni dichiara di aver ricevuto\\r\\nin accomandita fiorini 400.', 0);
+        INSERT INTO person VALUES (7, 'Antonio', 'di Pagolo', NULL, 'Sangallo', NULL, 0);
+        INSERT INTO investor VALUES (1, 7, 100, 'battiloro', NULL, NULL, NULL);
+    """)
+    con.commit(); con.close()
+
+    stats = search_index.build(main)
+    assert stats["rows"] == 2
+    sp = search_index.default_path(main)
+
+    # Diacritic-free query finds Niccolò; the title carries the snippet markers.
+    out = search_index.search(sp, "niccolo salviati")
+    contracts = next(g for g in out["groups"] if g["kind"] == "contract")
+    assert contracts["total"] == 1
+    # Profession (from the investor row) reaches the person.
+    out = search_index.search(sp, "battiloro")
+    people = next(g for g in out["groups"] if g["kind"] == "person")
+    assert people["total"] == 1 and "Sangallo" in people["results"][0]["title"]
+    # Literal \r\n escapes were normalized for the index body.
+    out = search_index.search(sp, "accomandita fiorini")
+    assert out["total"] == 1
+    # Honest empty state: AND of two terms that never co-occur → per-term counts.
+    out = search_index.search(sp, "salviati battiloro")
+    assert out["total"] == 0 and {t["term"]: t["count"] for t in out["term_counts"]} == {
+        "salviati": 1, "battiloro": 1}
+    # Hostile input must not crash the FTS parser.
+    assert search_index.search(sp, 'dell’arte AND ("')["total"] >= 0
+
+    # Staleness: untouched → fresh; main.db modified → stale.
+    assert not search_index.is_stale(main, sp)
+    time.sleep(0.01)
+    con = sqlite3.connect(main); con.execute("UPDATE contract SET folio='22r'"); con.commit(); con.close()
+    os.utime(main)
+    assert search_index.is_stale(main, sp)

@@ -1,10 +1,12 @@
-"""Local API server for the FlorAcco Word-DB-image review app.
+"""Local API server for the FlorAcco review platform.
 
 Run:
     uv run uvicorn workflows.review_server:app --reload
 
-The server reads derived QA outputs and writes review decisions only. It does
-not update SQLite, Word files, image files, or any source corpus artifact.
+Write scope: review decisions (CSV), correction proposals (JSONL), and —
+exclusively through the audited corrections.db op-log — governed updates,
+hide/restore, and creation of DB-native rows in main.db. Word files, images,
+and pipeline outputs are never written.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import json
 import os
 import re
 import sqlite3
+import unicodedata
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
@@ -28,8 +31,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from workflows import corrections_db
-from workflows.word_pipeline import act_components_for_review
+from workflows import corrections_db, search_index
+from workflows.word_pipeline import act_components_for_review, folio_sort_key, parse_db_folio
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +50,15 @@ IMAGE_CANDIDATES_PATH = (
 )
 REGISTER_SUMMARY_PATH = (
     PROJECT_ROOT / "data/derived/word-pipeline/05_db_candidate_matches/register_match_summary.csv"
+)
+WORD_COMMENTS_PATH = (
+    PROJECT_ROOT / "data/derived/word-pipeline/03_extracted_registers/comments.jsonl"
+)
+WORD_NOTES_PATH = (
+    PROJECT_ROOT / "data/derived/word-pipeline/03_extracted_registers/footnotes.jsonl"
+)
+IMAGE_FOLIO_MAP_PATH = (
+    PROJECT_ROOT / "data/derived/word-pipeline/07_image_links/image_folio_map.jsonl"
 )
 REVIEW_DIR = PROJECT_ROOT / "data/derived/word-pipeline/08_review_decisions"
 DECISIONS_PATH = REVIEW_DIR / "review_decisions.csv"
@@ -73,6 +85,10 @@ CORRECTABLE_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "folio": {"label": "Folio", "input_type": "text"},
         "total": {"label": "Total capital", "input_type": "number"},
         "duration_months": {"label": "Duration (months)", "input_type": "number"},
+        # The DB's own narrative text. Editable by decision (2026-06-11): Word
+        # summaries are frozen provenance shown alongside; the document field is
+        # the living text of record and may diverge from Word over time.
+        "document": {"label": "Narrative (document)", "input_type": "textarea"},
     },
     "sub_contract": {
         "sub_firm_name": {"label": "Sub-firm name", "input_type": "text"},
@@ -85,6 +101,7 @@ CORRECTABLE_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "end_date": {"label": "End date", "input_type": "date"},
         "renewal_months": {"label": "Renewal (months)", "input_type": "number"},
         "folio": {"label": "Folio", "input_type": "text"},
+        "document": {"label": "Narrative (document)", "input_type": "textarea"},
     },
     "person": {
         "first_name": {"label": "First name", "input_type": "text"},
@@ -1111,6 +1128,92 @@ def image_candidates_by_entry() -> dict[str, list[dict[str, Any]]]:
     return index
 
 
+@lru_cache(maxsize=1)
+def word_comments_by_key() -> dict[tuple[str, str], dict[str, Any]]:
+    """Comment bodies from extraction, keyed (register_id, comment_id)."""
+    return {
+        (str(row.get("register_id")), str(row.get("comment_id"))): row
+        for row in load_jsonl(WORD_COMMENTS_PATH)
+    }
+
+
+@lru_cache(maxsize=1)
+def word_notes_by_key() -> dict[tuple[str, str], dict[str, Any]]:
+    """Footnote/endnote bodies from extraction, keyed (register_id, note_id)."""
+    return {
+        (str(row.get("register_id")), str(row.get("note_id"))): row
+        for row in load_jsonl(WORD_NOTES_PATH)
+    }
+
+
+@lru_cache(maxsize=1)
+def folio_map_by_folder() -> dict[str, list[dict[str, Any]]]:
+    """Image-folio map rows usable for contract linking, indexed by folder.
+
+    Keyed on the archival folder (``10838``, ``1262``) — the column DB rows carry
+    natively — so a manuscript page can be found for ANY record by (folder,
+    folio), including records with no Word entry at all.
+    """
+    index: dict[str, list[dict[str, Any]]] = {}
+    for row in load_jsonl(IMAGE_FOLIO_MAP_PATH):
+        if not row.get("use_for_contract_linking"):
+            continue
+        folder = str(row.get("folder") or "").strip()
+        if folder:
+            index.setdefault(folder, []).append(row)
+    return index
+
+
+def manuscript_images_for(folder: Any, folio_raw: Any) -> list[dict[str, Any]]:
+    """Manuscript page candidates for a DB record, by (folder, folio).
+
+    Folio sides matter: a record on ``26v`` must show only the scan whose page
+    candidate is ``26v`` (the opening 26v|27r), not also the previous opening
+    that ends on ``26r`` — so the DB folio span is compared as proper folio
+    TOKENS (number + bis/letter + recto/verso, via the pipeline's
+    ``parse_db_folio``/``folio_sort_key``), not bare numbers. A token without a
+    side (``26``, page-number styles) covers both sides of the leaf. Inline
+    annotations (``160v [ORIG. 159v]``) are stripped; runaway spans are clamped
+    so a malformed folio value cannot pull in half a register. Grouped per
+    physical scan, same shape as the Word-entry images. Provisional map —
+    ``needs_review`` travels with each image.
+    """
+    rows = folio_map_by_folder().get(str(folder or "").strip())
+    if not rows:
+        return []
+    start_token, end_token = parse_db_folio(folio_raw)
+    start_key = folio_sort_key(start_token)
+    if start_key is None:
+        return []
+    end_key = folio_sort_key(end_token) or start_key
+    if end_key < start_key:
+        start_key, end_key = end_key, start_key
+    has_side = lambda token: bool(re.search(r"[rv]\s*$", str(token or ""), re.IGNORECASE))  # noqa: E731
+    if not has_side(start_token):
+        start_key = (start_key[0], start_key[1], start_key[2], 0)
+    if not has_side(end_token):
+        end_key = (end_key[0], end_key[1], end_key[2], 1)
+    if end_key[0] - start_key[0] > 3:
+        end_key = (start_key[0] + 3, 99, 99, 1)
+    hits = []
+    for row in rows:
+        key = folio_sort_key(row.get("folio_candidate"))
+        if key is not None and start_key <= key <= end_key:
+            hits.append(
+                {
+                    "image_path": row.get("image_path"),
+                    "image_file": row.get("image_file"),
+                    "image_role": row.get("image_role"),
+                    "needs_review": row.get("needs_review"),
+                    "review_reason": row.get("review_reason"),
+                    "matched_folio": row.get("folio_candidate"),
+                    "page_position": row.get("page_position"),
+                    "entry_folio_role": None,
+                }
+            )
+    return group_word_entry_images(hits)
+
+
 def decision_link_status(db_row_id: str) -> tuple[set[str], set[str]]:
     """Reviewer verdicts for one DB row, keyed by content-stable entry key.
 
@@ -1176,6 +1279,7 @@ def linked_word_sources(db_row_id: str) -> list[dict[str, Any]]:
             for part in (row.get("entry_folio_start"), row.get("entry_folio_end"))
             if part
         )
+        entry_for_counts = source_entries_by_id().get(str(entry_id)) or {}
         sources.append(
             {
                 "source_entry_id": entry_id,
@@ -1187,6 +1291,10 @@ def linked_word_sources(db_row_id: str) -> list[dict[str, Any]]:
                 "relationship": row.get("relationship_type"),
                 "strength": round(strength, 2),
                 "status": status,
+                # Paleographic doubts ("ricontrollare la foto") are rare (≈2% of
+                # attached summaries) and high-value — surfaced as a badge on the
+                # collapsed strip without expanding.
+                "comment_count": len(entry_for_counts.get("comment_ids") or []),
             }
         )
 
@@ -1206,6 +1314,7 @@ def linked_word_sources(db_row_id: str) -> list[dict[str, Any]]:
                 "relationship": "reviewer_confirmed",
                 "strength": None,
                 "status": "confirmed",
+                "comment_count": len(entry.get("comment_ids") or []),
             }
         )
 
@@ -1609,6 +1718,8 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         "fields": fields,
         "sections": sections,
         "document": clean_document(data.get("document")),
+        "document_correction": corrections.get("document"),
+        "manuscript_images": manuscript_images_for(data.get("folder"), data.get("folio")),
         "word_sources": linked_word_sources(f"contract:{raw_id}"),
         "word_sources_note": None,
     }
@@ -1670,6 +1781,8 @@ def sub_contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str
         "fields": fields,
         "sections": sections,
         "document": clean_document(data.get("document")),
+        "document_correction": corrections.get("document"),
+        "manuscript_images": manuscript_images_for(data.get("folder"), data.get("folio")),
         "word_sources": linked_word_sources(f"sub_contract:{raw_id}"),
         "word_sources_note": None,
     }
@@ -1774,6 +1887,25 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
     }
 
 
+def search_meta(date: Any, folio: Any, folder: Any, sub_type: Any = None) -> str:
+    """Readable one-line meta for a search result.
+
+    Placeholder dates (``0000-00-00``) are suppressed — they are a known
+    data-quality issue, not information — and the register folder is shown so
+    a result can be located archivally even when the firm name is blank.
+    """
+    date_text = str(date or "").strip()
+    if date_text == "0000-00-00":
+        date_text = "no date"
+    parts = [
+        str(sub_type or "").strip(),
+        date_text,
+        f"c. {str(folio).strip()}" if str(folio or "").strip() else "",
+        f"reg. {str(folder).strip()}" if str(folder or "").strip() else "",
+    ]
+    return " · ".join(part for part in parts if part)
+
+
 @app.get("/api/db/search")
 def db_search(
     table: str,
@@ -1799,19 +1931,21 @@ def db_search(
                 f"SELECT COUNT(*) AS c FROM contract {where}", params
             ).fetchone()["c"]
             rows = connection.execute(
-                f"SELECT contract_id, registration_date, folio, firm_name FROM contract {where} "
-                "ORDER BY registration_date LIMIT ?",
-                (*params, limit),
+                f"SELECT contract_id, registration_date, folio, firm_name, folder FROM contract {where} "
+                # Placeholder dates sort LAST (they used to flood the default
+                # list); a purely numeric query floats the exact id to the top.
+                "ORDER BY CASE WHEN CAST(contract_id AS TEXT) = ? THEN 0 ELSE 1 END, "
+                "CASE WHEN registration_date IS NULL OR registration_date IN ('', '0000-00-00') THEN 1 ELSE 0 END, "
+                "registration_date LIMIT ?",
+                (*params, term, limit),
             ).fetchall()
             results = [
                 {
                     "id": str(r["contract_id"]),
                     "row_id": f"contract:{r['contract_id']}",
-                    "title": r["firm_name"] or f"Contract {r['contract_id']}",
-                    "meta": " · ".join(
-                        part.strip()
-                        for part in (r["registration_date"], r["folio"])
-                        if part and part.strip()
+                    "title": (r["firm_name"] or "").strip() or f"Contract {r['contract_id']}",
+                    "meta": search_meta(
+                        r["registration_date"], r["folio"], r["folder"]
                     ),
                 }
                 for r in rows
@@ -1828,19 +1962,19 @@ def db_search(
                 f"SELECT COUNT(*) AS c FROM sub_contract {where}", params
             ).fetchone()["c"]
             rows = connection.execute(
-                f"SELECT contract_id, registration_date, folio, sub_firm_name, sub_type FROM sub_contract {where} "
-                "ORDER BY registration_date LIMIT ?",
-                (*params, limit),
+                f"SELECT contract_id, registration_date, folio, sub_firm_name, sub_type, folder FROM sub_contract {where} "
+                "ORDER BY CASE WHEN CAST(contract_id AS TEXT) = ? THEN 0 ELSE 1 END, "
+                "CASE WHEN registration_date IS NULL OR registration_date IN ('', '0000-00-00') THEN 1 ELSE 0 END, "
+                "registration_date LIMIT ?",
+                (*params, term, limit),
             ).fetchall()
             results = [
                 {
                     "id": str(r["contract_id"]),
                     "row_id": f"sub_contract:{r['contract_id']}",
-                    "title": r["sub_firm_name"] or f"Sub-contract {r['contract_id']}",
-                    "meta": " · ".join(
-                        part.strip()
-                        for part in (r["sub_type"], r["registration_date"], r["folio"])
-                        if part and part.strip()
+                    "title": (r["sub_firm_name"] or "").strip() or f"Sub-contract {r['contract_id']}",
+                    "meta": search_meta(
+                        r["registration_date"], r["folio"], r["folder"], r["sub_type"]
                     ),
                 }
                 for r in rows
@@ -1859,8 +1993,11 @@ def db_search(
             ).fetchone()["c"]
             rows = connection.execute(
                 f"SELECT person_id, first_name, last_name, nickname FROM person {where} "
-                "ORDER BY last_name, first_name LIMIT ?",
-                (*params, limit),
+                # Mononyms (blank surname, 536 rows) sort last, not first.
+                "ORDER BY CASE WHEN CAST(person_id AS TEXT) = ? THEN 0 ELSE 1 END, "
+                "CASE WHEN trim(coalesce(last_name, '')) = '' THEN 1 ELSE 0 END, "
+                "last_name, first_name LIMIT ?",
+                (*params, term, limit),
             ).fetchall()
             results = [
                 {
@@ -1956,6 +2093,462 @@ def hide_record(table: str, record_id: str, action: RecordAction) -> dict[str, A
 @app.post("/api/db/record/{table}/{record_id}/restore")
 def restore_record(table: str, record_id: str, action: RecordAction) -> dict[str, Any]:
     return _set_hidden(table, record_id, hidden=False, action=action)
+
+
+# ---------------------------------------------------------------------------
+# Creating records (DB-native rows)
+#
+# From the Word-corpus freeze onward, new contracts and acts are added directly
+# to the database — no Word summary exists for them, by design. Every create is
+# one audited `create` op in corrections.db (full-row snapshot → replayed onto
+# a reseed by db_import), with a REQUIRED source line as its provenance, since
+# there is no Word regest to point at. Lookup values (place/activity/currency/
+# title) are raw, interpretive phrases: the platform reuses one only on an EXACT
+# match of the stored text and otherwise stores the new phrase verbatim — it
+# never normalizes, merges, or "corrects" them.
+# ---------------------------------------------------------------------------
+
+DATE_OR_BLANK = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+SUB_TYPES = ["balance", "renewal", "termination", "variation"]
+LOOKUP_KINDS: dict[str, dict[str, str]] = {
+    "economic_activity": {"table": "economic_activity", "id": "ec_activity_id", "value": "activity"},
+    "place": {"table": "place", "id": "place_id", "value": "place_name"},
+    "currency": {"table": "currency", "id": "currency_id", "value": "currency"},
+    "title": {"table": "title", "id": "title_id", "value": "title_name"},
+}
+
+
+def _strip_accents(text: str) -> str:
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", text) if unicodedata.category(ch) != "Mn"
+    )
+
+
+def _lookup_norm(text: Any) -> str:
+    """Normalization for FINDING existing lookup values only — never for storing."""
+    return re.sub(r"\s+", " ", _strip_accents(str(text or "").lower())).strip()
+
+
+@app.get("/api/search")
+def global_search(q: str = "", expand: str = "") -> dict[str, Any]:
+    """Global FTS search over the database (contracts, acts, people).
+
+    The derived search.db is rebuilt on demand when main.db has changed (an
+    applied correction, hide, or created row) — a full rebuild is ~0.5 s, so
+    freshness is checked per request at negligible cost. A purely numeric query
+    additionally returns direct id-jump cards (historians think in act numbers).
+    """
+    term = q.strip()
+    if len(term) < 2:
+        return {"total": 0, "groups": [], "term_counts": None, "id_jumps": []}
+
+    id_jumps: list[dict[str, Any]] = []
+    if term.isdigit():
+        connection = open_db()
+        try:
+            row = connection.execute(
+                "SELECT contract_id, firm_name, registration_date, folio, folder FROM contract WHERE contract_id = ? AND is_deleted = 0",
+                (int(term),),
+            ).fetchone()
+            if row:
+                id_jumps.append(
+                    {
+                        "kind": "contract",
+                        "ref": str(row["contract_id"]),
+                        "title": (row["firm_name"] or "").strip() or f"Contract {row['contract_id']}",
+                        "meta": search_meta(row["registration_date"], row["folio"], row["folder"]),
+                    }
+                )
+            row = connection.execute(
+                "SELECT contract_id, sub_firm_name, sub_type, registration_date, folio, folder FROM sub_contract WHERE contract_id = ? AND is_deleted = 0",
+                (int(term),),
+            ).fetchone()
+            if row:
+                id_jumps.append(
+                    {
+                        "kind": "sub_contract",
+                        "ref": str(row["contract_id"]),
+                        "title": (row["sub_firm_name"] or "").strip() or f"Sub-contract {row['contract_id']}",
+                        "meta": search_meta(row["registration_date"], row["folio"], row["folder"], row["sub_type"]),
+                    }
+                )
+            row = connection.execute(
+                "SELECT person_id, first_name, last_name, nickname FROM person WHERE person_id = ? AND is_deleted = 0",
+                (int(term),),
+            ).fetchone()
+            if row:
+                id_jumps.append(
+                    {
+                        "kind": "person",
+                        "ref": str(row["person_id"]),
+                        "title": person_display_name(row["first_name"], row["last_name"], row["nickname"]),
+                        "meta": "person record",
+                    }
+                )
+        finally:
+            connection.close()
+
+    search_path = search_index.ensure_fresh(db_path())
+    payload = search_index.search(
+        search_path, term, expand_kind=expand if expand in search_index.KIND_ORDER else None
+    )
+    payload["id_jumps"] = id_jumps
+    return payload
+
+
+@app.get("/api/db/registers")
+def db_registers() -> dict[str, Any]:
+    """Canonical register options for the create forms.
+
+    Derived from the data: one option per clean folder, labeled with the
+    majority (archive, series) spelling among its rows — choosing a *default*
+    for NEW rows, never rewriting existing ones. The 750-odd rows with blank or
+    malformed register metadata are a separate repair worklist.
+    """
+    connection = open_db()
+    try:
+        rows = connection.execute(
+            "SELECT trim(archive) a, trim(series) s, trim(folder) f, count(*) n FROM contract "
+            "GROUP BY trim(archive), trim(series), trim(folder)"
+        ).fetchall()
+    finally:
+        connection.close()
+    by_folder: dict[str, list[Any]] = {}
+    for row in rows:
+        folder = row["f"]
+        if not folder or not re.fullmatch(r"\d+(bis)?", folder):
+            continue
+        by_folder.setdefault(folder, []).append(row)
+    options = []
+    for folder, variants in by_folder.items():
+        best = max(variants, key=lambda r: r["n"])
+        options.append(
+            {
+                "archive": best["a"] or "ASF",
+                "series": best["s"] or "",
+                "folder": folder,
+                "contracts": sum(r["n"] for r in variants),
+            }
+        )
+    options.sort(key=lambda o: (0 if o["series"].lower().startswith("mercanzia") else 1, o["folder"]))
+    return {"registers": options}
+
+
+@app.get("/api/db/check-number/{number}")
+def db_check_number(number: int) -> dict[str, Any]:
+    """Is a register act number free to become a new contract's id?
+
+    A TAKEN number is usually not a conflict but a signal: the act being added
+    is a later act ON that contract (verified on the word-only backlog: all six
+    taken-number cases were modifiche/disdette of the existing contract) — the
+    UI offers "add as act on contract N" instead.
+    """
+    connection = open_db()
+    try:
+        row = connection.execute(
+            "SELECT contract_id, firm_name, registration_date, folio, folder FROM contract WHERE contract_id = ?",
+            (number,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if not row:
+        return {"free": True, "existing": None}
+    return {
+        "free": False,
+        "existing": {
+            "id": str(row["contract_id"]),
+            "title": (row["firm_name"] or "").strip() or f"Contract {row['contract_id']}",
+            "date": row["registration_date"],
+            "folio": row["folio"],
+            "folder": row["folder"],
+        },
+    }
+
+
+@app.get("/api/db/similar")
+def db_similar(folder: str, folio: str = "", date: str = "") -> dict[str, Any]:
+    """Possible duplicates for the create-form warning: rows in the same register
+    sharing the folio and/or the date. (folder, folio, date) is a near-unique key
+    in this corpus (14 collision groups in 4,866 contracts), so hits are worth
+    reading, not noise."""
+    folder = folder.strip()
+    folio = folio.strip()
+    date = date.strip()
+    if not folder or (not folio and not date):
+        return {"rows": []}
+    connection = open_db()
+    out: list[dict[str, Any]] = []
+    try:
+        for table, name_col in (("contract", "firm_name"), ("sub_contract", "sub_firm_name")):
+            rows = connection.execute(
+                f"SELECT contract_id, {name_col} AS name, registration_date, folio FROM {table} "
+                "WHERE trim(folder) = ? AND (trim(folio) = ? OR registration_date = ?) "
+                "AND is_deleted = 0 LIMIT 4",
+                (folder, folio or "<none>", date or "<none>"),
+            ).fetchall()
+            for row in rows:
+                same_folio = folio and str(row["folio"] or "").strip() == folio
+                same_date = date and row["registration_date"] == date
+                out.append(
+                    {
+                        "row_id": f"{table}:{row['contract_id']}",
+                        "table": table,
+                        "id": str(row["contract_id"]),
+                        "title": (row["name"] or "").strip() or f"{table.replace('_', '-')} {row['contract_id']}",
+                        "date": row["registration_date"],
+                        "folio": row["folio"],
+                        "match": "folio + date" if (same_folio and same_date) else ("folio" if same_folio else "date"),
+                    }
+                )
+    finally:
+        connection.close()
+    return {"rows": out[:6]}
+
+
+@app.get("/api/db/lookup/{kind}")
+def db_lookup(kind: str, q: str = "") -> dict[str, Any]:
+    """Typeahead over a lookup list. Matching is diacritic/case-insensitive for
+    FINDING only; the returned values are the raw stored phrases, verbatim.
+    Usage counts let the encoder prefer an existing identical phrase without the
+    platform ever suggesting a merge."""
+    meta = LOOKUP_KINDS.get(kind)
+    if not meta:
+        raise HTTPException(status_code=400, detail="Unknown lookup kind.")
+    usage_sql = {
+        "economic_activity": "SELECT economic_sector k, count(*) n FROM contract WHERE economic_sector IS NOT NULL GROUP BY economic_sector",
+        "currency": "SELECT currency_id k, count(*) n FROM contract WHERE currency_id IS NOT NULL GROUP BY currency_id",
+        "place": (
+            "SELECT k, sum(n) n FROM ("
+            "SELECT place_id k, count(*) n FROM contract_place GROUP BY place_id "
+            "UNION ALL SELECT place_of_residence k, count(*) n FROM investor WHERE place_of_residence IS NOT NULL GROUP BY place_of_residence "
+            "UNION ALL SELECT place_of_origin k, count(*) n FROM investor WHERE place_of_origin IS NOT NULL GROUP BY place_of_origin"
+            ") GROUP BY k"
+        ),
+        "title": "SELECT title k, count(*) n FROM investor WHERE title IS NOT NULL GROUP BY title",
+    }[kind]
+    needle = _lookup_norm(q)
+    connection = open_db()
+    try:
+        usage = {row["k"]: row["n"] for row in connection.execute(usage_sql)}
+        rows = connection.execute(f"SELECT {meta['id']} AS id, {meta['value']} AS value FROM {meta['table']}").fetchall()
+    finally:
+        connection.close()
+    scored = []
+    exact = None
+    for row in rows:
+        value = str(row["value"] or "")
+        norm = _lookup_norm(value)
+        if needle and needle not in norm:
+            continue
+        rank = 0 if norm == needle else (1 if norm.startswith(needle) else 2)
+        item = {"id": row["id"], "value": value, "used": usage.get(row["id"], 0)}
+        if norm == needle:
+            exact = item
+        scored.append((rank, -item["used"], value, item))
+    scored.sort(key=lambda t: t[:3])
+    return {"values": [t[3] for t in scored[:8]], "exact": exact}
+
+
+def _next_id(connection: sqlite3.Connection, table: str, column: str) -> int:
+    row = connection.execute(f"SELECT coalesce(max({column}), 0) + 1 FROM {table}").fetchone()
+    return int(row[0])
+
+
+def _insert_and_log(
+    connection: sqlite3.Connection,
+    *,
+    table: str,
+    pk_column: str,
+    data: dict[str, Any],
+    reviewer: str,
+    reason: str,
+) -> dict[str, Any]:
+    """INSERT into main.db, snapshot the full row, log the create op.
+
+    main.db first, log second; if logging fails the inserted row is removed
+    again (compensating delete), so no row can exist without its audit entry.
+    """
+    names = ", ".join(f"`{c}`" for c in data)
+    marks = ", ".join("?" for _ in data)
+    with connection:
+        connection.execute(f"INSERT INTO `{table}` ({names}) VALUES ({marks})", list(data.values()))
+    row = connection.execute(
+        f"SELECT * FROM `{table}` WHERE `{pk_column}` = ?", (data[pk_column],)
+    ).fetchone()
+    snapshot = {key: row[key] for key in row.keys()}
+    clog = open_corrections()
+    try:
+        corrections_db.record_operation(
+            clog,
+            op="create",
+            db_table=table,
+            pk={pk_column: int(data[pk_column])},
+            by=reviewer,
+            after_value=snapshot,
+            reason=reason,
+            note=reason,
+        )
+    except Exception:
+        with connection:
+            connection.execute(f"DELETE FROM `{table}` WHERE `{pk_column}` = ?", (data[pk_column],))
+        raise
+    finally:
+        clog.close()
+    return snapshot
+
+
+def _resolve_lookup_id(
+    connection: sqlite3.Connection, kind: str, raw_value: str, *, reviewer: str, reason: str
+) -> int | None:
+    """Reuse a lookup row only on an EXACT raw-text match (trimmed); otherwise
+    create a new row storing the phrase verbatim. Interpretive phrases are data —
+    no case-folding, no diacritic-stripping, no merging on the write path."""
+    value = raw_value.strip()
+    if not value:
+        return None
+    meta = LOOKUP_KINDS[kind]
+    row = connection.execute(
+        f"SELECT {meta['id']} AS id FROM {meta['table']} WHERE trim({meta['value']}) = ?", (value,)
+    ).fetchone()
+    if row:
+        return int(row["id"])
+    new_id = _next_id(connection, meta["table"], meta["id"])
+    _insert_and_log(
+        connection,
+        table=meta["table"],
+        pk_column=meta["id"],
+        data={meta["id"]: new_id, meta["value"]: value},
+        reviewer=reviewer,
+        reason=reason,
+    )
+    return new_id
+
+
+class ContractCreate(BaseModel):
+    reviewer: str = Field(min_length=1)
+    # Provenance line — REQUIRED: a DB-native row has no Word summary to point at.
+    source: str = Field(min_length=3)
+    archive: str = "ASF"
+    series: str = ""
+    folder: str = Field(min_length=1)
+    folio: str = Field(min_length=1)
+    registration_date: str
+    register_number: int | None = None
+    firm_name: str = ""
+    economic_activity: str = ""
+    total: int | None = None
+    document: str = Field(min_length=10)
+
+
+class SubContractCreate(BaseModel):
+    reviewer: str = Field(min_length=1)
+    source: str = Field(min_length=3)
+    main_contract_id: int
+    sub_type: str
+    archive: str = "ASF"
+    series: str = ""
+    folder: str = Field(min_length=1)
+    folio: str = Field(min_length=1)
+    registration_date: str
+    end_date: str = ""
+    renewal_months: int | None = None
+    sub_firm_name: str = ""
+    document: str = Field(min_length=10)
+
+
+@app.post("/api/db/create/contract")
+def create_contract(payload: ContractCreate) -> dict[str, Any]:
+    if not DATE_OR_BLANK.match(payload.registration_date):
+        raise HTTPException(status_code=400, detail="Registration date must be YYYY-MM-DD.")
+    connection = open_db()
+    try:
+        if payload.register_number is not None:
+            taken = connection.execute(
+                "SELECT contract_id FROM contract WHERE contract_id = ?", (payload.register_number,)
+            ).fetchone()
+            if taken:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Contract {payload.register_number} already exists — if this is a later act on it, add it as a sub-contract instead.",
+                )
+            new_id = payload.register_number
+        else:
+            new_id = _next_id(connection, "contract", "contract_id")
+        reason = f"source: {payload.source.strip()}"
+        sector = _resolve_lookup_id(
+            connection, "economic_activity", payload.economic_activity,
+            reviewer=payload.reviewer.strip(), reason=f"created with contract {new_id}; {reason}",
+        )
+        data: dict[str, Any] = {
+            "contract_id": new_id,
+            "archive": payload.archive.strip() or "ASF",
+            "series": payload.series.strip(),
+            "folder": payload.folder.strip(),
+            "folio": payload.folio.strip(),
+            "registration_date": payload.registration_date,
+            "firm_name": payload.firm_name.strip() or None,
+            "economic_sector": sector,
+            "total": payload.total,
+            "document": payload.document.strip(),
+            "temp": 1,
+            "is_deleted": 0,
+        }
+        _insert_and_log(
+            connection,
+            table="contract",
+            pk_column="contract_id",
+            data=data,
+            reviewer=payload.reviewer.strip(),
+            reason=reason,
+        )
+    finally:
+        connection.close()
+    return {"ok": True, "id": str(new_id), "row_id": f"contract:{new_id}"}
+
+
+@app.post("/api/db/create/sub_contract")
+def create_sub_contract(payload: SubContractCreate) -> dict[str, Any]:
+    if payload.sub_type not in SUB_TYPES:
+        raise HTTPException(status_code=400, detail=f"sub_type must be one of {SUB_TYPES}.")
+    if not DATE_OR_BLANK.match(payload.registration_date):
+        raise HTTPException(status_code=400, detail="Registration date must be YYYY-MM-DD.")
+    if payload.end_date and not DATE_OR_BLANK.match(payload.end_date):
+        raise HTTPException(status_code=400, detail="End date must be YYYY-MM-DD (or empty).")
+    connection = open_db()
+    try:
+        parent = connection.execute(
+            "SELECT contract_id FROM contract WHERE contract_id = ?", (payload.main_contract_id,)
+        ).fetchone()
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent contract not found.")
+        new_id = _next_id(connection, "sub_contract", "contract_id")
+        data: dict[str, Any] = {
+            "contract_id": new_id,
+            "main_contract_id": payload.main_contract_id,
+            "sub_type": payload.sub_type,
+            "archive": payload.archive.strip() or "ASF",
+            "series": payload.series.strip(),
+            "folder": payload.folder.strip(),
+            "folio": payload.folio.strip(),
+            "registration_date": payload.registration_date,
+            "end_date": payload.end_date or None,
+            "renewal_months": payload.renewal_months,
+            "sub_firm_name": payload.sub_firm_name.strip() or None,
+            "document": payload.document.strip(),
+            "temp": 1,
+            "is_deleted": 0,
+        }
+        _insert_and_log(
+            connection,
+            table="sub_contract",
+            pk_column="contract_id",
+            data=data,
+            reviewer=payload.reviewer.strip(),
+            reason=f"source: {payload.source.strip()}",
+        )
+    finally:
+        connection.close()
+    return {"ok": True, "id": str(new_id), "row_id": f"sub_contract:{new_id}"}
 
 
 @app.get("/api/db/contract-persons/{contract_id}")
@@ -2078,12 +2671,52 @@ def group_word_entry_images(link_rows: list[dict[str, Any]]) -> list[dict[str, A
     return result
 
 
+def word_entry_rich_for_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Tracked-changes token stream + comment/footnote bodies for one entry.
+
+    The Word summaries are frozen provenance; their tracked changes and
+    comments are part of the evidence and must be visible wherever the summary
+    is shown (decision 2026-06-11). Built from the extraction layer directly so
+    it works for ANY source entry, not only QA-packet cases.
+    """
+    register_id = str(entry.get("register_id") or "")
+    comments = []
+    for comment_id in entry.get("comment_ids") or []:
+        body = word_comments_by_key().get((register_id, str(comment_id)))
+        if body:
+            comments.append(
+                {
+                    "id": str(comment_id),
+                    "author": body.get("author"),
+                    "date": body.get("date"),
+                    "initials": body.get("initials"),
+                    "text": body.get("text"),
+                }
+            )
+    notes = []
+    for kind, id_field in (("footnote", "footnote_ids"), ("endnote", "endnote_ids")):
+        for note_id in entry.get(id_field) or []:
+            body = word_notes_by_key().get((register_id, str(note_id)))
+            if body:
+                notes.append({"id": str(note_id), "kind": kind, "text": body.get("text")})
+    return build_word_entry_rich(
+        {
+            "word_entry_revision_text": entry.get("revision_aware_text"),
+            "word_entry_has_revisions": entry.get("has_revisions"),
+            "word_entry_comments": comments,
+            "word_entry_notes": notes,
+            "word_entry_text": entry.get("current_text"),
+        }
+    )
+
+
 @app.get("/api/word-entry/{source_entry_id}")
 def word_entry(source_entry_id: str) -> dict[str, Any]:
-    """Clean reading text + manuscript image(s) for one Word source entry.
+    """Reading text, tracked changes/comments, and manuscript image(s) for one
+    Word source entry.
 
-    Powers the slide-in panel opened from a database record's linked Word
-    source. Read-only; serves derived pipeline outputs.
+    Powers the slide-in panel opened from a database record's Word summary.
+    Read-only; serves derived pipeline outputs.
     """
     entry = source_entries_by_id().get(source_entry_id)
     if not entry:
@@ -2098,6 +2731,7 @@ def word_entry(source_entry_id: str) -> dict[str, Any]:
         "folio": _entry_folio(entry),
         "has_revisions": bool(entry.get("has_revisions")),
         "text": entry.get("current_text") or "",
+        "rich": word_entry_rich_for_entry(entry),
         "images": images,
     }
 

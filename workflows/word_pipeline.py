@@ -3135,6 +3135,29 @@ def load_db_match_rows(db_path: Path) -> tuple[list[dict[str, Any]], list[dict[s
     return rows, issues
 
 
+def db_native_row_ids() -> set[str]:
+    """``table:id`` keys of rows created directly on the platform (DB-native).
+
+    Read from the authoritative change log (corrections.db). Returns an empty
+    set when the log does not exist yet; never fails the pipeline.
+    """
+    try:
+        try:
+            from workflows import corrections_db
+        except ImportError:  # run as a script from the repo root
+            import corrections_db  # type: ignore[no-redef]
+        path = corrections_db.default_path()
+        if not path.exists():
+            return set()
+        conn = corrections_db.connect(path)
+        try:
+            return corrections_db.created_row_ids(conn)
+        finally:
+            conn.close()
+    except Exception:
+        return set()
+
+
 def db_type_matches(entry: dict[str, Any], db_row: dict[str, Any]) -> bool:
     labels = component_label_guesses(entry) or {str(entry.get("event_label_guess") or "")}
     if db_row["db_table"] == "contract":
@@ -4360,6 +4383,12 @@ def run_match_db(args: argparse.Namespace) -> int:
             }
         )
 
+    # DB-native rows — added directly to the database after the Word-corpus
+    # freeze (an applied `create` op in corrections.db) — have no Word summary
+    # BY DESIGN and must never be reported as unlinked DB rows. Without this,
+    # every future addition would pollute the "DB row needs a Word link" queue
+    # forever on the next match-db run.
+    db_native_ids = db_native_row_ids()
     db_only_rows = [
         {
             key: value
@@ -4367,8 +4396,11 @@ def run_match_db(args: argparse.Namespace) -> int:
             if key != "_match_text"
         }
         for row in db_rows
-        if row["db_row_id"] not in matched_db_rows
+        if row["db_row_id"] not in matched_db_rows and row["db_row_id"] not in db_native_ids
     ]
+    db_native_count = sum(
+        1 for row in db_rows if row["db_row_id"] in db_native_ids and row["db_row_id"] not in matched_db_rows
+    )
     for row in db_only_rows:
         issues.append(
             {
@@ -4511,6 +4543,7 @@ def run_match_db(args: argparse.Namespace) -> int:
         f"- Source-entry/DB link candidates written: {len(link_candidates)}",
         f"- Word entries with multiple proposed DB links: {sum(1 for row in entry_matches if row['suggested_link_count'] > 1)}",
         f"- DB-only rows: {len(db_only_rows)}",
+        f"- DB-native rows (added after the corpus freeze; exempt from Word-link expectations): {db_native_count}",
         f"- Alignment diagnostics: {len(alignment_diagnostics)}",
         f"- DB rows proposed for multiple Word entries: {len(duplicate_link_candidates)}",
         f"- Matched-multiple Word entries: {sum(1 for row in entry_matches if row['match_status'] == 'matched_multiple')}",

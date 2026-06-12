@@ -1779,7 +1779,11 @@ progress {
 }
 
 .db-record-head {
+  align-items: flex-start;
   border-bottom: 1px solid #eadfcc;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
   margin-bottom: 18px;
   padding-bottom: 14px;
 }
@@ -1798,30 +1802,7 @@ progress {
   padding: 2px 8px;
 }
 
-/* --- Edit mode + soft-delete + change history (Database tab) --- */
-.db-record-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 8px;
-}
-
-.db-edit-bar {
-  background: #faf6ef;
-  border: 1px solid #e6dac6;
-  border-radius: 12px;
-  margin: 12px 0 4px;
-  padding: 12px 16px;
-}
-
-.db-edit-bar > p {
-  margin: 0 0 8px;
-}
-
-.db-record.is-editing .db-field {
-  border-bottom: 1px dashed #ece0cd;
-  padding-bottom: 8px;
-}
+/* --- Soft-delete + change history (Database tab) --- */
 
 .db-show-hidden {
   align-items: center;
@@ -2372,13 +2353,15 @@ progress {
   font-size: 0.62rem;
   font-weight: 700;
   letter-spacing: 0.03em;
-  opacity: 0;
+  opacity: 0.55;
   padding: 1px 8px;
   text-transform: uppercase;
   transition: opacity 0.12s ease;
 }
 
-.db-field:hover .field-fix {
+.db-field:hover .field-fix,
+.db-block-head:hover .field-fix,
+.field-fix:focus-visible {
   opacity: 1;
 }
 
@@ -3423,3 +3406,353 @@ progress {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* --- Record page: full-width narrative, inline compare, inline editing ------ */
+.db-block-head {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.db-block-head h3 { margin: 0; }
+.db-block-sub { font-size: 0.8rem; }
+
+/* Actions menu (record-level state changes) in the record header.
+   The global `details` rule adds a border-top + vertical padding (used by the
+   evidence disclosures); neutralise it here or it draws a stray line above
+   the Actions chip. */
+.db-actions {
+  border-top: 0;
+  padding: 0;
+  position: relative;
+}
+.db-actions > summary {
+  border: 1px solid #d8c7ac;
+  border-radius: 999px;
+  color: #6b5840;
+  cursor: pointer;
+  font-size: 0.8rem;
+  list-style: none;
+  padding: 4px 14px;
+  white-space: nowrap;
+}
+.db-actions > summary::-webkit-details-marker { display: none; }
+.db-actions[open] > summary { background: #efe6d6; }
+.db-actions-body {
+  background: #fffdf8;
+  border: 1px solid #e6dac6;
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(60, 45, 20, 0.14);
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  width: 340px;
+  z-index: 30;
+}
+
+/* Inline field editor */
+.inline-editor {
+  background: #faf6ef;
+  border: 1px solid #e0d2b8;
+  border-radius: 10px;
+  display: grid;
+  gap: 8px;
+  grid-column: 1 / -1;
+  margin-top: 8px;
+  padding: 10px;
+}
+.inline-editor input,
+.inline-editor select,
+.inline-editor textarea {
+  border: 1px solid #d8c7ac;
+  border-radius: 8px;
+  font: inherit;
+  padding: 6px 10px;
+  width: 100%;
+}
+.inline-editor textarea { line-height: 1.55; resize: vertical; }
+.inline-editor-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.inline-editor-row .inline-editor-note { flex: 1 1 160px; }
+.inline-editor-row .inline-editor-initials { flex: 0 0 84px; width: 84px; }
+.inline-editor-foot { font-size: 0.74rem; margin: 0; }
+
+/* Word summary, collapsed beneath the narrative */
+.ws-inline-list { display: grid; gap: 6px; margin-top: 14px; }
+.ws-inline-eyebrow {
+  font-size: 0.74rem;
+  letter-spacing: 0.05em;
+  margin: 0 0 2px;
+  text-transform: uppercase;
+}
+.ws-inline { border: 1px solid #e8dcc6; border-radius: 10px; }
+.ws-inline.is-rejected { opacity: 0.6; }
+.ws-inline-bar {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 10px;
+  padding: 8px 12px;
+  text-align: left;
+  width: 100%;
+}
+.ws-inline-bar:hover { background: #f6efe2; }
+.ws-inline-headline { font-weight: 600; }
+.ws-inline-folio { font-size: 0.82rem; }
+.ws-inline-chevron { color: #9d7355; font-size: 0.78rem; margin-left: auto; white-space: nowrap; }
+.ws-inline-body { border-top: 1px solid #efe4d0; padding: 10px 14px 14px; }
+.ws-inline-tools {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.ws-inline-note { font-size: 0.8rem; }
+
+/* Clean | Tracked changes segmented control */
+.word-drawer-narrative-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+.word-mode-toggle { display: inline-flex; gap: 4px; }
+.mode-chip {
+  background: transparent;
+  border: 1px solid #d8c9b4;
+  border-radius: 999px;
+  color: #6b5d49;
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 3px 10px;
+}
+.mode-chip.is-active {
+  background: #3d3325;
+  border-color: #3d3325;
+  color: #f7f1e6;
+}
+
+/* Long narrative editing in the legacy drawer (Corrections page) */
+.propose-textarea { font-family: inherit; line-height: 1.5; min-height: 200px; }
+.propose-current-value { display: block; max-height: 220px; overflow: auto; white-space: pre-wrap; }
+
+/* Manuscript pages at natural aspect — never squished */
+.db-ms-images {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+.db-ms-figure { flex: 0 0 auto; margin: 0; max-width: 100%; }
+.db-ms-figure .image-zoom-button { display: block; }
+.db-ms-figure img {
+  border-radius: 8px;
+  display: block;
+  height: 300px;
+  max-width: min(820px, 80vw);
+  object-fit: contain;
+  width: auto;
+}
+.db-ms-figure figcaption { color: #7a6f62; font-size: 0.8rem; margin-top: 4px; }
+
+/* --- Creating DB-native records ---------------------------------------------- */
+.db-new-button {
+  background: transparent;
+  border: 1px dashed #c9b692;
+  border-radius: 10px;
+  color: #d6c5a5;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 7px 10px;
+  text-align: left;
+}
+.db-new-button:hover { background: rgba(214, 170, 125, 0.14); color: #f0e6d4; }
+
+.create-form .create-grid {
+  display: grid;
+  gap: 14px 18px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  margin-bottom: 14px;
+}
+.create-field { display: grid; gap: 4px; position: relative; }
+.create-label {
+  color: #9d7355;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.create-field input,
+.create-field select,
+.create-field textarea {
+  border: 1px solid #d8c7ac;
+  border-radius: 8px;
+  font: inherit;
+  padding: 7px 10px;
+}
+.create-narrative { margin-bottom: 14px; }
+.create-narrative textarea { line-height: 1.55; resize: vertical; }
+.create-register-custom { display: grid; gap: 6px; }
+.create-parent-line { margin: 4px 0 0; }
+.create-actions { justify-content: flex-end; margin-top: 12px; }
+.create-warning {
+  background: #fff3e6;
+  border: 1px solid #e8c9a0;
+  border-radius: 12px;
+  color: #5c3d1e;
+  font-size: 0.9rem;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+}
+.create-warning ul { margin: 6px 0 0; padding-left: 18px; }
+.create-warning .pill-button { margin-left: 8px; }
+.link-like {
+  background: none;
+  border: 0;
+  color: #9d7355;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+
+/* Lookup combobox (raw interpretive phrases — suggestions, never normalization) */
+.lookup-suggestions {
+  background: #fffdf8;
+  border: 1px solid #e6dac6;
+  border-radius: 10px;
+  box-shadow: 0 8px 22px rgba(60, 45, 20, 0.12);
+  list-style: none;
+  margin: 2px 0 0;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  position: absolute;
+  top: 100%;
+  width: 100%;
+  z-index: 20;
+}
+.lookup-suggestions button {
+  align-items: baseline;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 5px 8px;
+  text-align: left;
+  width: 100%;
+}
+.lookup-suggestions button:hover { background: #f4ecdd; }
+.lookup-used { font-size: 0.78rem; white-space: nowrap; }
+.lookup-status { font-size: 0.78rem; }
+.lookup-status.is-reuse { color: #4c7a44; }
+.lookup-status.is-new { color: #9d7355; }
+
+/* Comment badge on the collapsed Word strip (rare, high-value) */
+.ws-inline-comments {
+  background: #f3e7cf;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+/* DB-native provenance line (in place of the Word summary strip) */
+.db-native-provenance {
+  border-top: 1px dashed #e3d5bc;
+  font-size: 0.85rem;
+  margin: 14px 0 0;
+  padding-top: 10px;
+}
+
+/* --- Global search (search-first home) --------------------------------------- */
+.hub-search input {
+  border: 1px solid #d8c7ac;
+  border-radius: 14px;
+  box-shadow: 0 2px 10px rgba(80, 60, 30, 0.06);
+  font: inherit;
+  font-size: 1.15rem;
+  margin-top: 14px;
+  max-width: 720px;
+  padding: 14px 18px;
+  width: 100%;
+}
+.hub-search input:focus { border-color: #b08d5f; outline: none; }
+.hub-search-hint { font-size: 0.82rem; margin-top: 8px; }
+
+.search-results { display: grid; gap: 22px; margin-top: 10px; }
+.search-jumps { display: grid; gap: 6px; }
+.search-jump {
+  background: #f3e7cf;
+  border: 1px solid #e0cda4;
+  border-radius: 12px;
+  cursor: pointer;
+  font: inherit;
+  padding: 10px 14px;
+  text-align: left;
+}
+.search-jump:hover { background: #eddfc0; }
+
+.search-group h2 { font-size: 1rem; margin: 0 0 8px; }
+.search-group ul { display: grid; gap: 8px; list-style: none; margin: 0 0 8px; padding: 0; }
+.search-result {
+  background: #fffdf8;
+  border: 1px solid #ece1cb;
+  border-radius: 12px;
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 3px;
+  padding: 10px 14px;
+  text-align: left;
+  width: 100%;
+}
+.search-result:hover { border-color: #c9ae84; }
+.search-result-title { font-weight: 700; }
+.search-result-meta { font-size: 0.8rem; }
+.search-snippet { color: #5c5243; font-size: 0.9rem; line-height: 1.45; }
+.search-snippet mark {
+  background: #f5e3b3;
+  border-radius: 3px;
+  color: inherit;
+  padding: 0 2px;
+}
+.search-empty {
+  background: #fff8ec;
+  border: 1px dashed #e0cda4;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.search-empty p { margin: 0 0 4px; }
+
+.top-nav-search { flex: 1; margin: 0 14px; max-width: 340px; }
+.top-nav-search input {
+  background: rgba(255, 252, 244, 0.12);
+  border: 1px solid rgba(214, 197, 165, 0.4);
+  border-radius: 999px;
+  color: #f0e6d4;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 6px 14px;
+  width: 100%;
+}
+.top-nav-search input::placeholder { color: rgba(240, 230, 212, 0.55); }
+.top-nav-search input:focus { border-color: #d6aa7d; outline: none; }

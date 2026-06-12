@@ -223,7 +223,7 @@ export type DbFieldCorrection = {
   reviewed_by: string | null;
 };
 
-export type DbFieldInputType = "text" | "date" | "number" | "enum";
+export type DbFieldInputType = "text" | "date" | "number" | "enum" | "textarea";
 
 export type DbField = {
   label: string;
@@ -262,6 +262,65 @@ export type DbWordSource = {
   status: DbLinkStatus;
   via?: string | null;
   via_row_id?: string | null;
+  /** Paleographic-doubt comments on the summary (badge on the collapsed strip). */
+  comment_count?: number;
+};
+
+// --- Creating DB-native records --------------------------------------------
+
+export type RegisterOption = {
+  archive: string;
+  series: string;
+  folder: string;
+  contracts: number;
+};
+
+export type NumberCheck = {
+  free: boolean;
+  existing: { id: string; title: string; date: string | null; folio: string | null; folder: string | null } | null;
+};
+
+export type SimilarRow = {
+  row_id: string;
+  table: "contract" | "sub_contract";
+  id: string;
+  title: string;
+  date: string | null;
+  folio: string | null;
+  match: string;
+};
+
+export type LookupValue = { id: number; value: string; used: number };
+
+export type ContractCreatePayload = {
+  reviewer: string;
+  source: string;
+  archive: string;
+  series: string;
+  folder: string;
+  folio: string;
+  registration_date: string;
+  register_number: number | null;
+  firm_name: string;
+  economic_activity: string;
+  total: number | null;
+  document: string;
+};
+
+export type SubContractCreatePayload = {
+  reviewer: string;
+  source: string;
+  main_contract_id: number;
+  sub_type: string;
+  archive: string;
+  series: string;
+  folder: string;
+  folio: string;
+  registration_date: string;
+  end_date: string;
+  renewal_months: number | null;
+  sub_firm_name: string;
+  document: string;
 };
 
 export type WordEntryImageFolio = {
@@ -287,6 +346,8 @@ export type WordEntryDetail = {
   folio: string | null;
   has_revisions: boolean;
   text: string;
+  /** Tracked-changes token stream + comment/footnote bodies (frozen Word evidence). */
+  rich?: WordEntryRich | null;
   images: WordEntryImage[];
 };
 
@@ -314,6 +375,11 @@ export type DbRecord = {
   fields: DbField[];
   sections: DbSection[];
   document: string | null;
+  /** Latest correction touching the narrative (document) field, if any. */
+  document_correction?: DbFieldCorrection | null;
+  /** Manuscript page candidates found by (register folder, folio) — works for
+   * any record, including ones with no Word entry. Provisional map. */
+  manuscript_images?: WordEntryImage[];
   word_sources: DbWordSource[];
   word_sources_note?: string | null;
   is_deleted?: boolean;
@@ -500,4 +566,31 @@ export type DecisionPayload = {
   /** Alternatives the reviewer neither selected nor rejected (no decision status). */
   unassessed_db_row_ids: string[];
   suggested_relationship_type: string;
+};
+
+// --- Global search (FTS over the database) ----------------------------------
+
+export type SearchResult = {
+  kind: "contract" | "sub_contract" | "person";
+  ref: string;
+  title: string;
+  meta: string;
+  /** Matched terms wrapped in « » (rendered as <mark>). */
+  snippet: string;
+};
+
+export type SearchGroup = {
+  kind: "contract" | "sub_contract" | "person";
+  label: string;
+  total: number;
+  results: SearchResult[];
+};
+
+export type IdJump = { kind: "contract" | "sub_contract" | "person"; ref: string; title: string; meta: string };
+
+export type SearchResponse = {
+  total: number;
+  groups: SearchGroup[];
+  term_counts: { term: string; count: number }[] | null;
+  id_jumps: IdJump[];
 };

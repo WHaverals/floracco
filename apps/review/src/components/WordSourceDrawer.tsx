@@ -3,6 +3,7 @@ import { imageUrl, loadWordEntry } from "../api";
 import type { WordEntryDetail } from "../types";
 import { manuscriptImageCaption, manuscriptImageCountLabel } from "../utils/manuscriptImages";
 import ManuscriptLightbox from "./ManuscriptLightbox";
+import TrackedText from "./TrackedText";
 
 export default function WordSourceDrawer({
   sourceEntryId,
@@ -15,11 +16,13 @@ export default function WordSourceDrawer({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [lightboxPath, setLightboxPath] = useState<string | null>(null);
+  const [mode, setMode] = useState<"clean" | "tracked">("clean");
 
   useEffect(() => {
     setLoading(true);
     setEntry(null);
     setError("");
+    setMode("clean");
     loadWordEntry(sourceEntryId)
       .then(setEntry)
       .catch((err: Error) => setError(err.message))
@@ -40,13 +43,28 @@ export default function WordSourceDrawer({
     ? [entry.date, entry.folio, entry.register_id].filter(Boolean).join(" · ")
     : "";
   const manuscriptLabel = entry ? manuscriptImageCountLabel(entry.images) : "";
+  const rich = entry?.rich ?? null;
+  // Comments and tracked changes are part of the frozen Word evidence and must
+  // be visible here (decision 2026-06-11) — not hidden behind a separate tool.
+  const hasEditorialRecord = Boolean(
+    rich && (rich.has_revisions || rich.comments.length > 0 || rich.notes.length > 0),
+  );
+  const summaryParts = rich
+    ? [
+        rich.summary.insertions ? `${rich.summary.insertions} insertion${rich.summary.insertions === 1 ? "" : "s"}` : "",
+        rich.summary.deletions ? `${rich.summary.deletions} deletion${rich.summary.deletions === 1 ? "" : "s"}` : "",
+        rich.summary.moves ? `${rich.summary.moves} move${rich.summary.moves === 1 ? "" : "s"}` : "",
+        rich.comments.length ? `${rich.comments.length} comment${rich.comments.length === 1 ? "" : "s"}` : "",
+        rich.notes.length ? `${rich.notes.length} note${rich.notes.length === 1 ? "" : "s"}` : "",
+      ].filter(Boolean)
+    : [];
 
   return (
     <div className="drawer-scrim" onClick={onClose}>
       <aside className="word-drawer" onClick={(event) => event.stopPropagation()}>
         <header className="word-drawer-head">
           <div>
-            <p className="eyebrow">Word source · the authority</p>
+            <p className="eyebrow">Word summary · frozen source</p>
             <h3>{entry?.label || sourceEntryId}</h3>
             {meta && <p className="muted word-drawer-meta">{meta}</p>}
           </div>
@@ -61,16 +79,40 @@ export default function WordSourceDrawer({
         {entry && !loading && (
           <div className="word-drawer-body">
             <code className="db-row-id">{entry.source_entry_id}</code>
-            {entry.has_revisions && (
-              <p className="word-drawer-note muted">
-                This entry has tracked changes. The clean (revisions-accepted) reading text is shown
-                here; the full editorial history lives in the Changes tool.
-              </p>
-            )}
 
             <section>
-              <h4>Narrative</h4>
-              <p className="reading-text narrative db-narrative">{entry.text}</p>
+              <div className="word-drawer-narrative-head">
+                <h4>Narrative</h4>
+                {hasEditorialRecord && (
+                  <div className="word-mode-toggle" role="group" aria-label="Reading mode">
+                    <button
+                      type="button"
+                      className={mode === "clean" ? "mode-chip is-active" : "mode-chip"}
+                      onClick={() => setMode("clean")}
+                    >
+                      Clean
+                    </button>
+                    <button
+                      type="button"
+                      className={mode === "tracked" ? "mode-chip is-active" : "mode-chip"}
+                      onClick={() => setMode("tracked")}
+                    >
+                      Tracked changes
+                    </button>
+                  </div>
+                )}
+              </div>
+              {hasEditorialRecord && (
+                <p className="word-drawer-note muted">
+                  This summary carries an editorial record ({summaryParts.join(", ")}). The Word file
+                  itself stays frozen; this is its history, shown as evidence.
+                </p>
+              )}
+              {hasEditorialRecord && rich ? (
+                <TrackedText rich={rich} highlights={[]} mode={mode} />
+              ) : (
+                <p className="reading-text narrative db-narrative">{entry.text}</p>
+              )}
             </section>
 
             <section>

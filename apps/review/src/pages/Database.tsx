@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { hideRecord, loadDbRecord, restoreRecord, searchDb } from "../api";
-import ProposeFixDrawer, { type ProposeSeed } from "../components/ProposeFixDrawer";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { hideRecord, imageUrl, loadDbRecord, restoreRecord, searchDb } from "../api";
+import CreateRecordForm from "../components/CreateRecordForm";
+import InlineFieldEditor from "../components/InlineFieldEditor";
+import ManuscriptLightbox from "../components/ManuscriptLightbox";
 import PersonPicker, { type PersonPick } from "../components/PersonPicker";
 import WordSourceDrawer from "../components/WordSourceDrawer";
+import WordSummaryInline from "../components/WordSummaryInline";
+import { manuscriptImageCaption } from "../utils/manuscriptImages";
 import type {
   ChangeHistoryItem,
   DbBrowseTable,
@@ -13,9 +17,11 @@ import type {
   DbSearchResult,
 } from "../types";
 
+// Word summaries are frozen provenance attached to DB records; the statuses
+// speak in attachment language, not matcher language.
 const STATUS_LABEL: Record<DbLinkStatus, string> = {
-  confirmed: "Confirmed",
-  proposed: "Proposed",
+  confirmed: "Attached",
+  proposed: "Suggested",
   rejected: "Rejected",
 };
 
@@ -32,8 +38,12 @@ function isBrowseTable(value: string | undefined): value is DbBrowseTable {
 export default function Database() {
   const navigate = useNavigate();
   const params = useParams<{ table?: string; id?: string }>();
+  const [searchParams] = useSearchParams();
   const routeTable = isBrowseTable(params.table) ? params.table : "contract";
   const routeId = params.id ?? "";
+  // `/database/<table>/new` renders the creation form (ids are numeric, so
+  // "new" is unambiguous); `?parent=` anchors a new act on its contract.
+  const isCreating = routeId === "new" && (routeTable === "contract" || routeTable === "sub_contract");
 
   const [table, setTable] = useState<DbBrowseTable>(routeTable);
   const [search, setSearch] = useState("");
@@ -45,10 +55,8 @@ export default function Database() {
   const [recordError, setRecordError] = useState("");
   const [loadingRecord, setLoadingRecord] = useState(false);
   const [openSourceId, setOpenSourceId] = useState<string | null>(null);
-  const [proposeSeed, setProposeSeed] = useState<ProposeSeed | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
-  const [editMode, setEditMode] = useState(false);
   const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
   const [reason, setReason] = useState("");
   const [actionError, setActionError] = useState("");
@@ -83,9 +91,7 @@ export default function Database() {
     return () => window.clearTimeout(debounce.current);
   }, [table, search, showHidden, runSearch]);
 
-  // Database is where you find AND act on a specific record. Field fixes and
-  // hide/restore both flow through the governed, audited op-log; the "Suggest
-  // fix" edit mode just reveals the controls so the default view stays clean.
+  // Hide/restore flow through the governed, audited op-log.
   const setHidden = useCallback(
     async (hidden: boolean) => {
       if (!record) return;
@@ -119,10 +125,9 @@ export default function Database() {
   );
 
   useEffect(() => {
-    setEditMode(false);
     setActionError("");
     setActionMessage("");
-    if (!routeId) {
+    if (!routeId || routeId === "new") {
       setRecord(null);
       return;
     }
@@ -155,43 +160,15 @@ export default function Database() {
     [navigate],
   );
 
-  const proposeFieldFix = useCallback(
-    (field: DbField) => {
-      if (!record || !field.column) return;
-      setProposeSeed({
-        dbRowId: record.row_id,
-        recordTitle: record.title,
-        fieldLabel: field.label,
-        column: field.column,
-        inputType: field.input_type ?? "text",
-        options: field.options,
-        currentValue: field.current ?? "",
-        wordSources: record.word_sources,
-        prefillProposed: true,
-      });
-    },
-    [record],
-  );
-
-  // Picker → correct the chosen person's surname. The contract's Word sources travel
-  // along as citable evidence (the name appears in that narrative).
-  const pickPersonFix = useCallback(
+  // Picker → open the person's own record, where every name field is editable
+  // in place (no detour through a drawer).
+  const pickPerson = useCallback(
     (person: PersonPick) => {
-      if (!record) return;
       setPickerOpen(false);
-      setProposeSeed({
-        dbRowId: person.row_id,
-        recordTitle: person.display_name,
-        fieldLabel: "Last name",
-        column: "last_name",
-        inputType: "text",
-        options: null,
-        currentValue: person.last_name,
-        wordSources: record.word_sources,
-        prefillProposed: Boolean(person.last_name),
-      });
+      const id = person.row_id.split(":")[1];
+      if (id) navigate(`/database/person/${id}`);
     },
-    [record],
+    [navigate],
   );
 
   return (
@@ -218,6 +195,15 @@ export default function Database() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
+          {table === "contract" && (
+            <button
+              type="button"
+              className="db-new-button"
+              onClick={() => navigate("/database/contract/new")}
+            >
+              + New contract
+            </button>
+          )}
           <label className="db-show-hidden">
             <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
             Show hidden
@@ -246,16 +232,22 @@ export default function Database() {
       </aside>
 
       <section className="db-detail">
-        {loadingRecord && <p className="muted">Loading record…</p>}
-        {recordError && !loadingRecord && <p className="error-text">{recordError}</p>}
-        {!record && !loadingRecord && !recordError && (
+        {isCreating && (
+          <CreateRecordForm
+            table={routeTable as "contract" | "sub_contract"}
+            parentId={searchParams.get("parent")}
+          />
+        )}
+        {!isCreating && loadingRecord && <p className="muted">Loading record…</p>}
+        {!isCreating && recordError && !loadingRecord && <p className="error-text">{recordError}</p>}
+        {!isCreating && !record && !loadingRecord && !recordError && (
           <div className="db-detail-empty">
             <p className="eyebrow">Record viewer</p>
             <h2>Pick a record to inspect</h2>
             <p className="muted">
-              Foreign keys are resolved to readable values; linked Word sources and the full change
-              history are shown. Use <strong>Suggest fix</strong> on a record to propose a field
-              correction (with its Word source) or hide it — every change is governed and audited.
+              Foreign keys are resolved to readable values; the attached Word summary, the manuscript
+              page, and the full change history are shown. Hover any editable field to fix it in
+              place — every change is audited and revertible.
             </p>
           </div>
         )}
@@ -264,14 +256,9 @@ export default function Database() {
             record={record}
             onOpen={openRecord}
             onOpenSource={setOpenSourceId}
-            onProposeFix={proposeFieldFix}
+            onRefresh={refreshRecord}
+            onOpenCreateAct={(id) => navigate(`/database/sub_contract/new?parent=${id}`)}
             onCorrectName={record.table === "contract" ? () => setPickerOpen(true) : undefined}
-            editMode={editMode}
-            onToggleEdit={() => {
-              setActionError("");
-              setActionMessage("");
-              setEditMode((v) => !v);
-            }}
             reviewer={reviewer}
             onReviewerChange={setReviewer}
             reason={reason}
@@ -288,18 +275,7 @@ export default function Database() {
       )}
 
       {pickerOpen && record && record.table === "contract" && (
-        <PersonPicker contractId={record.id} onPick={pickPersonFix} onClose={() => setPickerOpen(false)} />
-      )}
-
-      {proposeSeed && (
-        <ProposeFixDrawer
-          seed={proposeSeed}
-          onClose={() => setProposeSeed(null)}
-          onSubmitted={() => {
-            setProposeSeed(null);
-            refreshRecord();
-          }}
-        />
+        <PersonPicker contractId={record.id} onPick={pickPerson} onClose={() => setPickerOpen(false)} />
       )}
     </div>
   );
@@ -319,10 +295,9 @@ function RecordDetail({
   record,
   onOpen,
   onOpenSource,
-  onProposeFix,
+  onRefresh,
+  onOpenCreateAct,
   onCorrectName,
-  editMode,
-  onToggleEdit,
   reviewer,
   onReviewerChange,
   reason,
@@ -334,10 +309,9 @@ function RecordDetail({
   record: DbRecord;
   onOpen: (table: DbBrowseTable, id: string) => void;
   onOpenSource: (sourceEntryId: string) => void;
-  onProposeFix: (field: DbField) => void;
+  onRefresh: () => void;
+  onOpenCreateAct: (contractId: string) => void;
   onCorrectName?: () => void;
-  editMode: boolean;
-  onToggleEdit: () => void;
   reviewer: string;
   onReviewerChange: (value: string) => void;
   reason: string;
@@ -346,7 +320,16 @@ function RecordDetail({
   actionError: string;
   actionMessage: string;
 }) {
+  const [manuscriptPath, setManuscriptPath] = useState<string | null>(null);
+  const [editingColumn, setEditingColumn] = useState<string | null>(null);
   const history = record.change_history ?? [];
+  // A DB-native row was created on the platform after the Word-corpus freeze:
+  // its provenance is the create op's source line, not a Word summary.
+  const createdOp = history.find((item) => item.op === "create");
+  const hasSubSection = record.sections.some((s) => s.title.startsWith("Sub-contracts"));
+  const manuscriptImages = record.manuscript_images ?? [];
+  const documentEditable = !record.is_deleted && (record.table === "contract" || record.table === "sub_contract");
+  const documentCorrection = record.document_correction ?? null;
   const deps = record.dependents;
   const depParts = deps
     ? [
@@ -357,31 +340,63 @@ function RecordDetail({
       ].filter(Boolean)
     : [];
 
+  // Close any open editor when the record changes.
+  useEffect(() => {
+    setEditingColumn(null);
+  }, [record.row_id]);
+
+  const closeAndRefresh = () => {
+    setEditingColumn(null);
+    onRefresh();
+  };
+
   return (
-    <article className={`db-record${record.is_deleted ? " is-hidden-record" : ""}${editMode ? " is-editing" : ""}`}>
+    <article className={`db-record${record.is_deleted ? " is-hidden-record" : ""}`}>
       <header className="db-record-head">
-        <p className="eyebrow">{record.subtitle}</p>
-        <h2>
-          {record.title}
-          {record.is_deleted && <span className="db-hidden-badge">Hidden</span>}
-        </h2>
-        <code className="db-row-id">{record.row_id}</code>
-        <div className="db-record-tools">
-          {!record.is_deleted && (
-            <button
-              type="button"
-              className={editMode ? "pill-button is-active" : "pill-button"}
-              onClick={onToggleEdit}
-            >
-              {editMode ? "Done" : "Suggest fix"}
-            </button>
-          )}
-          {editMode && onCorrectName && (
-            <button type="button" className="field-fix db-correct-name" onClick={onCorrectName}>
-              Correct a person’s name →
-            </button>
-          )}
+        <div className="db-record-titles">
+          <p className="eyebrow">{record.subtitle}</p>
+          <h2>
+            {record.title}
+            {record.is_deleted && <span className="db-hidden-badge">Hidden</span>}
+          </h2>
         </div>
+        {!record.is_deleted && (
+          <details className="db-actions">
+            <summary>Actions</summary>
+            <div className="db-actions-body">
+              <div className="db-danger-body">
+                <p className="muted">
+                  <strong>Hide this record</strong> — soft-delete: reversible, removed from search and
+                  matching, kept for audit.
+                </p>
+                {depParts.length > 0 && (
+                  <p className="db-deps-warning">
+                    ⚠ This contract has {depParts.join(", ")}. They are <strong>not</strong> hidden
+                    automatically yet and will point at a hidden contract.
+                  </p>
+                )}
+                <div className="db-record-actions">
+                  <input
+                    className="actionbar-reviewer"
+                    value={reviewer}
+                    onChange={(e) => onReviewerChange(e.target.value)}
+                    placeholder="initials"
+                  />
+                  <input
+                    className="actionbar-note"
+                    value={reason}
+                    onChange={(e) => onReasonChange(e.target.value)}
+                    placeholder="reason (required) — e.g. duplicate of #1922"
+                  />
+                  <button type="button" className="pill-button is-danger" onClick={() => onSetHidden(true)}>
+                    Hide record
+                  </button>
+                </div>
+              </div>
+              {actionError && <p className="error-text">{actionError}</p>}
+            </div>
+          </details>
+        )}
       </header>
 
       {actionMessage && <div className="notice success">{actionMessage}</div>}
@@ -407,61 +422,19 @@ function RecordDetail({
         </div>
       )}
 
-      {editMode && !record.is_deleted && (
-        <div className="db-edit-bar">
-          <p className="muted">
-            Edit mode — pick a field below to suggest a fix (each change cites its Word source), or hide this
-            record.
-          </p>
-          <details className="db-record-danger">
-            <summary>Hide this record</summary>
-            <div className="db-danger-body">
-              <p className="muted">
-                Hiding <strong>soft-deletes</strong> the record — reversible, removed from search and matching,
-                kept for audit. (Permanent deletion is a separate, future step.)
-              </p>
-              {depParts.length > 0 && (
-                <p className="db-deps-warning">
-                  ⚠ This contract has {depParts.join(", ")}. They are <strong>not</strong> hidden automatically
-                  yet (cascade is coming) and will point at a hidden contract.
-                </p>
-              )}
-              <div className="db-record-actions">
-                <input
-                  className="actionbar-reviewer"
-                  value={reviewer}
-                  onChange={(e) => onReviewerChange(e.target.value)}
-                  placeholder="initials"
-                />
-                <input
-                  className="actionbar-note"
-                  value={reason}
-                  onChange={(e) => onReasonChange(e.target.value)}
-                  placeholder="reason (required) — e.g. duplicate of #1922"
-                />
-                <button type="button" className="pill-button is-danger" onClick={() => onSetHidden(true)}>
-                  Hide record
-                </button>
-              </div>
-            </div>
-          </details>
-          {actionError && <p className="error-text">{actionError}</p>}
-        </div>
-      )}
-
       <dl className="db-fields">
         {record.fields.map((field) => (
           <div key={field.label} className="db-field">
             <dt>
               {field.label}
-              {editMode && field.editable && (
+              {field.editable && !record.is_deleted && (
                 <button
                   type="button"
                   className="field-fix"
-                  onClick={() => onProposeFix(field)}
-                  title="Suggest a fix"
+                  onClick={() => setEditingColumn(field.column)}
+                  title={`Fix ${field.label}`}
                 >
-                  Suggest fix
+                  ✎ Fix
                 </button>
               )}
             </dt>
@@ -475,17 +448,91 @@ function RecordDetail({
                     : `Change ${field.correction.status}: → ${field.correction.proposed_value ?? "(flag)"}`}
               </span>
             )}
+            {editingColumn !== null && editingColumn === field.column && (
+              <InlineFieldEditor
+                dbRowId={record.row_id}
+                column={field.column!}
+                label={field.label}
+                inputType={field.input_type ?? "text"}
+                options={field.options}
+                currentValue={field.current ?? ""}
+                onSaved={closeAndRefresh}
+                onCancel={() => setEditingColumn(null)}
+              />
+            )}
           </div>
         ))}
       </dl>
 
-      {(record.word_sources.length > 0 || record.word_sources_note) && (
+      {record.document != null && (
+        <section className="db-block db-narrative-block">
+          <div className="db-block-head">
+            <h3>Narrative</h3>
+            <span className="db-block-sub muted">the database’s own text</span>
+            {documentEditable && editingColumn !== "document" && (
+              <button
+                type="button"
+                className="field-fix"
+                onClick={() => setEditingColumn("document")}
+                title="Edit the narrative"
+              >
+                ✎ Edit
+              </button>
+            )}
+          </div>
+          {documentCorrection && (
+            <span className={`field-correction is-${documentCorrection.status}`}>
+              {documentCorrection.status === "applied"
+                ? "Narrative corrected"
+                : documentCorrection.status === "reverted"
+                  ? "Correction reverted"
+                  : `Narrative change ${documentCorrection.status}`}
+            </span>
+          )}
+          {editingColumn === "document" ? (
+            <InlineFieldEditor
+              dbRowId={record.row_id}
+              column="document"
+              label="Narrative"
+              inputType="textarea"
+              currentValue={record.document ?? ""}
+              onSaved={closeAndRefresh}
+              onCancel={() => setEditingColumn(null)}
+            />
+          ) : (
+            <p className="reading-text narrative db-narrative">{record.document}</p>
+          )}
+
+          {record.table !== "person" && record.word_sources.length > 0 && (
+            <div className="ws-inline-list">
+              <p className="ws-inline-eyebrow muted">
+                Word summar{record.word_sources.length > 1 ? "ies" : "y"} — frozen source, for
+                comparison
+              </p>
+              {record.word_sources.map((source) => (
+                <WordSummaryInline
+                  key={`${source.via_row_id ?? ""}-${source.source_entry_id}`}
+                  source={source}
+                />
+              ))}
+            </div>
+          )}
+          {record.table !== "person" && record.word_sources.length === 0 && createdOp && (
+            <p className="db-native-provenance muted">
+              Added directly to the database by <strong>{createdOp.created_by}</strong> ·{" "}
+              {createdOp.created_at.slice(0, 10)}
+              {createdOp.reason ? <> · {createdOp.reason}</> : null} — no Word summary exists for
+              this record (the Word corpus is frozen); this narrative is its primary text.
+            </p>
+          )}
+        </section>
+      )}
+
+      {record.table === "person" && (record.word_sources.length > 0 || record.word_sources_note) && (
         <section className="db-block">
-          <h3>
-            {record.table === "person"
-              ? "Word & manuscript context"
-              : `Linked Word source${record.word_sources.length > 1 ? "s" : ""}`}
-          </h3>
+          <div className="db-block-head">
+            <h3>Word & manuscript context</h3>
+          </div>
           {record.word_sources_note && (
             <p className="db-sources-note muted">{record.word_sources_note}</p>
           )}
@@ -496,24 +543,20 @@ function RecordDetail({
                   type="button"
                   className={`db-source is-${source.status}`}
                   onClick={() => onOpenSource(source.source_entry_id)}
+                  title={source.source_entry_id}
                 >
                   <div className="db-source-main">
                     <span className="db-source-top">
                       <span className={`db-source-badge is-${source.status}`}>
                         {STATUS_LABEL[source.status]}
                       </span>
-                      <span className="db-source-id">{source.source_entry_id}</span>
+                      <span className="db-source-id">
+                        {[source.label, source.date].filter(Boolean).join(" · ") || source.source_entry_id}
+                      </span>
                     </span>
                     {source.via && <span className="db-source-via">via {source.via}</span>}
-                    <span className="db-source-meta">
-                      {[source.date, source.folio, source.relationship]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
+                    <span className="db-source-meta">{source.folio ? `cc. ${source.folio}` : ""}</span>
                   </div>
-                  {source.strength != null && (
-                    <span className="db-source-strength">text {Math.round(source.strength * 100)}%</span>
-                  )}
                   <span className="db-source-open" aria-hidden="true">
                     Open ›
                   </span>
@@ -524,9 +567,57 @@ function RecordDetail({
         </section>
       )}
 
+      {manuscriptImages.length > 0 && (
+        <section className="db-block">
+          <div className="db-block-head">
+            <h3>Manuscript page</h3>
+            <span className="db-block-sub muted">
+              found by register & folio — the page mapping is provisional
+            </span>
+          </div>
+          <div className="db-ms-images">
+            {manuscriptImages.map((img) => (
+              <figure key={img.path} className="db-ms-figure">
+                <button
+                  type="button"
+                  className="image-zoom-button"
+                  onClick={() => setManuscriptPath(img.path)}
+                >
+                  <img src={imageUrl(img.path)} alt={manuscriptImageCaption(img)} loading="lazy" />
+                </button>
+                <figcaption>
+                  {manuscriptImageCaption(img)}
+                  {img.needs_review ? " · mapping needs review" : ""}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </section>
+      )}
+
       {record.sections.map((section) => (
         <section key={section.title} className="db-block">
-          <h3>{section.title}</h3>
+          <div className="db-block-head">
+            <h3>{section.title}</h3>
+            {/* Fixing a name belongs where the people are listed, not in the
+                record-level Actions menu: rows below open the person's record;
+                this opens the contract-scoped picker (with whole-DB search). */}
+            {onCorrectName && section.title.startsWith("Investors") && !record.is_deleted && (
+              <button type="button" className="field-fix" onClick={onCorrectName} title="Correct a person’s name">
+                ✎ Fix a name
+              </button>
+            )}
+            {record.table === "contract" && section.title.startsWith("Sub-contracts") && !record.is_deleted && (
+              <button
+                type="button"
+                className="field-fix"
+                onClick={() => onOpenCreateAct(record.id)}
+                title="Add a later act (disdetta, bilancio, …) on this contract"
+              >
+                + Add act
+              </button>
+            )}
+          </div>
           <table className="db-table">
             <thead>
               <tr>
@@ -559,10 +650,20 @@ function RecordDetail({
         </section>
       ))}
 
-      {record.document && (
+      {record.table === "contract" && !hasSubSection && !record.is_deleted && (
         <section className="db-block">
-          <h3>Stored narrative (document field)</h3>
-          <p className="reading-text narrative db-narrative">{record.document}</p>
+          <div className="db-block-head">
+            <h3>Sub-contracts (0)</h3>
+            <button
+              type="button"
+              className="field-fix"
+              onClick={() => onOpenCreateAct(record.id)}
+              title="Add a later act (disdetta, bilancio, …) on this contract"
+            >
+              + Add act
+            </button>
+          </div>
+          <p className="muted">No later acts are recorded on this contract yet.</p>
         </section>
       )}
 
@@ -582,6 +683,14 @@ function RecordDetail({
             ))}
           </ul>
         </section>
+      )}
+
+      {manuscriptPath && (
+        <ManuscriptLightbox
+          src={imageUrl(manuscriptPath)}
+          alt="Manuscript folio enlarged"
+          onClose={() => setManuscriptPath(null)}
+        />
       )}
     </article>
   );

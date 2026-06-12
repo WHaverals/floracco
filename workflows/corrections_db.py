@@ -34,7 +34,22 @@ TABLE_PRIMARY_KEYS: dict[str, list[str]] = {
     "investor_group": ["investor_id", "investment_id"],
 }
 
+# Lookup lists (place / title / currency / economic_activity). Values are raw,
+# interpretive phrases entered "exactly as in the document" — the platform may
+# CREATE new rows here (so replay must re-insert them, or a created contract's
+# FK would dangle after a reseed) but never normalizes or merges existing ones.
+LOOKUP_PRIMARY_KEYS: dict[str, list[str]] = {
+    "place": ["place_id"],
+    "title": ["title_id"],
+    "currency": ["currency_id"],
+    "economic_activity": ["ec_activity_id"],
+}
+
+# Every table the replay knows how to handle.
+ALL_TABLE_PRIMARY_KEYS: dict[str, list[str]] = {**TABLE_PRIMARY_KEYS, **LOOKUP_PRIMARY_KEYS}
+
 # Tables that carry the soft-delete flag (added post-import by db_import).
+# Lookup tables deliberately excluded — they are never hidden, only referenced.
 SOFT_DELETE_TABLES = tuple(TABLE_PRIMARY_KEYS)
 IS_DELETED_COLUMN = "is_deleted"
 
@@ -206,6 +221,29 @@ def is_row_hidden(conn: sqlite3.Connection, db_table: str, pk: dict[str, Any]) -
         (db_table, pk_json(pk)),
     ).fetchone()
     return bool(row) and row["op"] == "delete"
+
+
+def created_row_ids(conn: sqlite3.Connection) -> set[str]:
+    """``table:id`` keys of rows born via applied create ops (DB-native rows).
+
+    These rows were added directly to the database after the Word corpus was
+    frozen, so they have no Word summary by design: the matcher must not report
+    them as unlinked DB rows, and coverage metrics must not count them in the
+    frozen-corpus denominator. Composite-key tables are not addressable in the
+    ``table:id`` scheme and are skipped.
+    """
+    out: set[str] = set()
+    rows = conn.execute(
+        "SELECT db_table, pk FROM change_request WHERE op='create' AND status='applied'"
+    ).fetchall()
+    for row in rows:
+        key_cols = ALL_TABLE_PRIMARY_KEYS.get(row["db_table"])
+        if not key_cols or len(key_cols) != 1:
+            continue
+        pk = json.loads(row["pk"])
+        if key_cols[0] in pk:
+            out.add(f"{row['db_table']}:{pk[key_cols[0]]}")
+    return out
 
 
 def applied_operations(conn: sqlite3.Connection) -> list[dict[str, Any]]:

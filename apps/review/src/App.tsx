@@ -16,15 +16,8 @@ export default function App() {
           <Route path="/" element={<Hub />} />
           <Route path="/reconcile" element={<Reconcile />} />
           <Route path="/reconcile/:reviewId" element={<Reconcile />} />
-          <Route
-            path="/changes"
-            element={
-              <ComingSoon
-                title="Tracked-changes review"
-                blurb="Read each act with its editorial history and accept or reject insertions, deletions, and comments — independently of the database."
-              />
-            }
-          />
+          {/* /changes was deliberately killed (2026-06-11): tracked changes render
+              inside the Word-summary drawer wherever a summary is shown. */}
           <Route path="/database" element={<Database />} />
           <Route path="/database/:table" element={<Database />} />
           <Route path="/database/:table/:id" element={<Database />} />

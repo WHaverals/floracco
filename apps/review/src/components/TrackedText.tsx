@@ -1,16 +1,13 @@
 /*
- * SHELVED — intentionally not rendered yet (do not delete).
+ * Tracked-changes renderer (insertions, deletions, moves, comments, footnotes).
  *
- * This is the Clean/Tracked tracked-changes renderer (insertions, deletions,
- * moves, comments, footnotes). It was unwired when /reconcile was rebuilt to show
- * clean reading text only (2026-05-29); tracked-changes review now belongs to the
- * planned `/changes` tool, which is still a ComingSoon stub. The backend half is
- * live and tested — the review server builds `word_entry_rich`
- * (parse_revision_segments / build_word_entry_rich), the QA packet emits the
- * revision fields, and tests/test_revision_parser.py covers them — so this
- * component is ready to drop into `/changes` when that tool is built. It is the
- * sole consumer of the WordEntryRich/RevisionToken types and the rev-* CSS; if you
- * ever remove this, remove those too. See docs/workflows/tracked_changes_word_panel.md.
+ * Live in WordSourceDrawer since 2026-06-11: the Word summaries are frozen
+ * provenance, and their editorial record (tracked changes + comments) is part
+ * of the evidence shown wherever a summary is displayed. The once-planned
+ * standalone `/changes` tool was deliberately killed; this in-place rendering
+ * replaces it. Backend: parse_revision_segments / build_word_entry_rich in
+ * workflows/review_server.py, covered by tests/test_revision_parser.py. See
+ * docs/workflows/tracked_changes_word_panel.md for the render rules.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
