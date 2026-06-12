@@ -22,17 +22,11 @@ const GUESS_LABEL: Record<string, string> = {
   modification: "modifica",
   assignment: "cessione",
   ratification: "ratifica",
-};
-
-/** DB sub_type / table values compatible with a Word event_label_guess. */
-const GUESS_DB_TYPES: Record<string, Set<string>> = {
-  new_contract: new Set(["contract"]),
-  termination: new Set(["termination"]),
-  renewal: new Set(["renewal"]),
-  balance: new Set(["balance"]),
-  modification: new Set(["variation", "modification"]),
-  assignment: new Set(["assignment", "cession"]),
-  ratification: new Set(["ratification"]),
+  extension: "proroga",
+  confirmation: "conferma",
+  declaration: "dichiarazione",
+  winding_up: "stralcio",
+  capital_return: "restituzione capitali",
 };
 
 export function humanActType(labelGuess: string): string {
@@ -116,7 +110,7 @@ export function formatFlaggedReason(bucket: string, diagnosticDetail: string): s
   return diagnosticDetail;
 }
 
-export type TypeMismatch = {
+export type TypeRelationItem = {
   dbRowId: string;
   wordLabel: string;
   dbType: string;
@@ -130,28 +124,33 @@ function dbTypeForRow(dbRowId: string, dbRow: Record<string, string | number | n
   return subType || "sub-contract";
 }
 
-export function wordDbTypeMismatches(reviewCase: ReviewCase): TypeMismatch[] {
+/** Word-label ↔ DB-type verdicts, read from the matcher's per-link
+ * `event_type_relation` (the pipeline is the single source of truth — it is
+ * component-aware and encodes the FT-pending `DB_EVENT_TYPE_MAP`; the UI keeps
+ * no label→type map of its own). `mismatch` warrants a warning; `interpretive`
+ * (cessione coded as variation, …) only a quiet explanatory note. */
+export function wordDbTypeRelations(reviewCase: ReviewCase): {
+  mismatches: TypeRelationItem[];
+  interpretive: TypeRelationItem[];
+} {
   const wordGuess = String(reviewCase.row.entry_type_interpretation ?? "").trim().toLowerCase();
-  if (!wordGuess) {
-    return [];
-  }
-  const allowed = GUESS_DB_TYPES[wordGuess];
-  if (!allowed) {
-    return [];
-  }
-  const mismatches: TypeMismatch[] = [];
+  const wordLabel = wordGuess ? humanActType(wordGuess) : "—";
+  const metrics = reviewCase.link_metrics ?? {};
+  const mismatches: TypeRelationItem[] = [];
+  const interpretive: TypeRelationItem[] = [];
   reviewCase.suggested_db_row_ids.forEach((dbRowId, index) => {
-    const dbRow = reviewCase.db_rows[index] ?? {};
-    const dbType = dbTypeForRow(dbRowId, dbRow);
-    if (!allowed.has(dbType)) {
-      mismatches.push({
-        dbRowId,
-        wordLabel: humanActType(wordGuess),
-        dbType,
-      });
+    const relation = metrics[dbRowId]?.event_type_relation ?? null;
+    if (relation !== "mismatch" && relation !== "interpretive") {
+      return;
     }
+    const item = {
+      dbRowId,
+      wordLabel,
+      dbType: dbTypeForRow(dbRowId, reviewCase.db_rows[index] ?? {}),
+    };
+    (relation === "mismatch" ? mismatches : interpretive).push(item);
   });
-  return mismatches;
+  return { mismatches, interpretive };
 }
 
 export { VERIFY_FIELD_BUCKET, CONFIRM_COMBINED_BUCKET };

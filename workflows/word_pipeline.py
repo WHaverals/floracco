@@ -77,6 +77,21 @@ DATE_RE = re.compile(
     flags=re.IGNORECASE,
 )
 EXTRACTION_ALLOWED_STATUSES = {"ok"}
+# Margin notes ("A margine: vedi la disdetta ... a carta 48"). The transcribers
+# append the margin note at the END of the act it annotates (verified against DB
+# sub-contract rows: the note's date/carta match the *preceding* act's later
+# sub-contracts; see LOG.md 2026-06-11). A margin note is therefore a
+# cross-reference belonging to the previous entry's tail — never a date-context
+# line, and never a source for the next entry's registration date.
+MARGIN_NOTE_RE = re.compile(r"^\s*\(?\s*(?:a|in|nel)\s+margine\b", flags=re.IGNORECASE)
+# A full day-month-year date ("18 settembre 1604"), as opposed to the bare
+# year-like numbers DATE_RE also accepts. Bare numbers on an event-label line
+# are act numbers, not years ("[nuova] 1775" = act 1775; 897 label lines carry
+# such a number vs. 21 that carry a real full date).
+FULL_DATE_RE = re.compile(
+    r"\b[0-3]?\d\s+[A-Za-zàèéìòù]+\s+1[4-8]\d{2}\b",
+    flags=re.IGNORECASE,
+)
 ENTRY_LABEL_RE = re.compile(r"^\s*\[(?P<label>[^\]]+)\]\s*(?P<trailing>.*)$")
 EVENT_LABEL_MAP = {
     "nuova": "new_contract",
@@ -151,6 +166,25 @@ ITALIAN_MONTHS = {
     "ottobre": "10",
     "novembre": "11",
     "dicembre": "12",
+    # Historical spellings and transcription slips observed in the corpus
+    # (~27 dates total). Without these the date fails to parse and a margin/body
+    # date can stand in for the act's own date (see LOG.md 2026-06-11,
+    # contract:4395 "4 gennaro 1691/1692"). Unambiguous variants only; French
+    # forms and "stante" (= the current month) are deliberately not mapped.
+    "gennaro": "01",
+    "genaio": "01",
+    "febbraro": "02",
+    "febbario": "02",
+    "febraio": "02",
+    "magio": "05",
+    "giungo": "06",
+    "giguno": "06",
+    "agostro": "08",
+    "ettembre": "09",
+    "otobre": "10",
+    "novembe": "11",
+    "november": "11",
+    "decembre": "12",
 }
 # Maps a normalized Word event label to the DB sub_contract.sub_type values it is
 # compatible with. The DB only ever stores four sub_types
@@ -212,6 +246,8 @@ SIGNAL_LABELS = {
     "component_main_contract_id": "A component event number points to this related sub-contract row",
     "registration_date_exact": "Registration dates match exactly",
     "registration_date_stile_fiorentino": "Registration date matches after Florentine-calendar (stile fiorentino) year shift",
+    "registration_year_match": "Entry is dated by year only, and the year matches the DB registration date",
+    "date_in_narrative": "A date mentioned in the narrative (not the act's own date line) matches the DB registration date",
     "folio_exact": "Folio range matches exactly",
     "folio_within": "DB folio falls inside the Word entry's folio span",
     "folio_overlap": "Word and DB folio ranges overlap",
@@ -1960,6 +1996,12 @@ def is_date_context_paragraph(paragraph: dict[str, Any]) -> bool:
     text = str(paragraph.get("current_text") or "").strip()
     if not text:
         return False
+    # A margin note is a cross-reference to another act (usually carrying that
+    # act's date), not the dating of the act that follows. Treating it as date
+    # context let the backward extension steal the previous act's margin note
+    # and hijack the next entry's registration date (493 entries; LOG 2026-06-11).
+    if MARGIN_NOTE_RE.match(text):
+        return False
     if re.match(r"^\[manca la data\b", text, flags=re.IGNORECASE) and paragraph.get("date_candidates"):
         return True
     if paragraph.get("date_candidates") and len(text) <= 80 and not paragraph.get("bracket_labels"):
@@ -2099,15 +2141,69 @@ def build_entry_from_paragraphs(
     label_paragraph = label_paragraphs[0] if label_paragraphs else paragraphs[0]
     label_paragraph_index = int(label_paragraph["paragraph_index"])
 
-    date_candidates = [
-        candidate
-        for paragraph in paragraphs[: max(1, paragraphs.index(label_paragraph) + 1)]
-        for candidate in paragraph.get("date_candidates", [])
-    ]
+    # Date harvesting works over the entry HEAD BLOCK — the contiguous run of
+    # signal paragraphs (folio heading, date line, label line, blanks) before the
+    # first body paragraph — in ANY order, because registers differ: most write
+    # folio → date → label, but e.g. Mercanzia 10856 writes folio → label → date.
+    # The label line itself contributes only a full day-month-year date (its bare
+    # numbers are act numbers, not years); margin notes never contribute (they
+    # are cross-references to other acts and belong to the previous entry).
+    date_candidates: list[str] = []
+    head_text_parts: list[str] = []
+    for paragraph in paragraphs:
+        paragraph_text = str(paragraph.get("current_text") or "").strip()
+        if not paragraph_text:
+            continue
+        if MARGIN_NOTE_RE.match(paragraph_text):
+            continue
+        is_label_line = parse_entry_label(paragraph_text) is not None
+        if not (
+            is_label_line
+            or paragraph.get("folio_heading")
+            or is_date_context_paragraph(paragraph)
+        ):
+            break
+        if is_label_line:
+            date_candidates.extend(FULL_DATE_RE.findall(paragraph_text))
+            # The label line joins head_text only when it carries a full date;
+            # its bare numbers are act numbers and never parse as dates anyway.
+            if FULL_DATE_RE.search(paragraph_text):
+                head_text_parts.append(paragraph_text)
+        else:
+            date_candidates.extend(paragraph.get("date_candidates", []))
+            head_text_parts.append(paragraph_text)
+    date_candidates_source = "head" if date_candidates else "none"
     if not date_candidates:
         date_candidates = [
             candidate for paragraph in paragraphs for candidate in paragraph.get("date_candidates", [])
         ]
+        if date_candidates:
+            date_candidates_source = "body_fallback"
+    # Prefer a full day-month-year date for the headline registration date; a
+    # bare year is kept (year-only dating is real in early registers) but marked
+    # with day vs. year precision so downstream display and matching can tell
+    # "dated by year" from "dated to the day".
+    full_date_candidates = [
+        candidate for candidate in date_candidates if re.search(r"[A-Za-zàèéìòù]", candidate)
+    ]
+    registration_date_raw = (
+        full_date_candidates[0]
+        if full_date_candidates
+        else (date_candidates[0] if date_candidates else None)
+    )
+    if registration_date_raw and full_date_candidates and date_candidates_source == "head":
+        # Restore the double-date suffix that DATE_RE truncates ("19 febbraio
+        # 1694/95" → candidate "19 febbraio 1694"): the suffix is the document's
+        # own statement of the modern-calendar year and must stay visible.
+        expanded = re.search(
+            re.escape(registration_date_raw) + r"\s*/\s*\d{2,4}",
+            "\n".join(head_text_parts),
+        )
+        if expanded:
+            registration_date_raw = expanded.group(0)
+    registration_date_precision = (
+        "day" if full_date_candidates else ("year" if date_candidates else None)
+    )
 
     folio_heading_paragraphs = [paragraph for paragraph in paragraphs if paragraph.get("folio_heading")]
     folio_start = None
@@ -2167,8 +2263,16 @@ def build_entry_from_paragraphs(
         "folio_raw": folio_raw,
         "folio_start": folio_start,
         "folio_end": folio_end,
-        "registration_date_raw": date_candidates[0] if date_candidates else None,
+        "registration_date_raw": registration_date_raw,
+        "registration_date_precision": registration_date_precision,
         "date_candidates": date_candidates,
+        "date_candidates_source": date_candidates_source,
+        # Raw head-block text (folio/date lines, label line only when it carries
+        # a full date; margin notes excluded). Date matching parses the act's own
+        # dates from THIS, not from the truncated DATE_RE candidate strings,
+        # because double-dated forms ("29 gennaio 1634/35") state the modern year
+        # in the suffix that DATE_RE drops.
+        "head_text": "\n".join(head_text_parts),
         **label_info,
         "bracket_labels": bracket_labels,
         "comment_ids": comment_ids,
@@ -2192,6 +2296,8 @@ def build_entry_from_paragraphs(
             "paragraph_index": int(paragraph["paragraph_index"]),
             "paragraph_role": "label"
             if int(paragraph["paragraph_index"]) == label_paragraph_index
+            else "margin_note"
+            if MARGIN_NOTE_RE.match(str(paragraph.get("current_text") or "").strip())
             else "folio"
             if paragraph.get("folio_heading")
             else "date"
@@ -2670,6 +2776,36 @@ def entry_stile_fiorentino_dates(entry: dict[str, Any]) -> set[str]:
     return candidates
 
 
+def entry_head_dates(entry: dict[str, Any]) -> tuple[set[str], set[str], set[str]]:
+    """The act's OWN dating, from the entry head block: (iso_dates, stile_dates, bare_years).
+
+    ``date_candidates`` holds head-block dates when ``date_candidates_source`` is
+    "head"; on "body_fallback" the candidates came from anywhere in the narrative
+    and must not be treated as the act's own date line (they only support the
+    weak ``date_in_narrative`` signal). Bare years are returned separately:
+    year-only dating is real in early registers but too coarse for an exact
+    date signal or a date conflict.
+    """
+    if (entry.get("date_candidates_source") or "head") != "head":
+        return set(), set(), set()
+    # Parse from the raw head-block text when available: the DATE_RE candidate
+    # strings truncate double-dated forms ("29 gennaio 1634/35" → "29 gennaio
+    # 1634"), and the /35 suffix is the document's own statement of the modern
+    # year — losing it would downgrade ~1,250 exact matches to stile-shifted.
+    head_text = entry.get("head_text")
+    if head_text is None:
+        head_text = "\n".join(str(candidate) for candidate in entry.get("date_candidates") or [])
+    iso_dates = parse_italian_date_candidates(head_text)
+    stile_dates = stile_fiorentino_modern_dates(head_text) if iso_dates else set()
+    years: set[str] = set()
+    if not iso_dates:
+        for candidate in entry.get("date_candidates") or []:
+            year = re.fullmatch(r"\s*(1[4-8]\d{2})\s*", str(candidate))
+            if year:
+                years.add(year.group(1))
+    return iso_dates, stile_dates, years
+
+
 def strip_db_folio_annotations(folio: str | None) -> str:
     """Reduce a DB folio string to its current-numbering token.
 
@@ -3028,6 +3164,61 @@ def primary_db_type_matches(entry: dict[str, Any], db_row: dict[str, Any]) -> bo
     return any(value in sub_type for value in allowed)
 
 
+def event_type_relation(entry: dict[str, Any], db_table: str, db_sub_type: Any) -> str:
+    """How the Word event label relates to a DB row's table/type, per link.
+
+    This is the single source of truth the review UI renders (it must not keep
+    its own label→type map; see qa_packet_schema.md v4):
+
+    - ``exact``        — the normalized label IS the DB category (termination→
+                         termination, balance→balance, …, new_contract→contract).
+    - ``interpretive`` — the label folds into the category only via the
+                         permissive ``DB_EVENT_TYPE_MAP`` groupings (cessione→
+                         variation, ratifica→variation, proroga→renewal, …).
+                         These groupings are an editorial judgment marked
+                         FT-review-pending; the UI shows a quiet note, not a
+                         warning.
+    - ``mismatch``     — the type is outside every component label's allowed
+                         set; the UI warns.
+    - ``unknown``      — no usable label or blank sub_type; the UI stays quiet.
+
+    Component-aware: a combined ``[disdetta] + [nuova]`` entry is judged against
+    each parsed component label, so its `contract` row is ``exact``, not a
+    mismatch against "termination".
+    """
+    labels = {
+        str(label)
+        for label in (component_label_guesses(entry) or {str(entry.get("event_label_guess") or "")})
+        if label
+    }
+    if db_table == "contract":
+        if not labels:
+            return "unknown"
+        return "exact" if "new_contract" in labels else "mismatch"
+    sub_type = normalize_match_text(db_sub_type)
+    if not labels or not sub_type:
+        return "unknown"
+    # Canonical codings: the label IS the DB category, or is the category the
+    # original input rules define for it (modifica → variation is the rules' own
+    # category for modifications, the same standing as disdetta → termination).
+    canonical = {
+        "termination": "termination",
+        "balance": "balance",
+        "renewal": "renewal",
+        "variation": "variation",
+        "modification": "variation",
+    }
+    if any(canonical.get(label, "") and canonical[label] in sub_type for label in labels):
+        return "exact"
+    if any(
+        value in sub_type
+        for label in labels
+        for value in DB_EVENT_TYPE_MAP.get(label, set())
+    ):
+        return "interpretive"
+    return "mismatch"
+
+
 def candidate_db_rows_for_entry(
     entry: dict[str, Any],
     db_rows_by_register: dict[str, list[dict[str, Any]]],
@@ -3155,16 +3346,34 @@ def score_match(entry: dict[str, Any], db_row: dict[str, Any], entry_text: str) 
         elif db_row.get("main_contract_id") in component_sub_main_numbers:
             score += 32
             signals.append("component_main_contract_id")
-    if db_row.get("registration_date") in parsed_dates:
+    # The exact-date signal (and the date conflict) is judged against the act's
+    # OWN dating from the entry head block, not against every date the narrative
+    # mentions: 423 margin-note dates and ~52 genuinely different body dates used
+    # to satisfy "registration_date_exact" and silently suppress real date
+    # conflicts (LOG 2026-06-11). A body/margin date that matches the DB is still
+    # recorded — as the weak ``date_in_narrative`` signal, which never hides a
+    # head-date conflict. Year-only dating (early registers) earns a soft
+    # ``registration_year_match`` and never raises a conflict.
+    head_dates, head_stile_dates, head_years = entry_head_dates(entry)
+    db_date = db_row.get("registration_date")
+    if db_date and db_date in head_dates:
         score += 25
         signals.append("registration_date_exact")
-    elif db_row.get("registration_date") in stile_fiorentino_dates:
+    elif db_date and db_date in head_stile_dates:
         # DB stores the modern calendar; the Word date is one year behind because
         # the Florentine year began 25 March. Treat as a (slightly softer) match.
         score += 20
         signals.append("registration_date_stile_fiorentino")
-    elif parsed_dates and db_row.get("registration_date"):
-        conflicts.append("registration_date_differs")
+    else:
+        if db_date and head_dates:
+            conflicts.append("registration_date_differs")
+        if db_date and db_date not in head_dates:
+            if not head_dates and head_years and str(db_date)[:4] in head_years:
+                score += 8
+                signals.append("registration_year_match")
+            elif db_date in parsed_dates or db_date in stile_fiorentino_dates:
+                score += 6
+                signals.append("date_in_narrative")
 
     folio_relation = folio_relationship(entry, db_row)
     if folio_relation == "exact":
@@ -3686,6 +3895,9 @@ def source_entry_db_link_candidates(
                 "db_sub_firm_name": candidate.get("db_sub_firm_name"),
                 "db_registration_date": candidate.get("db_registration_date"),
                 "db_folio_raw": candidate.get("db_folio_raw"),
+                "event_type_relation": event_type_relation(
+                    entry, candidate["db_table"], candidate.get("db_sub_type")
+                ),
                 "score": candidate["score"],
                 "signals": candidate["signals"],
                 "conflicts": candidate["conflicts"],
@@ -4083,6 +4295,8 @@ def run_match_db(args: argparse.Namespace) -> int:
                 "event_number_raw": entry.get("event_number_raw"),
                 "referenced_event_number_raw": entry.get("referenced_event_number_raw"),
                 "entry_registration_date_raw": entry.get("registration_date_raw"),
+                "entry_registration_date_precision": entry.get("registration_date_precision"),
+                "entry_registration_date_source": entry.get("date_candidates_source"),
                 "entry_registration_date_iso": top["entry_registration_date_iso"] if top else parse_italian_date(entry.get("registration_date_raw")),
                 "entry_folio_start": entry.get("folio_start"),
                 "entry_folio_end": entry.get("folio_end"),
@@ -4665,6 +4879,8 @@ def qa_rows_for_matches(
                 "entry_number": match.get("event_number_raw"),
                 "referenced_entry_number": match.get("referenced_event_number_raw"),
                 "word_registration_date": match.get("entry_registration_date_raw"),
+                "word_registration_date_precision": match.get("entry_registration_date_precision"),
+                "word_registration_date_source": match.get("entry_registration_date_source"),
                 "word_folio_range": f"{match.get('entry_folio_start') or ''}-{match.get('entry_folio_end') or ''}".strip("-"),
                 "match_status": MATCH_STATUS_LABELS.get(match["match_status"], match["match_status"]),
                 "top_db_row_id": top_db_row_id,

@@ -581,6 +581,21 @@ button.act-chip-jump.is-supported {
   font-weight: 700;
 }
 
+/* Interpretive coding note (cessione coded as variation, ...): informational,
+   deliberately quieter than the mismatch callout -- no border, no alarm. */
+.type-interpretive-note {
+  color: #7a6a55;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  margin: 0;
+  padding: 2px 4px;
+}
+
+.type-interpretive-note em {
+  font-style: normal;
+  font-weight: 600;
+}
+
 .db-side-hint {
   background: #eef3f6;
   border: 1px solid #c7d6df;
@@ -1781,6 +1796,153 @@ progress {
   color: #6b5840;
   font-size: 0.78rem;
   padding: 2px 8px;
+}
+
+/* --- Edit mode + soft-delete + change history (Database tab) --- */
+.db-record-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.db-edit-bar {
+  background: #faf6ef;
+  border: 1px solid #e6dac6;
+  border-radius: 12px;
+  margin: 12px 0 4px;
+  padding: 12px 16px;
+}
+
+.db-edit-bar > p {
+  margin: 0 0 8px;
+}
+
+.db-record.is-editing .db-field {
+  border-bottom: 1px dashed #ece0cd;
+  padding-bottom: 8px;
+}
+
+.db-show-hidden {
+  align-items: center;
+  color: #7a6f62;
+  display: flex;
+  font-size: 0.82rem;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.db-hidden-badge {
+  background: #5f281f;
+  border-radius: 999px;
+  color: #fff4ef;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-left: 10px;
+  padding: 3px 9px;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.is-hidden-record {
+  opacity: 0.92;
+}
+
+.db-hidden-banner {
+  background: #f7e9e4;
+  border: 1px solid #e0bdb0;
+  border-radius: 12px;
+  color: #5a2d22;
+  margin: 14px 0;
+  padding: 12px 16px;
+}
+
+.db-hidden-banner p {
+  margin: 0 0 10px;
+}
+
+.db-record-danger {
+  border-top: 1px solid #eadfcc;
+  margin-top: 18px;
+  padding-top: 10px;
+}
+
+.db-record-danger > summary {
+  color: #9a6a55;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.db-danger-body {
+  padding: 10px 2px 2px;
+}
+
+.db-deps-warning {
+  background: #fdf3e6;
+  border: 1px solid #eccf9f;
+  border-radius: 8px;
+  color: #6b4a1e;
+  font-size: 0.85rem;
+  margin: 8px 0;
+  padding: 8px 12px;
+}
+
+.db-record-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pill-button.is-danger {
+  background: #7a2c1d;
+  color: #fff4ef;
+}
+
+.db-history-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.db-history-item {
+  border-left: 3px solid #cbb9a0;
+  display: grid;
+  gap: 2px;
+  padding: 4px 0 4px 12px;
+}
+
+.db-history-item.op-delete {
+  border-left-color: #b8513a;
+}
+
+.db-history-item.op-restore {
+  border-left-color: #5f8a4f;
+}
+
+.db-history-item.status-reverted,
+.db-history-item.status-conflict {
+  opacity: 0.7;
+}
+
+.db-history-op {
+  font-weight: 600;
+}
+
+.db-history-meta {
+  color: #8a7a66;
+  font-size: 0.8rem;
+}
+
+.db-history-reason {
+  color: #6b5d4e;
+  font-size: 0.85rem;
+  font-style: italic;
 }
 
 .db-fields {

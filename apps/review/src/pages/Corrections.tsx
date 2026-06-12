@@ -775,3 +775,4 @@ function ProposalsBoard() {
     </div>
   );
 }
+

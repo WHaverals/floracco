@@ -459,3 +459,236 @@ def test_group_word_entry_images_keeps_distinct_files() -> None:
     grouped = group_word_entry_images(rows)
     assert len(grouped) == 2
     assert [item["path"] for item in grouped] == ["Mercanzia/122.jpg", "Mercanzia/124.jpg"]
+
+
+# ---------------------------------------------------------------------------
+# Margin notes, head-block date harvesting, date-signal split, type relations
+# (LOG 2026-06-11)
+# ---------------------------------------------------------------------------
+
+from workflows.word_pipeline import (  # noqa: E402
+    event_type_relation,
+    is_date_context_paragraph,
+    parse_folio_heading,
+    parse_italian_date,
+    score_match,
+)
+
+
+def test_margin_note_is_not_date_context() -> None:
+    margin = {
+        "current_text": "A margine: disdetta in data 1 luglio 1782 a carta 48",
+        "date_candidates": ["1 luglio 1782"],
+        "bracket_labels": [],
+    }
+    assert not is_date_context_paragraph(margin)
+    # Variants and a leading parenthesis are also margin notes.
+    for text in ("Nel margine: vedi c. 12", "(A margine: finita)", "In margine: tronca"):
+        assert not is_date_context_paragraph(
+            {"current_text": text + " 1 luglio 1782", "date_candidates": ["1 luglio 1782"], "bracket_labels": []}
+        )
+    # A plain short date line still is date context.
+    plain = {"current_text": "24 aprile 1778", "date_candidates": ["24 aprile 1778"], "bracket_labels": []}
+    assert is_date_context_paragraph(plain)
+
+
+def test_segment_register_keeps_margin_note_with_previous_entry() -> None:
+    """The transcribers append the margin note at the END of the act it
+    annotates; the backward extension must not pull it into the next entry
+    (where its date would hijack the registration date)."""
+    register = {
+        "register_id": "Test_Register",
+        "source_file": "test.docx",
+        "normalized_path": "test.docx",
+        "front_matter_paragraph_count": 0,
+    }
+    paragraphs = [
+        {"paragraph_index": 0, "current_text": "c. 1r", "folio_heading": parse_folio_heading("c. 1r")},
+        {"paragraph_index": 1, "current_text": "1 gennaio 1600", "date_candidates": ["1 gennaio 1600"]},
+        {"paragraph_index": 2, "current_text": "[Nuova] 100"},
+        {"paragraph_index": 3, "current_text": "Primo atto."},
+        {
+            "paragraph_index": 4,
+            "current_text": "A margine: disdetta in data 1 luglio 1782 a carta 48",
+            "date_candidates": ["1 luglio 1782"],
+        },
+        {"paragraph_index": 5, "current_text": ""},
+        {"paragraph_index": 6, "current_text": "c. 2r", "folio_heading": parse_folio_heading("c. 2r")},
+        {"paragraph_index": 7, "current_text": "24 aprile 1778", "date_candidates": ["24 aprile 1778"]},
+        {"paragraph_index": 8, "current_text": "[nuovo] 101"},
+        {"paragraph_index": 9, "current_text": "Secondo atto."},
+    ]
+    entries, entry_paragraphs, _unsegmented, _issues = segment_register(register, paragraphs)
+    assert len(entries) == 2
+    # Margin note stays in the first entry's tail …
+    assert entries[0]["end_paragraph_index"] == 4
+    roles = {row["paragraph_index"]: row["paragraph_role"] for row in entry_paragraphs}
+    assert roles[4] == "margin_note"
+    # … and the second entry's date is its own, not the margin note's.
+    assert entries[1]["registration_date_raw"] == "24 aprile 1778"
+    assert entries[1]["registration_date_precision"] == "day"
+    assert "1 luglio 1782" not in entries[1]["date_candidates"]
+    assert entries[1]["date_candidates_source"] == "head"
+
+
+def test_head_block_finds_date_written_after_the_label() -> None:
+    """Some registers write folio → label → date (e.g. Mercanzia 10856). The
+    head block is order-independent, and a bare number on the label line is an
+    act number, never a year."""
+    register = {
+        "register_id": "Test_Register",
+        "source_file": "test.docx",
+        "normalized_path": "test.docx",
+        "front_matter_paragraph_count": 0,
+    }
+    paragraphs = [
+        {"paragraph_index": 0, "current_text": "c. 43r", "folio_heading": parse_folio_heading("c. 43r")},
+        {"paragraph_index": 1, "current_text": "[nuova] 1775", "date_candidates": ["1775"]},
+        {"paragraph_index": 2, "current_text": "18 novembre 1734", "date_candidates": ["18 novembre 1734"]},
+        {"paragraph_index": 3, "current_text": "Il signor Pietro Gaetano di Tommaso."},
+    ]
+    entries, _mapping, _unsegmented, _issues = segment_register(register, paragraphs)
+    assert len(entries) == 1
+    assert entries[0]["registration_date_raw"] == "18 novembre 1734"
+    assert entries[0]["registration_date_precision"] == "day"
+    assert "1775" not in entries[0]["date_candidates"]
+
+
+def test_year_only_dating_is_kept_with_year_precision() -> None:
+    register = {
+        "register_id": "Test_Register",
+        "source_file": "test.docx",
+        "normalized_path": "test.docx",
+        "front_matter_paragraph_count": 0,
+    }
+    paragraphs = [
+        {"paragraph_index": 0, "current_text": "1522", "date_candidates": ["1522"]},
+        {"paragraph_index": 1, "current_text": "[Nuova] 200"},
+        {"paragraph_index": 2, "current_text": "Giovanni di Francesco."},
+    ]
+    entries, _mapping, _unsegmented, _issues = segment_register(register, paragraphs)
+    assert entries[0]["registration_date_raw"] == "1522"
+    assert entries[0]["registration_date_precision"] == "year"
+
+
+def test_parse_italian_date_accepts_historical_month_variants() -> None:
+    assert parse_italian_date("4 gennaro 1691") == "1691-01-04"
+    assert parse_italian_date("10 febbraro 1550") == "1550-02-10"
+    assert parse_italian_date("2 giungo 1733") == "1733-06-02"
+    assert parse_italian_date("7 otobre 1801") == "1801-10-07"
+
+
+def _date_entry(**overrides: object) -> dict:
+    entry = {
+        "register_id": "R",
+        "event_label_guess": "termination",
+        "event_label_raw": "[Disdetta]",
+        "event_number_raw": None,
+        "referenced_event_number_raw": None,
+        "registration_date_raw": "1 gennaio 1600",
+        "date_candidates": ["1 gennaio 1600"],
+        "date_candidates_source": "head",
+        "current_text": "1 gennaio 1600\n[Disdetta]\ncome da scritta del 2 gennaio 1600.",
+        "folio_start": None,
+        "folio_end": None,
+    }
+    entry.update(overrides)
+    return entry
+
+
+def _date_db_row(registration_date: str) -> dict:
+    return {
+        "db_row_id": "sub_contract:1",
+        "db_table": "sub_contract",
+        "contract_id": 1,
+        "main_contract_id": 9,
+        "register_id": "R",
+        "registration_date": registration_date,
+        "sub_type": "termination",
+        "_match_text": "",
+    }
+
+
+def test_score_match_head_date_match_is_exact() -> None:
+    details = score_match(_date_entry(), _date_db_row("1600-01-01"), "")
+    assert "registration_date_exact" in details["signals"]
+    assert "registration_date_differs" not in details["conflicts"]
+
+
+def test_score_match_body_date_never_silences_a_head_date_conflict() -> None:
+    """A date mentioned in the narrative body (here a scritta date) must not
+    satisfy the exact-date signal nor suppress the conflict against the act's
+    own head date."""
+    details = score_match(_date_entry(), _date_db_row("1600-01-02"), "")
+    assert "registration_date_exact" not in details["signals"]
+    assert "registration_date_differs" in details["conflicts"]
+    assert "date_in_narrative" in details["signals"]
+
+
+def test_score_match_year_only_dating_matches_softly() -> None:
+    entry = _date_entry(
+        registration_date_raw="1522",
+        date_candidates=["1522"],
+        current_text="1522\n[Disdetta]\nGiovanni.",
+    )
+    details = score_match(entry, _date_db_row("1522-05-05"), "")
+    assert "registration_year_match" in details["signals"]
+    assert "registration_date_differs" not in details["conflicts"]
+
+
+def test_event_type_relation_states() -> None:
+    termination = {"event_label_guess": "termination", "event_label_raw": "[Disdetta]", "current_text": ""}
+    assert event_type_relation(termination, "sub_contract", "termination") == "exact"
+    assert event_type_relation(termination, "contract", None) == "mismatch"
+    cessione = {"event_label_guess": "assignment", "event_label_raw": "[Cessione]", "current_text": ""}
+    assert event_type_relation(cessione, "sub_contract", "variation") == "interpretive"
+    assert event_type_relation(cessione, "sub_contract", "balance") == "mismatch"
+    assert event_type_relation(cessione, "sub_contract", "") == "unknown"
+    # Combined acts are judged per component: the contract row of a
+    # [disdetta] + [nuova] entry is exact, not a mismatch against "termination".
+    combined = {
+        "event_label_guess": "termination",
+        "event_label_raw": "[disdetta]",
+        "current_text": "[disdetta] di 2658 + [nuova] 2682\nnarrative",
+    }
+    assert event_type_relation(combined, "contract", None) == "exact"
+    assert event_type_relation(combined, "sub_contract", "termination") == "exact"
+
+
+def test_double_dated_head_keeps_suffix_and_matches_modern_year() -> None:
+    """"19 febbraio 1694/95" states the modern year in the suffix: the raw date
+    keeps it, and the head-date set contains the modern year so the DB date
+    matches exactly (not via a stile shift)."""
+    register = {
+        "register_id": "Test_Register",
+        "source_file": "test.docx",
+        "normalized_path": "test.docx",
+        "front_matter_paragraph_count": 0,
+    }
+    paragraphs = [
+        {"paragraph_index": 0, "current_text": "19 febbraio 1694/95", "date_candidates": ["19 febbraio 1694"]},
+        {"paragraph_index": 1, "current_text": "[Disdetta] di 4485"},
+        {"paragraph_index": 2, "current_text": "Compare il signor Francesco Berzini."},
+    ]
+    entries, _mapping, _unsegmented, _issues = segment_register(register, paragraphs)
+    entry = entries[0]
+    assert entry["registration_date_raw"] == "19 febbraio 1694/95"
+    db_row = _date_db_row("1695-02-19")
+    details = score_match(entry, db_row, "")
+    assert "registration_date_exact" in details["signals"]
+    assert "registration_date_differs" not in details["conflicts"]
+
+
+def test_modern_registration_iso_prefill_rules() -> None:
+    from workflows.correction_candidates import modern_registration_iso
+
+    # Double-dated: the suffix is the modern year.
+    assert modern_registration_iso("19 febbraio 1694/95") == "1695-02-19"
+    assert modern_registration_iso("4 gennaro 1691/1692") == "1692-01-04"
+    # Single date in the Florentine window, pre-1750: ambiguous — no pre-fill.
+    assert modern_registration_iso("22 febbraio 1499") is None
+    assert modern_registration_iso("24 marzo 1700") is None
+    # Outside the window, or after the 1750 reform: literal.
+    assert modern_registration_iso("25 marzo 1700") == "1700-03-25"
+    assert modern_registration_iso("8 maggio 1778") == "1778-05-08"
+    assert modern_registration_iso("10 gennaio 1782") == "1782-01-10"

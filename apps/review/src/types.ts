@@ -100,6 +100,8 @@ export type LinkMetric = {
   relationship_type: string | null;
   link_role: "primary" | "alternative" | null;
   link_ordinal: number | null;
+  /** Pipeline-owned Word-label ↔ DB-type verdict (qa_packet_schema.md v4). */
+  event_type_relation: "exact" | "interpretive" | "mismatch" | "unknown" | null;
 };
 
 export type ReviewCase = {
@@ -288,6 +290,21 @@ export type WordEntryDetail = {
   images: WordEntryImage[];
 };
 
+export type ChangeHistoryEvent = { event: string; at: string; by: string; note: string | null };
+
+export type ChangeHistoryItem = {
+  request_id: string;
+  op: string; // update | relink | create | delete | restore
+  field: string | null;
+  before_value: unknown;
+  after_value: unknown;
+  status: string; // applied | reverted | conflict | proposed | ...
+  reason: string | null;
+  created_by: string;
+  created_at: string;
+  events: ChangeHistoryEvent[];
+};
+
 export type DbRecord = {
   table: DbBrowseTable;
   id: string;
@@ -299,6 +316,9 @@ export type DbRecord = {
   document: string | null;
   word_sources: DbWordSource[];
   word_sources_note?: string | null;
+  is_deleted?: boolean;
+  dependents?: Record<string, number>;
+  change_history?: ChangeHistoryItem[];
 };
 
 export type CorrectionStatus =
@@ -477,5 +497,7 @@ export type DecisionPayload = {
   image_candidate_paths: string;
   selected_db_row_ids: string[];
   rejected_db_row_ids: string[];
+  /** Alternatives the reviewer neither selected nor rejected (no decision status). */
+  unassessed_db_row_ids: string[];
   suggested_relationship_type: string;
 };

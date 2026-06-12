@@ -34,7 +34,20 @@ export default function DecisionBar({
       localStorage.setItem(REVIEWER_KEY, reviewer.trim());
     }
     const selected = verdict === "confirm" ? selectedDbRows : [];
-    const rejected = allIds.filter((id) => !selected.includes(id));
+    // Three decision states, keyed on the matcher's own link_role: unticked
+    // `primary` rows were the question being asked → rejected; unticked
+    // `alternative` rows (demoted siblings kept as evidence) were never the
+    // question → recorded as unassessed, with no decision status, so they do
+    // not surface as "rejected" on the DB record. "None match" is an explicit
+    // verdict over everything shown, alternatives included; "Not sure" rejects
+    // nothing — the reviewer explicitly declined to decide.
+    const metrics = reviewCase.link_metrics ?? {};
+    const isAlternative = (id: string) => metrics[id]?.link_role === "alternative";
+    const unticked = allIds.filter((id) => !selected.includes(id));
+    const rejected =
+      verdict === "confirm" ? unticked.filter((id) => !isAlternative(id)) : verdict === "none" ? unticked : [];
+    const unassessed =
+      verdict === "confirm" ? unticked.filter(isAlternative) : verdict === "unsure" ? unticked : [];
     let mainJudgment = "cannot_decide";
     let nextAction = "ask_project_lead";
     if (verdict === "confirm") {
@@ -63,6 +76,7 @@ export default function DecisionBar({
         image_candidate_paths: value(row, "image_candidate_paths"),
         selected_db_row_ids: selected,
         rejected_db_row_ids: rejected,
+        unassessed_db_row_ids: unassessed,
         suggested_relationship_type: value(row, "suggested_relationship_type"),
       });
       setNote("");

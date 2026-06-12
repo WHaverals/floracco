@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from workflows import corrections_db
 from workflows.word_pipeline import act_components_for_review
 
 
@@ -113,6 +114,7 @@ DECISION_FIELDNAMES = [
     "image_candidate_paths",
     "selected_db_row_ids",
     "rejected_db_row_ids",
+    "unassessed_db_row_ids",
     "suggested_relationship_type",
     "reviewed_text_sha256",
     "packet_section",
@@ -139,6 +141,11 @@ class ReviewDecision(BaseModel):
     image_candidate_paths: str = ""
     selected_db_row_ids: list[str] = Field(default_factory=list)
     rejected_db_row_ids: list[str] = Field(default_factory=list)
+    # Demoted `alternative` rows the reviewer neither selected nor rejected.
+    # Recorded for audit but given no decision status: an unticked alternative
+    # was never the question being asked, so it must not surface as "rejected"
+    # evidence on the DB record (it stays "proposed").
+    unassessed_db_row_ids: list[str] = Field(default_factory=list)
     suggested_relationship_type: str = ""
 
 
@@ -665,6 +672,10 @@ def link_metrics_for_candidates(link_candidates: list[dict[str, Any]]) -> dict[s
             "relationship_type": link.get("relationship_type"),
             "link_role": link.get("link_role"),
             "link_ordinal": link.get("link_ordinal"),
+            # Pipeline-owned verdict on Word label vs DB table/type (exact /
+            # interpretive / mismatch / unknown). The UI renders this and keeps
+            # no label→type map of its own (qa_packet_schema.md v4).
+            "event_type_relation": link.get("event_type_relation"),
         }
     return metrics
 
@@ -948,6 +959,7 @@ def save_decision(decision: ReviewDecision) -> dict[str, Any]:
     decision_row = decision.model_dump()
     decision_row["selected_db_row_ids"] = "; ".join(decision.selected_db_row_ids)
     decision_row["rejected_db_row_ids"] = "; ".join(decision.rejected_db_row_ids)
+    decision_row["unassessed_db_row_ids"] = "; ".join(decision.unassessed_db_row_ids)
     decision_row["updated_at"] = datetime.now(timezone.utc).isoformat()
     entry_identity_value = decision.source_entry_key or decision.source_entry_id
     decision_row["review_id"] = review_id_for(
@@ -992,6 +1004,29 @@ def open_db() -> sqlite3.Connection:
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
     return connection
+
+
+def open_corrections() -> sqlite3.Connection:
+    """Connection to the authoritative human-change log (corrections.db)."""
+    return corrections_db.connect(corrections_db.default_path())
+
+
+def hidden_clause(where: str, include_hidden: bool) -> str:
+    """Append the soft-delete filter to a (possibly empty) WHERE clause."""
+    if include_hidden:
+        return where
+    return f"{where} AND is_deleted = 0" if where else "WHERE is_deleted = 0"
+
+
+def contract_dependents(connection: sqlite3.Connection, contract_id: str) -> dict[str, int]:
+    """Counts of the rows that hang off a contract (the cascade subtree)."""
+    n = lambda sql: connection.execute(sql, (contract_id,)).fetchone()[0]  # noqa: E731
+    return {
+        "sub_contract": n("SELECT COUNT(*) FROM sub_contract WHERE main_contract_id = ? AND is_deleted = 0"),
+        "investor": n("SELECT COUNT(*) FROM investor WHERE contract_id = ? AND is_deleted = 0"),
+        "investment": n("SELECT COUNT(*) FROM investment WHERE contract_id = ? AND is_deleted = 0"),
+        "contract_place": n("SELECT COUNT(*) FROM contract_place WHERE contract_id = ? AND is_deleted = 0"),
+    }
 
 
 def lookup_value(
@@ -1741,7 +1776,10 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
 
 @app.get("/api/db/search")
 def db_search(
-    table: str, q: str = "", limit: int = Query(default=60, ge=1, le=300)
+    table: str,
+    q: str = "",
+    limit: int = Query(default=60, ge=1, le=300),
+    include_hidden: bool = False,
 ) -> dict[str, Any]:
     if table not in DB_BROWSE_TABLES:
         raise HTTPException(status_code=400, detail="Unknown table.")
@@ -1756,6 +1794,7 @@ def db_search(
                 else ""
             )
             params = [like, like, like] if term else []
+            where = hidden_clause(where, include_hidden)
             total = connection.execute(
                 f"SELECT COUNT(*) AS c FROM contract {where}", params
             ).fetchone()["c"]
@@ -1784,6 +1823,7 @@ def db_search(
                 else ""
             )
             params = [like, like, like] if term else []
+            where = hidden_clause(where, include_hidden)
             total = connection.execute(
                 f"SELECT COUNT(*) AS c FROM sub_contract {where}", params
             ).fetchone()["c"]
@@ -1813,6 +1853,7 @@ def db_search(
                 else ""
             )
             params = [like, like, like, like] if term else []
+            where = hidden_clause(where, include_hidden)
             total = connection.execute(
                 f"SELECT COUNT(*) AS c FROM person {where}", params
             ).fetchone()["c"]
@@ -1844,12 +1885,77 @@ def db_record(table: str, record_id: str) -> dict[str, Any]:
     connection = open_db()
     try:
         if table == "contract":
-            return contract_detail(connection, record_id)
-        if table == "sub_contract":
-            return sub_contract_detail(connection, record_id)
-        return person_detail(connection, record_id)
+            record = contract_detail(connection, record_id)
+            record["dependents"] = contract_dependents(connection, record_id)
+        elif table == "sub_contract":
+            record = sub_contract_detail(connection, record_id)
+        else:
+            record = person_detail(connection, record_id)
+        col = PRIMARY_KEY_COLUMN[table]
+        flag = connection.execute(
+            f"SELECT is_deleted FROM {table} WHERE {col} = ?", (record_id,)
+        ).fetchone()
+        record["is_deleted"] = bool(flag and flag["is_deleted"])
     finally:
         connection.close()
+    clog = open_corrections()
+    try:
+        record["change_history"] = corrections_db.history_for_row(
+            clog, table, {col: int(record_id)}
+        )
+    finally:
+        clog.close()
+    return record
+
+
+class RecordAction(BaseModel):
+    reviewer: str = Field(min_length=1)
+    reason: str = ""
+
+
+def _set_hidden(table: str, record_id: str, *, hidden: bool, action: RecordAction) -> dict[str, Any]:
+    """Soft-delete (hide) or restore a record: flip `is_deleted` in main.db and log
+    the operation to the authoritative change log. Reversible; nothing is purged."""
+    if table not in DB_BROWSE_TABLES:
+        raise HTTPException(status_code=400, detail="Unknown table.")
+    if hidden and not action.reason.strip():
+        raise HTTPException(status_code=400, detail="A reason is required to hide a record.")
+    col = PRIMARY_KEY_COLUMN[table]
+    connection = open_db()
+    try:
+        row = connection.execute(f"SELECT {col} FROM {table} WHERE {col} = ?", (record_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Record not found.")
+        with connection:
+            connection.execute(
+                f"UPDATE {table} SET is_deleted = ? WHERE {col} = ?", (1 if hidden else 0, record_id)
+            )
+    finally:
+        connection.close()
+    clog = open_corrections()
+    try:
+        corrections_db.record_operation(
+            clog,
+            op="delete" if hidden else "restore",
+            db_table=table,
+            pk={col: int(record_id)},
+            by=action.reviewer,
+            reason=action.reason.strip() or None,
+            note=action.reason.strip() or None,
+        )
+    finally:
+        clog.close()
+    return {"ok": True, "is_deleted": hidden}
+
+
+@app.post("/api/db/record/{table}/{record_id}/hide")
+def hide_record(table: str, record_id: str, action: RecordAction) -> dict[str, Any]:
+    return _set_hidden(table, record_id, hidden=True, action=action)
+
+
+@app.post("/api/db/record/{table}/{record_id}/restore")
+def restore_record(table: str, record_id: str, action: RecordAction) -> dict[str, Any]:
+    return _set_hidden(table, record_id, hidden=False, action=action)
 
 
 @app.get("/api/db/contract-persons/{contract_id}")

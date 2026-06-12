@@ -53,13 +53,40 @@ export function saveDecision(decision: DecisionPayload): Promise<{ ok: boolean; 
   });
 }
 
-export function searchDb(table: DbBrowseTable, q: string): Promise<DbSearchResponse> {
+export function searchDb(
+  table: DbBrowseTable,
+  q: string,
+  includeHidden = false,
+): Promise<DbSearchResponse> {
   const params = new URLSearchParams({ table, q });
+  if (includeHidden) params.set("include_hidden", "true");
   return request<DbSearchResponse>(`/api/db/search?${params.toString()}`);
 }
 
 export function loadDbRecord(table: DbBrowseTable, id: string): Promise<DbRecord> {
   return request<DbRecord>(`/api/db/record/${table}/${encodeURIComponent(id)}`);
+}
+
+export function hideRecord(
+  table: DbBrowseTable,
+  id: string,
+  body: { reviewer: string; reason: string },
+): Promise<{ ok: boolean; is_deleted: boolean }> {
+  return request(`/api/db/record/${table}/${encodeURIComponent(id)}/hide`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function restoreRecord(
+  table: DbBrowseTable,
+  id: string,
+  body: { reviewer: string; reason: string },
+): Promise<{ ok: boolean; is_deleted: boolean }> {
+  return request(`/api/db/record/${table}/${encodeURIComponent(id)}/restore`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export function loadWordEntry(sourceEntryId: string): Promise<WordEntryDetail> {

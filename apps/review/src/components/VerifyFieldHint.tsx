@@ -21,9 +21,13 @@ export default function VerifyFieldHint({ reviewCase }: { reviewCase: ReviewCase
 
   const fields: { label: string; word: string; db: string }[] = [];
   if (lc.includes("date")) {
+    const wordDate = value(row, "word_registration_date");
+    const yearOnly = value(row, "word_registration_date_precision") === "year";
+    const fromNarrative = value(row, "word_registration_date_source") === "body_fallback";
+    const qualifier = yearOnly ? " (year only)" : fromNarrative ? " (from narrative — entry has no date line)" : "";
     fields.push({
       label: "Date",
-      word: value(row, "word_registration_date"),
+      word: wordDate ? `${wordDate}${qualifier}` : "",
       db: dbRow?.registration_date ? String(dbRow.registration_date) : "",
     });
   }

@@ -25,6 +25,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+try:  # importable both as a script (workflows/ on path) and as a module
+    from workflows import corrections_db
+except ModuleNotFoundError:
+    import corrections_db
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -230,6 +235,73 @@ def validate_counts(counts: dict[str, int]) -> list[str]:
     return errors
 
 
+def add_soft_delete_columns(connection: sqlite3.Connection) -> None:
+    """Add `is_deleted` to each editable table (idempotent)."""
+    for table in corrections_db.SOFT_DELETE_TABLES:
+        cols = {row[1] for row in connection.execute(f"PRAGMA table_info(`{table}`)")}
+        if corrections_db.IS_DELETED_COLUMN not in cols:
+            connection.execute(
+                f"ALTER TABLE `{table}` ADD COLUMN {corrections_db.IS_DELETED_COLUMN} INTEGER NOT NULL DEFAULT 0"
+            )
+
+
+def _norm(value: object) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def replay_corrections(connection: sqlite3.Connection) -> dict:
+    """Re-apply the authoritative human-change log onto the fresh seed.
+
+    Idempotent and staleness-aware: an `update` whose recorded pre-image no longer
+    matches the seed value is left unapplied and flagged `conflict` for re-review,
+    rather than silently overwriting an upstream change. (create / hard-delete /
+    relink land in phase 2 and are skipped here.)
+    """
+    cpath = corrections_db.default_path()
+    if not cpath.exists():
+        return {"applied": 0, "conflicts": 0, "skipped": 0}
+    run_id = f"replay-{datetime.now(timezone.utc).isoformat()[:19]}"
+    clog = corrections_db.connect(cpath)
+    applied = conflicts = skipped = 0
+    try:
+        for op in corrections_db.applied_operations(clog):
+            table, pk = op["db_table"], op["pk"]
+            key_cols = corrections_db.TABLE_PRIMARY_KEYS.get(table)
+            if not key_cols or not all(c in pk for c in key_cols):
+                skipped += 1
+                continue
+            where = " AND ".join(f"`{c}`=?" for c in key_cols)
+            params = [pk[c] for c in key_cols]
+            if op["op"] == "update":
+                field = op["field"]
+                cols = {row[1] for row in connection.execute(f"PRAGMA table_info(`{table}`)")}
+                if field not in cols:
+                    skipped += 1
+                    continue
+                current = connection.execute(f"SELECT `{field}` FROM `{table}` WHERE {where}", params).fetchone()
+                if current is None or _norm(current[0]) != _norm(op["before_value"]):
+                    corrections_db.add_event(
+                        clog, op["request_id"], event="conflict_flagged", by="db_import",
+                        new_status="conflict", run_id=run_id,
+                        note="Seed value differs from the recorded pre-image; re-review before re-applying.",
+                    )
+                    conflicts += 1
+                    continue
+                connection.execute(f"UPDATE `{table}` SET `{field}`=? WHERE {where}", [op["after_value"], *params])
+                applied += 1
+            elif op["op"] == "delete" and not op["hard"]:
+                connection.execute(f"UPDATE `{table}` SET {corrections_db.IS_DELETED_COLUMN}=1 WHERE {where}", params)
+                applied += 1
+            elif op["op"] == "restore":
+                connection.execute(f"UPDATE `{table}` SET {corrections_db.IS_DELETED_COLUMN}=0 WHERE {where}", params)
+                applied += 1
+            else:
+                skipped += 1  # create / hard delete / relink → phase 2
+    finally:
+        clog.close()
+    return {"applied": applied, "conflicts": conflicts, "skipped": skipped}
+
+
 def build(*, backup: bool = True) -> dict:
     dump = dump_path()
     out = db_path()
@@ -266,6 +338,16 @@ def build(*, backup: bool = True) -> dict:
     if validation_errors:
         raise RuntimeError("Import validation failed:\n  " + "\n  ".join(validation_errors))
 
+    # Working-DB layer on top of the seed: soft-delete flag + replay of the
+    # authoritative human-change log so corrections survive a reseed.
+    connection = sqlite3.connect(out)
+    try:
+        add_soft_delete_columns(connection)
+        replay_stats = replay_corrections(connection)
+        connection.commit()
+    finally:
+        connection.close()
+
     pk_hints = {
         "contract": "contract_id",
         "sub_contract": "contract_id",
@@ -289,6 +371,7 @@ def build(*, backup: bool = True) -> dict:
         "row_counts": counts,
         "insert_statements_rows_est": insert_counts,
         "max_ids": max_ids,
+        "corrections_replay": replay_stats,
     }
 
 

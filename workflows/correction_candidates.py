@@ -89,9 +89,16 @@ ITALIAN_MONTHS = {
     "gennaio": "01", "febbraio": "02", "marzo": "03", "aprile": "04",
     "maggio": "05", "giugno": "06", "luglio": "07", "agosto": "08",
     "settembre": "09", "ottobre": "10", "novembre": "11", "dicembre": "12",
+    # Historical spellings / transcription slips (mirrors word_pipeline).
+    "gennaro": "01", "genaio": "01", "febbraro": "02", "febbario": "02",
+    "febraio": "02", "magio": "05", "giungo": "06", "giguno": "06",
+    "agostro": "08", "ettembre": "09", "otobre": "10", "novembe": "11",
+    "november": "11", "decembre": "12",
 }
 ITALIAN_DATE_RE = re.compile(
-    r"\b(?P<day>[0-3]?\d)\s+(?P<month>[A-Za-zàèéìòù]+)\s+(?P<year>1[4-8]\d{2})\b", re.IGNORECASE
+    r"\b(?P<day>[0-3]?\d)\s+(?P<month>[A-Za-zàèéìòù]+)\s+(?P<year>1[4-8]\d{2})"
+    r"(?:\s*/\s*(?P<short_year>\d{2,4}))?\b",
+    re.IGNORECASE,
 )
 # Digit-anchored, span-level detectors: a revision span only counts as touching a
 # field if the *changed text* actually carries a date/duration/folio value — not
@@ -114,6 +121,40 @@ def parse_italian_date(text: str | None) -> str | None:
     if not 1 <= day <= 31:
         return None
     return f"{match.group('year')}-{month}-{day:02d}"
+
+
+def modern_registration_iso(text: str | None) -> str | None:
+    """Modern-calendar ISO for an act's stated date — the only value safe to
+    pre-fill into the database, which stores the modern calendar throughout
+    (docs/data_dictionary.md → Date conventions).
+
+    - A double-dated form ("19 febbraio 1694/95") states the modern year in its
+      suffix: use it (→ 1695-02-19).
+    - A single date in the Florentine new-year window (1 Jan – 24 Mar, pre-1750)
+      is ambiguous between stile fiorentino and modern: return None and leave the
+      pre-fill empty for the reviewer to adjudicate.
+    - Anything else is already a modern-calendar date.
+    """
+    if not text:
+        return None
+    match = ITALIAN_DATE_RE.search(text)
+    if not match:
+        return None
+    month = ITALIAN_MONTHS.get(match.group("month").lower())
+    if month is None:
+        return None
+    day = int(match.group("day"))
+    if not 1 <= day <= 31:
+        return None
+    year = int(match.group("year"))
+    short_year = match.group("short_year")
+    if short_year:
+        modern_year = int(short_year) if len(short_year) == 4 else int(f"{str(year)[:2]}{short_year}")
+        return f"{modern_year}-{month}-{day:02d}"
+    in_florentine_window = int(month) in (1, 2) or (int(month) == 3 and day <= 24)
+    if year < 1750 and in_florentine_window:
+        return None
+    return f"{year}-{month}-{day:02d}"
 
 
 # Inline revision-marker grammar (mirrors review_server.parse_revision_segments).
@@ -521,7 +562,9 @@ def enrich_family2(
                 f1 = family1_index.get((db_row_id, "registration_date_differs"))
                 if f1 is not None and not f1.get("revision_evidence"):
                     f1["revision_evidence"] = field_rev_ev(spans, DATE_SPAN_RE, author, rdate)
-                    iso = parse_italian_date(f1.get("word_value"))
+                    # Pre-fill only the modern-calendar reading (the DB's
+                    # calendar); ambiguous stile-fiorentino dates pre-fill nothing.
+                    iso = modern_registration_iso(f1.get("word_value"))
                     if iso and not f1.get("suggested_value"):
                         f1["suggested_value"] = iso
                     enriched += 1

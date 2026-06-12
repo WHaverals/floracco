@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { loadDbRecord, searchDb } from "../api";
+import { hideRecord, loadDbRecord, restoreRecord, searchDb } from "../api";
 import ProposeFixDrawer, { type ProposeSeed } from "../components/ProposeFixDrawer";
 import PersonPicker, { type PersonPick } from "../components/PersonPicker";
 import WordSourceDrawer from "../components/WordSourceDrawer";
-import type { DbBrowseTable, DbField, DbLinkStatus, DbRecord, DbSearchResult } from "../types";
+import type {
+  ChangeHistoryItem,
+  DbBrowseTable,
+  DbField,
+  DbLinkStatus,
+  DbRecord,
+  DbSearchResult,
+} from "../types";
 
 const STATUS_LABEL: Record<DbLinkStatus, string> = {
   confirmed: "Confirmed",
@@ -40,6 +47,12 @@ export default function Database() {
   const [openSourceId, setOpenSourceId] = useState<string | null>(null);
   const [proposeSeed, setProposeSeed] = useState<ProposeSeed | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
+  const [reason, setReason] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
   const debounce = useRef<number | undefined>(undefined);
 
   const refreshRecord = useCallback(() => {
@@ -53,8 +66,8 @@ export default function Database() {
     setTable(routeTable);
   }, [routeTable]);
 
-  const runSearch = useCallback((nextTable: DbBrowseTable, term: string) => {
-    searchDb(nextTable, term)
+  const runSearch = useCallback((nextTable: DbBrowseTable, term: string, includeHidden: boolean) => {
+    searchDb(nextTable, term, includeHidden)
       .then((response) => {
         setResults(response.results);
         setTotal(response.total);
@@ -66,11 +79,49 @@ export default function Database() {
 
   useEffect(() => {
     window.clearTimeout(debounce.current);
-    debounce.current = window.setTimeout(() => runSearch(table, search), 220);
+    debounce.current = window.setTimeout(() => runSearch(table, search, showHidden), 220);
     return () => window.clearTimeout(debounce.current);
-  }, [table, search, runSearch]);
+  }, [table, search, showHidden, runSearch]);
+
+  // Database is where you find AND act on a specific record. Field fixes and
+  // hide/restore both flow through the governed, audited op-log; the "Suggest
+  // fix" edit mode just reveals the controls so the default view stays clean.
+  const setHidden = useCallback(
+    async (hidden: boolean) => {
+      if (!record) return;
+      setActionError("");
+      setActionMessage("");
+      if (!reviewer.trim()) {
+        setActionError("Enter your initials first.");
+        return;
+      }
+      if (hidden && !reason.trim()) {
+        setActionError("A reason is required to hide a record.");
+        return;
+      }
+      localStorage.setItem("floracco_reviewer", reviewer.trim());
+      try {
+        const body = { reviewer: reviewer.trim(), reason: reason.trim() };
+        if (hidden) {
+          await hideRecord(record.table, record.id, body);
+        } else {
+          await restoreRecord(record.table, record.id, body);
+        }
+        setReason("");
+        setActionMessage(hidden ? "Record hidden." : "Record restored.");
+        refreshRecord();
+        runSearch(table, search, showHidden);
+      } catch (err) {
+        setActionError((err as Error).message);
+      }
+    },
+    [record, reviewer, reason, refreshRecord, runSearch, table, search, showHidden],
+  );
 
   useEffect(() => {
+    setEditMode(false);
+    setActionError("");
+    setActionMessage("");
     if (!routeId) {
       setRecord(null);
       return;
@@ -147,7 +198,7 @@ export default function Database() {
     <div className="db-browser">
       <aside className="db-rail">
         <div className="db-rail-head">
-          <p className="eyebrow">Database · read-only</p>
+          <p className="eyebrow">Database</p>
           <div className="db-tabs">
             {TABS.map((tab) => (
               <button
@@ -167,6 +218,10 @@ export default function Database() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
+          <label className="db-show-hidden">
+            <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
+            Show hidden
+          </label>
           <p className="db-count muted">
             {listError ? listError : `Showing ${shown} of ${total.toLocaleString()}`}
           </p>
@@ -198,8 +253,9 @@ export default function Database() {
             <p className="eyebrow">Record viewer</p>
             <h2>Pick a record to inspect</h2>
             <p className="muted">
-              This view is read-only. Foreign keys are resolved to readable values, and any linked
-              Word source entries are listed. Edits happen in the Corrections tool, not here.
+              Foreign keys are resolved to readable values; linked Word sources and the full change
+              history are shown. Use <strong>Suggest fix</strong> on a record to propose a field
+              correction (with its Word source) or hide it — every change is governed and audited.
             </p>
           </div>
         )}
@@ -210,6 +266,19 @@ export default function Database() {
             onOpenSource={setOpenSourceId}
             onProposeFix={proposeFieldFix}
             onCorrectName={record.table === "contract" ? () => setPickerOpen(true) : undefined}
+            editMode={editMode}
+            onToggleEdit={() => {
+              setActionError("");
+              setActionMessage("");
+              setEditMode((v) => !v);
+            }}
+            reviewer={reviewer}
+            onReviewerChange={setReviewer}
+            reason={reason}
+            onReasonChange={setReason}
+            onSetHidden={setHidden}
+            actionError={actionError}
+            actionMessage={actionMessage}
           />
         )}
       </section>
@@ -236,38 +305,156 @@ export default function Database() {
   );
 }
 
+function historyLabel(item: ChangeHistoryItem): string {
+  if (item.op === "delete") return "Hidden (soft-deleted)";
+  if (item.op === "restore") return "Restored";
+  if (item.op === "create") return "Created";
+  if (item.op === "update" || item.op === "relink") {
+    return `${item.field}: ${String(item.before_value ?? "∅")} → ${String(item.after_value ?? "∅")}`;
+  }
+  return item.op;
+}
+
 function RecordDetail({
   record,
   onOpen,
   onOpenSource,
   onProposeFix,
   onCorrectName,
+  editMode,
+  onToggleEdit,
+  reviewer,
+  onReviewerChange,
+  reason,
+  onReasonChange,
+  onSetHidden,
+  actionError,
+  actionMessage,
 }: {
   record: DbRecord;
   onOpen: (table: DbBrowseTable, id: string) => void;
   onOpenSource: (sourceEntryId: string) => void;
   onProposeFix: (field: DbField) => void;
   onCorrectName?: () => void;
+  editMode: boolean;
+  onToggleEdit: () => void;
+  reviewer: string;
+  onReviewerChange: (value: string) => void;
+  reason: string;
+  onReasonChange: (value: string) => void;
+  onSetHidden: (hidden: boolean) => void;
+  actionError: string;
+  actionMessage: string;
 }) {
+  const history = record.change_history ?? [];
+  const deps = record.dependents;
+  const depParts = deps
+    ? [
+        deps.sub_contract && `${deps.sub_contract} sub-contract(s)`,
+        deps.investor && `${deps.investor} investor(s)`,
+        deps.investment && `${deps.investment} investment(s)`,
+        deps.contract_place && `${deps.contract_place} place link(s)`,
+      ].filter(Boolean)
+    : [];
+
   return (
-    <article className="db-record">
+    <article className={`db-record${record.is_deleted ? " is-hidden-record" : ""}${editMode ? " is-editing" : ""}`}>
       <header className="db-record-head">
         <p className="eyebrow">{record.subtitle}</p>
-        <h2>{record.title}</h2>
+        <h2>
+          {record.title}
+          {record.is_deleted && <span className="db-hidden-badge">Hidden</span>}
+        </h2>
         <code className="db-row-id">{record.row_id}</code>
-        {onCorrectName && (
-          <button type="button" className="field-fix db-correct-name" onClick={onCorrectName}>
-            Correct a person’s name →
-          </button>
-        )}
+        <div className="db-record-tools">
+          {!record.is_deleted && (
+            <button
+              type="button"
+              className={editMode ? "pill-button is-active" : "pill-button"}
+              onClick={onToggleEdit}
+            >
+              {editMode ? "Done" : "Suggest fix"}
+            </button>
+          )}
+          {editMode && onCorrectName && (
+            <button type="button" className="field-fix db-correct-name" onClick={onCorrectName}>
+              Correct a person’s name →
+            </button>
+          )}
+        </div>
       </header>
+
+      {actionMessage && <div className="notice success">{actionMessage}</div>}
+
+      {record.is_deleted && (
+        <div className="db-hidden-banner">
+          <p>
+            <strong>This record is hidden</strong> — excluded from search, browse, and matching, but kept in
+            full for the audit trail.
+          </p>
+          <div className="db-record-actions">
+            <input
+              className="actionbar-reviewer"
+              value={reviewer}
+              onChange={(e) => onReviewerChange(e.target.value)}
+              placeholder="initials"
+            />
+            <button type="button" className="pill-button is-active" onClick={() => onSetHidden(false)}>
+              Restore record
+            </button>
+          </div>
+          {actionError && <p className="error-text">{actionError}</p>}
+        </div>
+      )}
+
+      {editMode && !record.is_deleted && (
+        <div className="db-edit-bar">
+          <p className="muted">
+            Edit mode — pick a field below to suggest a fix (each change cites its Word source), or hide this
+            record.
+          </p>
+          <details className="db-record-danger">
+            <summary>Hide this record</summary>
+            <div className="db-danger-body">
+              <p className="muted">
+                Hiding <strong>soft-deletes</strong> the record — reversible, removed from search and matching,
+                kept for audit. (Permanent deletion is a separate, future step.)
+              </p>
+              {depParts.length > 0 && (
+                <p className="db-deps-warning">
+                  ⚠ This contract has {depParts.join(", ")}. They are <strong>not</strong> hidden automatically
+                  yet (cascade is coming) and will point at a hidden contract.
+                </p>
+              )}
+              <div className="db-record-actions">
+                <input
+                  className="actionbar-reviewer"
+                  value={reviewer}
+                  onChange={(e) => onReviewerChange(e.target.value)}
+                  placeholder="initials"
+                />
+                <input
+                  className="actionbar-note"
+                  value={reason}
+                  onChange={(e) => onReasonChange(e.target.value)}
+                  placeholder="reason (required) — e.g. duplicate of #1922"
+                />
+                <button type="button" className="pill-button is-danger" onClick={() => onSetHidden(true)}>
+                  Hide record
+                </button>
+              </div>
+            </div>
+          </details>
+          {actionError && <p className="error-text">{actionError}</p>}
+        </div>
+      )}
 
       <dl className="db-fields">
         {record.fields.map((field) => (
           <div key={field.label} className="db-field">
             <dt>
               {field.label}
-              {field.editable && (
+              {editMode && field.editable && (
                 <button
                   type="button"
                   className="field-fix"
@@ -376,6 +563,24 @@ function RecordDetail({
         <section className="db-block">
           <h3>Stored narrative (document field)</h3>
           <p className="reading-text narrative db-narrative">{record.document}</p>
+        </section>
+      )}
+
+      {history.length > 0 && (
+        <section className="db-block db-history">
+          <h3>Change history</h3>
+          <ul className="db-history-list">
+            {history.map((item) => (
+              <li key={item.request_id} className={`db-history-item op-${item.op} status-${item.status}`}>
+                <span className="db-history-op">{historyLabel(item)}</span>
+                <span className="db-history-meta">
+                  {item.created_by} · {item.created_at.slice(0, 16).replace("T", " ")}
+                  {item.status !== "applied" ? ` · ${item.status}` : ""}
+                </span>
+                {item.reason && <span className="db-history-reason">“{item.reason}”</span>}
+              </li>
+            ))}
+          </ul>
         </section>
       )}
     </article>
