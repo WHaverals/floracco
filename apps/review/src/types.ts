@@ -594,3 +594,57 @@ export type SearchResponse = {
   term_counts: { term: string; count: number }[] | null;
   id_jumps: IdJump[];
 };
+
+// --- Adding investors ---------------------------------------------------------
+
+export type PersonHit = {
+  person_id: string;
+  display_name: string;
+  father_mother: string;
+  residences: string;
+  appearances: number;
+  is_woman?: boolean;
+};
+
+export type ContractInvestment = {
+  investment_id: string;
+  type: string;
+  cash: number | null;
+  non_cash: string;
+  partnership_name: string;
+  members: string;
+};
+
+export type NewPersonPayload = {
+  first_name: string;
+  father_mother: string;
+  last_name: string;
+  is_woman: boolean;
+};
+
+export type InvestorCreatePayload = {
+  reviewer: string;
+  contract_id: number;
+  person_id: number | null;
+  new_person: NewPersonPayload | null;
+  role: string;
+  join_investment_id: number | null;
+  investment_cash: number | null;
+  cash_unspecified: boolean;
+  investment_non_cash: string;
+  partnership_name: string;
+  title: string;
+  residence: string;
+  origin: string;
+  profession: string;
+  via_proxy: boolean;
+  citizen_florence: boolean;
+  is_widow: boolean;
+  is_guardian: boolean;
+  is_jewish: boolean;
+  is_convert: boolean;
+  heirs: boolean;
+  heirs_of: boolean;
+  and_c: boolean;
+  note: string;
+};

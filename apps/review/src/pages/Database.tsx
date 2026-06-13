@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { hideRecord, imageUrl, loadDbRecord, restoreRecord, searchDb } from "../api";
+import AddInvestorPanel from "../components/AddInvestorPanel";
 import CreateRecordForm from "../components/CreateRecordForm";
 import InlineFieldEditor from "../components/InlineFieldEditor";
 import ManuscriptLightbox from "../components/ManuscriptLightbox";
@@ -322,11 +323,14 @@ function RecordDetail({
 }) {
   const [manuscriptPath, setManuscriptPath] = useState<string | null>(null);
   const [editingColumn, setEditingColumn] = useState<string | null>(null);
+  const [addingInvestor, setAddingInvestor] = useState(false);
+  const [investorMessage, setInvestorMessage] = useState("");
   const history = record.change_history ?? [];
   // A DB-native row was created on the platform after the Word-corpus freeze:
   // its provenance is the create op's source line, not a Word summary.
   const createdOp = history.find((item) => item.op === "create");
   const hasSubSection = record.sections.some((s) => s.title.startsWith("Sub-contracts"));
+  const hasInvestorsSection = record.sections.some((s) => s.title.startsWith("Investors"));
   const manuscriptImages = record.manuscript_images ?? [];
   const documentEditable = !record.is_deleted && (record.table === "contract" || record.table === "sub_contract");
   const documentCorrection = record.document_correction ?? null;
@@ -607,6 +611,16 @@ function RecordDetail({
                 ✎ Fix a name
               </button>
             )}
+            {record.table === "contract" && section.title.startsWith("Investors") && !record.is_deleted && (
+              <button
+                type="button"
+                className="field-fix"
+                onClick={() => setAddingInvestor((v) => !v)}
+                title="Add a person to this contract (role + capital)"
+              >
+                + Add investor
+              </button>
+            )}
             {record.table === "contract" && section.title.startsWith("Sub-contracts") && !record.is_deleted && (
               <button
                 type="button"
@@ -649,6 +663,42 @@ function RecordDetail({
           </table>
         </section>
       ))}
+
+      {record.table === "contract" && !hasInvestorsSection && !record.is_deleted && (
+        <section className="db-block">
+          <div className="db-block-head">
+            <h3>Investors (0)</h3>
+            <button
+              type="button"
+              className="field-fix"
+              onClick={() => setAddingInvestor((v) => !v)}
+              title="Add a person to this contract (role + capital)"
+            >
+              + Add investor
+            </button>
+          </div>
+          <p className="muted">
+            No investors are recorded yet — every accomandita needs at least an accomandatario and an
+            accomandante.
+          </p>
+        </section>
+      )}
+
+      {investorMessage && <div className="notice success">{investorMessage}</div>}
+      {addingInvestor && record.table === "contract" && !record.is_deleted && (
+        <AddInvestorPanel
+          contractId={record.id}
+          contractTitle={record.title}
+          onSaved={(message) => {
+            setInvestorMessage(message);
+            onRefresh();
+          }}
+          onClose={() => {
+            setAddingInvestor(false);
+            setInvestorMessage("");
+          }}
+        />
+      )}
 
       {record.table === "contract" && !hasSubSection && !record.is_deleted && (
         <section className="db-block">

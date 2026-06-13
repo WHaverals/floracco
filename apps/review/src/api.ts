@@ -184,3 +184,34 @@ export function searchGlobal(q: string, expand = ""): Promise<import("./types").
   const params = new URLSearchParams({ q, expand });
   return request(`/api/search?${params.toString()}`);
 }
+
+// --- Adding investors ---------------------------------------------------------
+
+export function searchPersonsRich(q: string): Promise<{ results: import("./types").PersonHit[] }> {
+  const params = new URLSearchParams({ q });
+  return request(`/api/db/person-search?${params.toString()}`);
+}
+
+export function sameSurname(lastName: string): Promise<{ results: import("./types").PersonHit[] }> {
+  const params = new URLSearchParams({ last_name: lastName });
+  return request(`/api/db/same-surname?${params.toString()}`);
+}
+
+export function loadContractInvestments(
+  contractId: string,
+): Promise<{ investments: import("./types").ContractInvestment[] }> {
+  return request(`/api/db/contract-investments/${encodeURIComponent(contractId)}`);
+}
+
+export function createInvestor(
+  payload: import("./types").InvestorCreatePayload,
+): Promise<{
+  ok: boolean;
+  investor_id: string;
+  person_id: string;
+  person_created: boolean;
+  investment_id: string;
+  joined_existing: boolean;
+}> {
+  return request("/api/db/create/investor", { method: "POST", body: JSON.stringify(payload) });
+}

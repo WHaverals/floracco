@@ -3756,3 +3756,50 @@ progress {
 }
 .top-nav-search input::placeholder { color: rgba(240, 230, 212, 0.55); }
 .top-nav-search input:focus { border-color: #d6aa7d; outline: none; }
+
+/* --- Add-investor panel ------------------------------------------------------- */
+.add-investor-panel {
+  background: #fbf6ec;
+  border: 1px solid #e6d8be;
+  border-radius: 14px;
+  margin: 14px 0;
+  padding: 14px 16px;
+}
+.add-investor-head {
+  align-items: baseline;
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.add-investor-head .drawer-close { margin-left: auto; }
+.add-investor-step {
+  border-top: 1px dashed #e3d5bc;
+  display: grid;
+  gap: 8px;
+  padding: 10px 0;
+}
+.person-search { display: grid; gap: 6px; position: relative; }
+.person-search input,
+.new-person-form input {
+  border: 1px solid #d8c7ac;
+  border-radius: 8px;
+  font: inherit;
+  padding: 7px 10px;
+}
+.person-suggestions { position: static; }
+.picked-person {
+  align-items: baseline;
+  background: #f1e9d8;
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+}
+.confirm-new-person { display: block; font-weight: 600; margin-top: 8px; }
+.tranche-mode { display: flex; gap: 18px; }
+.inline-check { font-size: 0.82rem; white-space: nowrap; }
+.add-investor-flags { display: grid; gap: 4px; }
+.add-investor-more summary { color: #9d7355; cursor: pointer; font-size: 0.85rem; }
+.add-investor-note { flex: 1; }
+.add-investor-checkbox span { padding-top: 6px; }

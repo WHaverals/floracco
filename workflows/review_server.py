@@ -2358,7 +2358,7 @@ def _insert_and_log(
     connection: sqlite3.Connection,
     *,
     table: str,
-    pk_column: str,
+    pk: dict[str, Any],
     data: dict[str, Any],
     reviewer: str,
     reason: str,
@@ -2367,14 +2367,15 @@ def _insert_and_log(
 
     main.db first, log second; if logging fails the inserted row is removed
     again (compensating delete), so no row can exist without its audit entry.
+    Composite primary keys (investor_group, contract_place) are supported.
     """
     names = ", ".join(f"`{c}`" for c in data)
     marks = ", ".join("?" for _ in data)
+    where = " AND ".join(f"`{c}` = ?" for c in pk)
+    pk_params = [data[c] for c in pk]
     with connection:
         connection.execute(f"INSERT INTO `{table}` ({names}) VALUES ({marks})", list(data.values()))
-    row = connection.execute(
-        f"SELECT * FROM `{table}` WHERE `{pk_column}` = ?", (data[pk_column],)
-    ).fetchone()
+    row = connection.execute(f"SELECT * FROM `{table}` WHERE {where}", pk_params).fetchone()
     snapshot = {key: row[key] for key in row.keys()}
     clog = open_corrections()
     try:
@@ -2382,7 +2383,7 @@ def _insert_and_log(
             clog,
             op="create",
             db_table=table,
-            pk={pk_column: int(data[pk_column])},
+            pk={c: int(data[c]) for c in pk},
             by=reviewer,
             after_value=snapshot,
             reason=reason,
@@ -2390,7 +2391,7 @@ def _insert_and_log(
         )
     except Exception:
         with connection:
-            connection.execute(f"DELETE FROM `{table}` WHERE `{pk_column}` = ?", (data[pk_column],))
+            connection.execute(f"DELETE FROM `{table}` WHERE {where}", pk_params)
         raise
     finally:
         clog.close()
@@ -2416,7 +2417,7 @@ def _resolve_lookup_id(
     _insert_and_log(
         connection,
         table=meta["table"],
-        pk_column=meta["id"],
+        pk={meta["id"]: new_id},
         data={meta["id"]: new_id, meta["value"]: value},
         reviewer=reviewer,
         reason=reason,
@@ -2496,7 +2497,7 @@ def create_contract(payload: ContractCreate) -> dict[str, Any]:
         _insert_and_log(
             connection,
             table="contract",
-            pk_column="contract_id",
+            pk={"contract_id": new_id},
             data=data,
             reviewer=payload.reviewer.strip(),
             reason=reason,
@@ -2541,7 +2542,7 @@ def create_sub_contract(payload: SubContractCreate) -> dict[str, Any]:
         _insert_and_log(
             connection,
             table="sub_contract",
-            pk_column="contract_id",
+            pk={"contract_id": new_id},
             data=data,
             reviewer=payload.reviewer.strip(),
             reason=f"source: {payload.source.strip()}",
@@ -2549,6 +2550,356 @@ def create_sub_contract(payload: SubContractCreate) -> dict[str, Any]:
     finally:
         connection.close()
     return {"ok": True, "id": str(new_id), "row_id": f"sub_contract:{new_id}"}
+
+
+# ---------------------------------------------------------------------------
+# Adding investors (person + role + capital, atomically)
+#
+# The data's shape (audited 2026-06-12): every contract has ≥2 investors, both
+# roles on 99.4%; each investor joins EXACTLY ONE investment; 11% of
+# investments are joint (shared tranches, up to 7 people); GP cash is 0 by
+# convention in 64% of cases (the accomandatario contributes industria);
+# `is_joint` is DERIVED from the group structure, never asked (the legacy flag
+# disagrees with reality in 146 rows). Person reuse is real (26% of appearing
+# persons recur), so the flow is search-first with a same-surname wall before
+# any new person is minted (1,307 identical-name pairs already exist).
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/db/person-search")
+def person_search(q: str = "", limit: int = Query(default=12, ge=1, le=50)) -> dict[str, Any]:
+    """Whole-database person search with the disambiguating context an encoder
+    needs to follow the 2014 rule ("search for existing before creating"):
+    patronymic, residence(s), and how many contracts the person appears on."""
+    term = q.strip()
+    if len(term) < 2:
+        return {"results": []}
+    # "baccio aldobrandini" spans two columns — every word must match SOME name
+    # field (AND of per-word ORs), or the query is the exact person id.
+    words = term.split()
+    word_clause = (
+        "(p.first_name LIKE ? OR p.last_name LIKE ? OR p.father_mother LIKE ? OR p.nickname LIKE ?)"
+    )
+    where = " AND ".join(word_clause for _ in words)
+    params: list[Any] = []
+    for word in words:
+        params.extend([f"%{word}%"] * 4)
+    connection = open_db()
+    try:
+        rows = connection.execute(
+            f"""SELECT p.person_id, p.first_name, p.father_mother, p.grandfather, p.last_name,
+                      p.nickname, p.is_woman,
+                      count(DISTINCT i.contract_id) AS appearances,
+                      group_concat(DISTINCT pl.place_name) AS residences
+               FROM person p
+               LEFT JOIN investor i ON i.person_id = p.person_id
+               LEFT JOIN place pl ON pl.place_id = i.place_of_residence
+               WHERE p.is_deleted = 0 AND (({where}) OR CAST(p.person_id AS TEXT) = ?)
+               GROUP BY p.person_id
+               ORDER BY CASE WHEN CAST(p.person_id AS TEXT) = ? THEN 0 ELSE 1 END,
+                        appearances DESC, p.last_name, p.first_name
+               LIMIT ?""",
+            (*params, term, term, limit),
+        ).fetchall()
+    finally:
+        connection.close()
+    return {
+        "results": [
+            {
+                "person_id": str(r["person_id"]),
+                "display_name": person_display_name(r["first_name"], r["last_name"], r["nickname"]),
+                "father_mother": (r["father_mother"] or "").strip(),
+                "residences": (r["residences"] or "").replace(",", ", "),
+                "appearances": r["appearances"],
+                "is_woman": bool(r["is_woman"]),
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/api/db/same-surname")
+def same_surname(last_name: str = "") -> dict[str, Any]:
+    """The near-match wall: existing persons whose surname matches (diacritic
+    and case insensitive), shown before a new person may be created."""
+    needle = _lookup_norm(last_name)
+    if not needle:
+        return {"results": []}
+    connection = open_db()
+    try:
+        rows = connection.execute(
+            """SELECT p.person_id, p.first_name, p.father_mother, p.last_name, p.nickname,
+                      count(DISTINCT i.contract_id) AS appearances,
+                      group_concat(DISTINCT pl.place_name) AS residences
+               FROM person p
+               LEFT JOIN investor i ON i.person_id = p.person_id
+               LEFT JOIN place pl ON pl.place_id = i.place_of_residence
+               WHERE p.is_deleted = 0 AND trim(coalesce(p.last_name, '')) <> ''
+               GROUP BY p.person_id""",
+        ).fetchall()
+    finally:
+        connection.close()
+    hits = [
+        {
+            "person_id": str(r["person_id"]),
+            "display_name": person_display_name(r["first_name"], r["last_name"], r["nickname"]),
+            "father_mother": (r["father_mother"] or "").strip(),
+            "residences": (r["residences"] or "").replace(",", ", "),
+            "appearances": r["appearances"],
+        }
+        for r in rows
+        if _lookup_norm(r["last_name"]) == needle
+    ]
+    hits.sort(key=lambda h: (-h["appearances"], h["display_name"]))
+    return {"results": hits[:12]}
+
+
+@app.get("/api/db/contract-investments/{contract_id}")
+def contract_investments(contract_id: str) -> dict[str, Any]:
+    """The contract's existing capital tranches, readable, for the
+    "shares an existing tranche" path (11% of investments are joint)."""
+    connection = open_db()
+    try:
+        rows = connection.execute(
+            """SELECT v.investment_id, v.type, v.investment_cash, v.investment_non_cash,
+                      v.partnership_name,
+                      group_concat(p.first_name || ' ' || coalesce(p.last_name, ''), '; ') AS members
+               FROM investment v
+               LEFT JOIN investor_group g ON g.investment_id = v.investment_id
+               LEFT JOIN investor i ON i.investor_id = g.investor_id
+               LEFT JOIN person p ON p.person_id = i.person_id
+               WHERE v.contract_id = ? AND v.is_deleted = 0
+               GROUP BY v.investment_id
+               ORDER BY v.investment_id""",
+            (contract_id,),
+        ).fetchall()
+    finally:
+        connection.close()
+    return {
+        "investments": [
+            {
+                "investment_id": str(r["investment_id"]),
+                "type": r["type"],
+                "cash": r["investment_cash"],
+                "non_cash": (r["investment_non_cash"] or "").strip(),
+                "partnership_name": (r["partnership_name"] or "").strip(),
+                "members": (r["members"] or "").strip(),
+            }
+            for r in rows
+        ]
+    }
+
+
+class NewPerson(BaseModel):
+    first_name: str = ""
+    father_mother: str = ""
+    last_name: str = ""
+    is_woman: bool = False
+
+
+class InvestorCreate(BaseModel):
+    reviewer: str = Field(min_length=1)
+    contract_id: int
+    person_id: int | None = None
+    new_person: NewPerson | None = None
+    # Own tranche: role + capital. Joining an existing tranche: role and capital
+    # come from the investment itself.
+    role: str = ""  # gp | lp
+    join_investment_id: int | None = None
+    investment_cash: int | None = None
+    cash_unspecified: bool = False
+    investment_non_cash: str = ""
+    partnership_name: str = ""
+    # Person-on-this-contract attributes (raw interpretive phrases for lookups).
+    title: str = ""
+    residence: str = ""
+    origin: str = ""
+    profession: str = ""
+    via_proxy: bool = False
+    citizen_florence: bool = False
+    is_widow: bool = False
+    is_guardian: bool = False
+    is_jewish: bool = False
+    is_convert: bool = False
+    heirs: bool = False
+    heirs_of: bool = False
+    and_c: bool = False
+    note: str = ""
+
+
+@app.post("/api/db/create/investor")
+def create_investor(payload: InvestorCreate) -> dict[str, Any]:
+    """Add a person to a contract: person (reused or new) + investor row +
+    capital tranche (own, or joining an existing one) + the group link — one
+    audited operation group, replay-safe. `is_joint` is derived from the
+    resulting group structure, including on existing siblings."""
+    if payload.person_id is None and payload.new_person is None:
+        raise HTTPException(status_code=400, detail="Pick an existing person or describe a new one.")
+    if payload.join_investment_id is None and payload.role not in ("gp", "lp"):
+        raise HTTPException(status_code=400, detail="Role must be gp or lp.")
+    connection = open_db()
+    try:
+        contract = connection.execute(
+            "SELECT contract_id FROM contract WHERE contract_id = ?",
+            (payload.contract_id,),
+        ).fetchone()
+        if not contract:
+            raise HTTPException(status_code=404, detail="Contract not found.")
+        reviewer = payload.reviewer.strip()
+        reason = f"added investor on contract {payload.contract_id}"
+        if payload.note.strip():
+            reason += f"; {payload.note.strip()}"
+
+        # 1. The person — reused, or created behind the same-surname wall.
+        if payload.person_id is not None:
+            person_row = connection.execute(
+                "SELECT person_id FROM person WHERE person_id = ? AND is_deleted = 0",
+                (payload.person_id,),
+            ).fetchone()
+            if not person_row:
+                raise HTTPException(status_code=404, detail="Person not found.")
+            person_id = int(payload.person_id)
+            person_created = False
+        else:
+            np = payload.new_person
+            if not (np.first_name.strip() or np.last_name.strip()):
+                raise HTTPException(status_code=400, detail="A new person needs at least a name.")
+            person_id = _next_id(connection, "person", "person_id")
+            _insert_and_log(
+                connection,
+                table="person",
+                pk={"person_id": person_id},
+                data={
+                    "person_id": person_id,
+                    "first_name": np.first_name.strip() or None,
+                    "father_mother": np.father_mother.strip() or None,
+                    "last_name": np.last_name.strip() or None,
+                    "is_woman": 1 if np.is_woman else 0,
+                    "temp": 1,
+                    "is_deleted": 0,
+                },
+                reviewer=reviewer,
+                reason=reason,
+            )
+            person_created = True
+
+        # 2. Lookups — exact raw-text reuse or verbatim creation, never normalized.
+        title_id = _resolve_lookup_id(connection, "title", payload.title, reviewer=reviewer, reason=reason)
+        residence_id = _resolve_lookup_id(connection, "place", payload.residence, reviewer=reviewer, reason=reason)
+        origin_id = _resolve_lookup_id(connection, "place", payload.origin, reviewer=reviewer, reason=reason)
+
+        # 3. The capital tranche — own, or an existing one being joined.
+        if payload.join_investment_id is not None:
+            investment = connection.execute(
+                "SELECT investment_id, type FROM investment WHERE investment_id = ? AND contract_id = ? AND is_deleted = 0",
+                (payload.join_investment_id, payload.contract_id),
+            ).fetchone()
+            if not investment:
+                raise HTTPException(status_code=404, detail="That investment does not belong to this contract.")
+            investment_id = int(investment["investment_id"])
+            joining = True
+        else:
+            investment_id = _next_id(connection, "investment", "investment_id")
+            _insert_and_log(
+                connection,
+                table="investment",
+                pk={"investment_id": investment_id},
+                data={
+                    "investment_id": investment_id,
+                    "contract_id": payload.contract_id,
+                    "type": payload.role,
+                    "investment_cash": None if payload.cash_unspecified else (payload.investment_cash or 0),
+                    "investment_non_cash": payload.investment_non_cash.strip() or None,
+                    "partnership_name": payload.partnership_name.strip() or None,
+                    "temp": 1,
+                    "is_deleted": 0,
+                },
+                reviewer=reviewer,
+                reason=reason,
+            )
+            joining = False
+
+        # 4. The investor row (the person's appearance on this contract).
+        investor_id = _next_id(connection, "investor", "investor_id")
+        _insert_and_log(
+            connection,
+            table="investor",
+            pk={"investor_id": investor_id},
+            data={
+                "investor_id": investor_id,
+                "person_id": person_id,
+                "contract_id": payload.contract_id,
+                "title": title_id,
+                "place_of_residence": residence_id,
+                "place_of_origin": origin_id,
+                "profession": payload.profession.strip() or None,
+                "citizen_florence": 1 if payload.citizen_florence else 0,
+                "is_widow": 1 if payload.is_widow else 0,
+                "is_guardian": 1 if payload.is_guardian else 0,
+                "is_jewish": 1 if payload.is_jewish else 0,
+                "jewish_db": 0,
+                "is_convert": 1 if payload.is_convert else 0,
+                "via_proxy": 1 if payload.via_proxy else 0,
+                "is_joint": 1 if joining else 0,
+                "heirs": 1 if payload.heirs else 0,
+                "heirs_of": 1 if payload.heirs_of else 0,
+                "and_c": 1 if payload.and_c else 0,
+                "temp": 1,
+                "is_deleted": 0,
+            },
+            reviewer=reviewer,
+            reason=reason,
+        )
+
+        # 5. The group link.
+        _insert_and_log(
+            connection,
+            table="investor_group",
+            pk={"investor_id": investor_id, "investment_id": investment_id},
+            data={"investor_id": investor_id, "investment_id": investment_id},
+            reviewer=reviewer,
+            reason=reason,
+        )
+
+        # 6. Derive is_joint on existing siblings of a joined tranche (the flag
+        # is structural; the legacy data drifted precisely because it was manual).
+        if joining:
+            siblings = connection.execute(
+                """SELECT i.investor_id FROM investor_group g JOIN investor i ON i.investor_id = g.investor_id
+                   WHERE g.investment_id = ? AND i.investor_id <> ? AND i.is_joint = 0""",
+                (investment_id, investor_id),
+            ).fetchall()
+            clog = open_corrections()
+            try:
+                for sib in siblings:
+                    with connection:
+                        connection.execute(
+                            "UPDATE investor SET is_joint = 1 WHERE investor_id = ?",
+                            (sib["investor_id"],),
+                        )
+                    corrections_db.record_operation(
+                        clog,
+                        op="update",
+                        db_table="investor",
+                        pk={"investor_id": int(sib["investor_id"])},
+                        by=reviewer,
+                        field="is_joint",
+                        before_value="0",
+                        after_value="1",
+                        reason=f"joint tranche gained a member ({reason})",
+                    )
+            finally:
+                clog.close()
+    finally:
+        connection.close()
+    return {
+        "ok": True,
+        "investor_id": str(investor_id),
+        "person_id": str(person_id),
+        "person_created": person_created,
+        "investment_id": str(investment_id),
+        "joined_existing": payload.join_investment_id is not None,
+    }
 
 
 @app.get("/api/db/contract-persons/{contract_id}")
