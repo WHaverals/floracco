@@ -26,6 +26,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/** The signed-in reviewer (from Cloudflare Access), or unauthenticated in local dev. */
+export function loadMe(): Promise<{ authenticated: boolean; email: string }> {
+  return request("/api/me");
+}
+
 export function loadSummary(): Promise<ReviewSummary> {
   return request<ReviewSummary>("/api/summary");
 }

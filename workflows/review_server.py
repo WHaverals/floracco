@@ -26,9 +26,10 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from workflows import corrections_db, search_index
@@ -36,41 +37,34 @@ from workflows.word_pipeline import act_components_for_review, folio_sort_key, p
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-QA_PACKET_PATH = PROJECT_ROOT / "data/derived/word-pipeline/06_qa_packet/word_db_match_qa_packet.jsonl"
-LINK_CANDIDATES_PATH = (
-    PROJECT_ROOT
-    / "data/derived/word-pipeline/05_db_candidate_matches/source_entry_db_link_candidates.jsonl"
-)
-SOURCE_ENTRIES_PATH = (
-    PROJECT_ROOT / "data/derived/word-pipeline/04_source_entries/source_entries.jsonl"
-)
-IMAGE_CANDIDATES_PATH = (
-    PROJECT_ROOT
-    / "data/derived/word-pipeline/07_image_links/source_entry_image_candidates.jsonl"
-)
-REGISTER_SUMMARY_PATH = (
-    PROJECT_ROOT / "data/derived/word-pipeline/05_db_candidate_matches/register_match_summary.csv"
-)
-WORD_COMMENTS_PATH = (
-    PROJECT_ROOT / "data/derived/word-pipeline/03_extracted_registers/comments.jsonl"
-)
-WORD_NOTES_PATH = (
-    PROJECT_ROOT / "data/derived/word-pipeline/03_extracted_registers/footnotes.jsonl"
-)
-IMAGE_FOLIO_MAP_PATH = (
-    PROJECT_ROOT / "data/derived/word-pipeline/07_image_links/image_folio_map.jsonl"
-)
-REVIEW_DIR = PROJECT_ROOT / "data/derived/word-pipeline/08_review_decisions"
+load_dotenv(PROJECT_ROOT / ".env")
+
+# All corpus data (SQLite, derived pipeline outputs, corrections, the search
+# index) lives under one root. Locally that is <repo>/data; in deployment
+# FLORACCO_DATA_DIR points at the mounted persistent disk's working copy, making
+# the entire data location a single relocatable knob — which is also what lets
+# the resettable demo swap the working tree wholesale from a pristine snapshot.
+DATA_ROOT = Path(os.getenv("FLORACCO_DATA_DIR") or (PROJECT_ROOT / "data")).expanduser().resolve()
+DERIVED_ROOT = DATA_ROOT / "derived/word-pipeline"
+
+QA_PACKET_PATH = DERIVED_ROOT / "06_qa_packet/word_db_match_qa_packet.jsonl"
+LINK_CANDIDATES_PATH = DERIVED_ROOT / "05_db_candidate_matches/source_entry_db_link_candidates.jsonl"
+SOURCE_ENTRIES_PATH = DERIVED_ROOT / "04_source_entries/source_entries.jsonl"
+IMAGE_CANDIDATES_PATH = DERIVED_ROOT / "07_image_links/source_entry_image_candidates.jsonl"
+REGISTER_SUMMARY_PATH = DERIVED_ROOT / "05_db_candidate_matches/register_match_summary.csv"
+WORD_COMMENTS_PATH = DERIVED_ROOT / "03_extracted_registers/comments.jsonl"
+WORD_NOTES_PATH = DERIVED_ROOT / "03_extracted_registers/footnotes.jsonl"
+IMAGE_FOLIO_MAP_PATH = DERIVED_ROOT / "07_image_links/image_folio_map.jsonl"
+REVIEW_DIR = DERIVED_ROOT / "08_review_decisions"
 DECISIONS_PATH = REVIEW_DIR / "review_decisions.csv"
-CORRECTIONS_DIR = PROJECT_ROOT / "data/derived/word-pipeline/10_corrections"
+CORRECTIONS_DIR = DERIVED_ROOT / "10_corrections"
 PROPOSALS_PATH = CORRECTIONS_DIR / "corrections_proposals.jsonl"
 EVENTS_PATH = CORRECTIONS_DIR / "corrections_events.jsonl"
 # Derived "possibly needs correction" queue (built by workflows/correction_candidates.py)
 # plus its append-only human dismissal log. Candidates are hypotheses, never writes.
 CANDIDATES_PATH = CORRECTIONS_DIR / "correction_candidates.jsonl"
 CANDIDATE_DISMISSALS_PATH = CORRECTIONS_DIR / "correction_candidate_dismissals.jsonl"
-DEFAULT_DB_PATH = PROJECT_ROOT / "data/sqlite/main.db"
-load_dotenv(PROJECT_ROOT / ".env")
+DEFAULT_DB_PATH = DATA_ROOT / "sqlite/main.db"
 
 # Fields a reviewer may correct in v1: scalar values only, safe to edit as plain
 # text/date/number/enum. Foreign keys (person/currency/place ids) are deliberately
@@ -431,19 +425,29 @@ def db_row_for_id(db_row_id: str) -> dict[str, Any]:
 
 
 def image_path_from_request(path_text: str) -> Path:
+    """Resolve a requested image path to a file, restricted to the images root.
+
+    Internet-facing (behind Cloudflare Access, but defense-in-depth): the result
+    must live under the images root only — NOT anywhere in the repo — so this
+    endpoint can never be used to read source files. Stored paths are repo-
+    relative (e.g. ``data/corpus/img/…``); a leading ``data/`` is stripped and the
+    remainder resolved against ``DATA_ROOT`` so images relocate with the data dir.
+    """
     if not path_text:
         raise HTTPException(status_code=404, detail="No image path provided.")
-    candidate = Path(path_text)
-    if not candidate.is_absolute():
-        candidate = PROJECT_ROOT / candidate
-    resolved = candidate.resolve()
-    allowed_roots = [PROJECT_ROOT.resolve()]
-    images_root = os.getenv("FLORACCO_IMAGES_ROOT")
-    if images_root:
-        allowed_roots.append(Path(images_root).expanduser().resolve())
-    if not any(resolved == root or root in resolved.parents for root in allowed_roots):
-        raise HTTPException(status_code=403, detail="Image path is outside allowed project roots.")
-    if not resolved.exists() or not resolved.is_file():
+    images_root = Path(
+        os.getenv("FLORACCO_IMAGES_ROOT") or (DATA_ROOT / "corpus/img")
+    ).expanduser().resolve()
+    raw = Path(path_text)
+    if raw.is_absolute():
+        resolved = raw.resolve()
+    else:
+        parts = raw.parts
+        relative = Path(*parts[1:]) if parts and parts[0] == "data" else raw
+        resolved = (DATA_ROOT / relative).resolve()
+    if not (resolved == images_root or images_root in resolved.parents):
+        raise HTTPException(status_code=403, detail="Image path is outside the images root.")
+    if not resolved.is_file():
         raise HTTPException(status_code=404, detail="Image file not found.")
     return resolved
 
@@ -697,13 +701,29 @@ def link_metrics_for_candidates(link_candidates: list[dict[str, Any]]) -> dict[s
     return metrics
 
 
+@app.get("/api/me")
+def whoami(request: Request) -> dict[str, Any]:
+    """The signed-in reviewer's identity, from the Cloudflare Access header.
+
+    When the platform sits behind Cloudflare Access, every authenticated request
+    carries the verified user email in `Cf-Access-Authenticated-User-Email`. The
+    front-end seeds the reviewer field from this so the audit trail records a
+    *verified* identity instead of self-typed initials. Locally (no Access) the
+    header is absent and the field stays manually editable.
+    """
+    email = request.headers.get("cf-access-authenticated-user-email", "").strip()
+    return {"authenticated": bool(email), "email": email}
+
+
 @app.get("/api/summary")
 def summary() -> dict[str, Any]:
     rows = load_qa_rows()
     decisions = decisions_by_review_id()
     return {
-        "qa_packet_path": str(QA_PACKET_PATH.relative_to(PROJECT_ROOT)),
-        "decisions_path": str(DECISIONS_PATH.relative_to(PROJECT_ROOT)),
+        # Displayed relative to the data root (these live under it); using
+        # PROJECT_ROOT broke when FLORACCO_DATA_DIR relocates data outside the repo.
+        "qa_packet_path": str(QA_PACKET_PATH.relative_to(DATA_ROOT)),
+        "decisions_path": str(DECISIONS_PATH.relative_to(DATA_ROOT)),
         "total_cases": len(rows),
         "reviewed_cases": sum(1 for row in rows if row["review_id"] in decisions),
         "buckets": sorted(
@@ -3534,3 +3554,33 @@ def dismiss_correction_candidate(candidate_key: str, payload: CandidateDismiss) 
     with CANDIDATE_DISMISSALS_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     return {"ok": True, "dismissal": record}
+
+
+# ---------------------------------------------------------------------------
+# Single-origin static serving (production)
+#
+# In dev the React app runs under Vite (port 5173) and proxies /api to here.
+# In deployment we serve the built app from THIS process so the browser makes
+# same-origin calls (no CORS, no second host). This block is intentionally LAST
+# in the module so every /api route is registered before the SPA catch-all.
+# Enabled by FLORACCO_SERVE_STATIC; off by default so local dev is unaffected.
+# ---------------------------------------------------------------------------
+
+if os.getenv("FLORACCO_SERVE_STATIC", "").strip().lower() in {"1", "true", "yes", "on"}:
+    DIST_DIR = (PROJECT_ROOT / "apps/review/dist").resolve()
+    if (DIST_DIR / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=DIST_DIR / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    def serve_spa(full_path: str) -> FileResponse:
+        # /api/* is handled by the routes above; an unknown /api path is a real
+        # 404, not the SPA shell.
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Unknown API route.")
+        # Serve a real static file (favicon, etc.) when it exists and is safely
+        # inside dist; otherwise return index.html so client-side routing works
+        # (e.g. /database/contract/195 on a hard refresh).
+        candidate = (DIST_DIR / full_path).resolve()
+        if full_path and candidate.is_file() and DIST_DIR in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(DIST_DIR / "index.html")

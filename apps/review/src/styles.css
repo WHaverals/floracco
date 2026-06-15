@@ -3803,3 +3803,14 @@ progress {
 .add-investor-more summary { color: #9d7355; cursor: pointer; font-size: 0.85rem; }
 .add-investor-note { flex: 1; }
 .add-investor-checkbox span { padding-top: 6px; }
+
+/* Signed-in identity (Cloudflare Access) in the top nav */
+.top-nav-identity {
+  color: #b7a88e;
+  font-size: 0.8rem;
+  margin-left: auto;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

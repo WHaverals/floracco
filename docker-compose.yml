@@ -1,0 +1,22 @@
+# Local verification of the deployable image, and a reference for the server.
+#
+# Local: `docker compose up --build` then open http://localhost:8000
+#   - mounts the repo's ./data at the container's working data dir, so you test
+#     against the real corpus (do write tests on throwaway rows and clean up).
+#
+# On the server (Render) you don't use this file — Render builds the Dockerfile
+# and mounts its persistent disk. There the disk holds working/ + pristine/ and
+# FLORACCO_DATA_DIR points at working/ (see docs/deployment.md, deploy/README.md).
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      FLORACCO_SERVE_STATIC: "1"
+      # Single relocatable data root. main.db, corrections.db, derived/, and the
+      # images all resolve under this automatically.
+      FLORACCO_DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

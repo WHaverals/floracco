@@ -1,0 +1,24 @@
+# The corpus data is never baked into the image — it lives on a mounted disk.
+data/
+data-*/
+SQL formulas/
+
+# Rebuilt inside the image / not needed at runtime
+**/node_modules/
+apps/review/dist/
+.venv/
+.floracco/
+
+# Repo cruft / not needed in the image
+.git/
+.github/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+docs/
+notebooks/
+tests/
+*.bak
+.DS_Store
+.env
+.env.*

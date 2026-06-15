@@ -13,7 +13,7 @@ const LINKS = [
  * jumps to it. The killed `/changes` tool is gone from the nav: tracked
  * changes render inside the Word-summary drawer instead.
  */
-export default function TopNav() {
+export default function TopNav({ identityEmail }: { identityEmail?: string | null }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [query, setQuery] = useState("");
@@ -71,6 +71,14 @@ export default function TopNav() {
           </li>
         ))}
       </ul>
+      {identityEmail ? (
+        <span
+          className="top-nav-identity"
+          title="Signed in via Cloudflare Access — your edits are attributed to this account"
+        >
+          {identityEmail}
+        </span>
+      ) : null}
     </nav>
   );
 }

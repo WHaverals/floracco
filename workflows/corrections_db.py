@@ -95,9 +95,20 @@ CREATE INDEX IF NOT EXISTS ix_event_request  ON change_event(request_id);
 
 
 def default_path() -> Path:
+    """Location of corrections.db.
+
+    Honors, in order: an explicit FLORACCO_CORRECTIONS_DB_PATH; else the shared
+    FLORACCO_DATA_DIR (so the op-log stays co-located with main.db and the
+    derived outputs under one relocatable data root); else <repo>/data.
+    """
     root = Path(__file__).resolve().parents[1]
-    raw = os.getenv("FLORACCO_CORRECTIONS_DB_PATH", str(root / "data/sqlite/corrections.db"))
-    return Path(raw) if Path(raw).is_absolute() else root / raw
+    explicit = os.getenv("FLORACCO_CORRECTIONS_DB_PATH")
+    if explicit:
+        return Path(explicit) if Path(explicit).is_absolute() else root / explicit
+    data_dir = os.getenv("FLORACCO_DATA_DIR")
+    if data_dir:
+        return Path(data_dir).expanduser().resolve() / "sqlite/corrections.db"
+    return root / "data/sqlite/corrections.db"
 
 
 def now_iso() -> str:
