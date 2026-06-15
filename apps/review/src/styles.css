@@ -3814,3 +3814,39 @@ progress {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* --- Pilot: tools kept in the code but not shipped (see src/features.ts) ----- */
+/* Greyed, non-clickable nav item with a small "soon" badge. */
+.top-nav-soon {
+  align-items: center;
+  color: #9b9486;
+  cursor: default;
+  display: inline-flex;
+  gap: 6px;
+  opacity: 0.6;
+  user-select: none;
+}
+.top-nav-soon em {
+  background: #efe6d6;
+  border-radius: 999px;
+  color: #8a7c63;
+  font-size: 0.62rem;
+  font-style: normal;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  text-transform: uppercase;
+}
+/* "Coming soon" tag on a disabled hub card (card greying reuses .is-disabled). */
+.hub-soon-tag {
+  background: #efe6d6;
+  border-radius: 999px;
+  color: #8a7c63;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.hub-card.is-disabled {
+  cursor: default;
+}

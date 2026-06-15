@@ -1881,8 +1881,7 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
         word_sources_note = (
             "Indirect: these are the Word entries (and folio images) for the "
             f"{len(targets)} contract(s) where this person is recorded as an "
-            "investor — not a direct person-to-document link. Each is labelled "
-            "with its contract."
+            "investor."
         )
         if total > cap:
             word_sources_note += f" Showing the first {cap} of {total}."

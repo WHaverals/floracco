@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { searchGlobal } from "../api";
+import { isToolHidden } from "../features";
 import type { SearchResponse, SearchResult } from "../types";
 
 /* The home page is search-first: the platform's daily life is "find this
@@ -12,21 +13,25 @@ import type { SearchResponse, SearchResult } from "../types";
 const TOOLS = [
   {
     to: "/database",
+    key: "database",
     title: "Browse & edit the database",
     blurb: "Browse and edit database records alongside their Word summaries, and manuscript pages.",
   },
   {
     to: "/reconcile",
+    key: "reconcile",
     title: "Attach Word summaries",
     blurb: "Fix unconfirmed Word ↔ database links.",
   },
   {
     to: "/corrections",
+    key: "corrections",
     title: "Flagged for correction",
-    blurb: "Prefiltered queue of databa fields that may need fixing.",
+    blurb: "Prefiltered queue of database fields that may need fixing.",
   },
   {
     to: "/dashboard",
+    key: "dashboard",
     title: "Progress & exports",
     blurb: "Overview of review work and download logs.",
   },
@@ -180,14 +185,24 @@ export default function Hub() {
 
       {!hasQuery && (
         <div className="hub-grid">
-          {TOOLS.map((tool) => (
-            <Link className="hub-card" key={tool.to} to={tool.to}>
-              <div className="hub-card-top">
-                <h2>{tool.title}</h2>
+          {TOOLS.map((tool) =>
+            isToolHidden(tool.key) ? (
+              <div className="hub-card is-disabled" key={tool.to} aria-disabled="true">
+                <div className="hub-card-top">
+                  <h2>{tool.title}</h2>
+                  <span className="hub-soon-tag">Coming soon</span>
+                </div>
+                <p>{tool.blurb}</p>
               </div>
-              <p>{tool.blurb}</p>
-            </Link>
-          ))}
+            ) : (
+              <Link className="hub-card" key={tool.to} to={tool.to}>
+                <div className="hub-card-top">
+                  <h2>{tool.title}</h2>
+                </div>
+                <p>{tool.blurb}</p>
+              </Link>
+            ),
+          )}
         </div>
       )}
     </div>

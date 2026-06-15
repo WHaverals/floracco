@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { isToolHidden } from "../features";
 
 const LINKS = [
-  { to: "/reconcile", label: "Reconcile" },
-  { to: "/database", label: "Database" },
-  { to: "/corrections", label: "Corrections" },
-  { to: "/dashboard", label: "Dashboard" },
+  { to: "/reconcile", label: "Reconcile", key: "reconcile" },
+  { to: "/database", label: "Database", key: "database" },
+  { to: "/corrections", label: "Corrections", key: "corrections" },
+  { to: "/dashboard", label: "Dashboard", key: "dashboard" },
 ];
 
 /* Global search lives on the home page; every other page carries this compact
@@ -63,13 +64,22 @@ export default function TopNav({ identityEmail }: { identityEmail?: string | nul
         </form>
       )}
       <ul>
-        {LINKS.map((link) => (
-          <li key={link.to}>
-            <NavLink to={link.to} className={({ isActive }) => (isActive ? "is-active" : "")}>
-              {link.label}
-            </NavLink>
-          </li>
-        ))}
+        {LINKS.map((link) =>
+          isToolHidden(link.key) ? (
+            <li key={link.to}>
+              <span className="top-nav-soon" title="In development — not in this pilot yet">
+                {link.label}
+                <em>soon</em>
+              </span>
+            </li>
+          ) : (
+            <li key={link.to}>
+              <NavLink to={link.to} className={({ isActive }) => (isActive ? "is-active" : "")}>
+                {link.label}
+              </NavLink>
+            </li>
+          ),
+        )}
       </ul>
       {identityEmail ? (
         <span
