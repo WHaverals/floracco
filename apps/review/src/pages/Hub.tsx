@@ -13,17 +13,17 @@ const TOOLS = [
   {
     to: "/database",
     title: "Browse & edit the database",
-    blurb: "Records with their narratives, Word summaries, manuscript pages — and the add/fix tools.",
+    blurb: "Browse and edit database records alongside their Word summaries, and manuscript pages.",
   },
   {
     to: "/reconcile",
     title: "Attach Word summaries",
-    blurb: "Work through the remaining unconfirmed Word↔database links.",
+    blurb: "Fix unconfirmed Word ↔ database links.",
   },
   {
     to: "/corrections",
     title: "Flagged for correction",
-    blurb: "Prefiltered queue of fields that may need fixing.",
+    blurb: "Prefiltered queue of databa fields that may need fixing.",
   },
   {
     to: "/dashboard",
@@ -105,7 +105,7 @@ export default function Hub() {
         </div>
         <p className="muted hub-search-hint">
           Words combine with AND · "quotes" for exact phrases · diacritics optional (niccolo finds
-          Niccolò) · searches exact spellings — try historical variants yourself.
+          Niccolò).
         </p>
       </header>
 
