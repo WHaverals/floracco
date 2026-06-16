@@ -67,10 +67,18 @@ CANDIDATE_DISMISSALS_PATH = CORRECTIONS_DIR / "correction_candidate_dismissals.j
 DEFAULT_DB_PATH = DATA_ROOT / "sqlite/main.db"
 
 # Fields a reviewer may correct in v1: scalar values only, safe to edit as plain
-# text/date/number/enum. Foreign keys (person/currency/place ids) are deliberately
-# excluded — they need entity pickers and a different UX. The primary key column
-# per table is also fixed here.
-PRIMARY_KEY_COLUMN = {"contract": "contract_id", "sub_contract": "contract_id", "person": "person_id"}
+# text/date/number/enum. Foreign keys (title/currency/place ids, person_id) are
+# deliberately excluded — they need entity pickers + a `relink` replay path and a
+# different UX (deferred). The primary key column per table is also fixed here.
+# investor/investment are single-PK child rows reachable from a contract; editing
+# their scalar columns runs through the same propose→approve→apply machinery.
+PRIMARY_KEY_COLUMN = {
+    "contract": "contract_id",
+    "sub_contract": "contract_id",
+    "person": "person_id",
+    "investor": "investor_id",
+    "investment": "investment_id",
+}
 CORRECTABLE_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
     "contract": {
         "firm_name": {"label": "Firm name", "input_type": "text"},
@@ -103,6 +111,25 @@ CORRECTABLE_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "grandfather": {"label": "Grandfather", "input_type": "text"},
         "last_name": {"label": "Last name", "input_type": "text"},
         "nickname": {"label": "Nickname", "input_type": "text"},
+    },
+    # An investor is one person's appearance on one contract. Only the scalar,
+    # free-text columns are correctable here; the FK columns (title, place_of_*)
+    # and the derived `is_joint` flag are excluded (FKs need a relink UX; is_joint
+    # is computed from the investment's group structure, not edited directly).
+    "investor": {
+        "profession": {"label": "Profession", "input_type": "text"},
+        "husband_first_name": {"label": "Husband — first name", "input_type": "text"},
+        "husband_last_name": {"label": "Husband — last name", "input_type": "text"},
+        "guardian_of": {"label": "Guardian of", "input_type": "text"},
+    },
+    # The money side of an investor's stake. `type` (gp/lp) is the real partnership
+    # role. A joint investment is one shared by several investors, so editing its
+    # cash edits the shared figure — by design, not per-person.
+    "investment": {
+        "type": {"label": "Role", "input_type": "enum", "options": ["gp", "lp"]},
+        "partnership_name": {"label": "Partnership name", "input_type": "text"},
+        "investment_cash": {"label": "Cash", "input_type": "number"},
+        "investment_non_cash": {"label": "Non-cash", "input_type": "text"},
     },
 }
 CHANGE_TYPES = {"correct", "fill_missing", "flag_uncertain"}
@@ -1574,6 +1601,199 @@ def record_field(
     return field
 
 
+def _correction_chip(proposal: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The compact correction state a record cell carries, or None."""
+    if not proposal:
+        return None
+    return {
+        "proposal_id": proposal.get("proposal_id"),
+        "status": proposal.get("status"),
+        "change_type": proposal.get("change_type"),
+        "proposed_value": proposal.get("proposed_value"),
+        "applied_at": proposal.get("applied_at"),
+        "applied_by": proposal.get("applied_by"),
+        "reviewed_by": proposal.get("reviewed_by"),
+    }
+
+
+def editable_cell(
+    table: str,
+    row_pk: Any,
+    column: str,
+    raw_value: Any,
+    display: str,
+    proposals: dict[str, dict[str, dict[str, Any]]],
+) -> dict[str, Any]:
+    """A single editable cell of a child row (investor/investment) for the
+    Partners block. Mirrors ``record_field`` but carries its own ``db_row_id``
+    (since each partner row addresses a different SQLite row), and reads its
+    correction chip from a prebuilt per-row index (one JSONL pass, not one per
+    cell). Columns absent from CORRECTABLE_FIELDS come back non-editable."""
+    db_row_id = f"{table}:{row_pk}"
+    meta = CORRECTABLE_FIELDS.get(table, {}).get(column)
+    cell: dict[str, Any] = {
+        "db_row_id": db_row_id,
+        "column": column,
+        "value": display,
+        "editable": bool(meta),
+        "current": normalize_value(raw_value),
+        "input_type": (meta or {}).get("input_type", "text"),
+        "options": (meta or {}).get("options"),
+    }
+    chip = _correction_chip(proposals.get(db_row_id, {}).get(column))
+    if chip:
+        cell["correction"] = chip
+    return cell
+
+
+def proposals_by_row() -> dict[str, dict[str, dict[str, Any]]]:
+    """Latest non-rejected proposal per (db_row_id, field), in one JSONL pass —
+    so a record with many child rows costs a single read, not one per cell."""
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for proposal in load_proposals():
+        if proposal.get("status") == "rejected":
+            continue
+        rid = proposal.get("db_row_id")
+        field = proposal.get("field")
+        if not rid or not field:
+            continue
+        row = out.setdefault(rid, {})
+        existing = row.get(field)
+        if not existing or proposal.get("created_at", "") >= existing.get("created_at", ""):
+            row[field] = proposal
+    return out
+
+
+def build_partners(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]:
+    """The contract's people-and-money, as one joined 'Partners' block.
+
+    An investor (one person's appearance on this contract) is linked to its
+    investment — the money + the gp/lp role — through the ``investor_group``
+    junction. A *joint* investment is one shared by several investors, so its
+    cash is the shared figure and must not be read as per-person. Investors with
+    no investment (role unknown) and investments with no investor (unattached)
+    are both surfaced rather than dropped. Live rows only (is_deleted = 0)."""
+    proposals = proposals_by_row()
+
+    # How many live investors share each investment on this contract → joint.
+    joint_counts = {
+        r["investment_id"]: r["c"]
+        for r in connection.execute(
+            """
+            SELECT ig.investment_id AS investment_id, COUNT(*) AS c
+            FROM investor_group ig
+            JOIN investor i ON i.investor_id = ig.investor_id
+            WHERE i.contract_id = ? AND ig.is_deleted = 0 AND i.is_deleted = 0
+            GROUP BY ig.investment_id
+            """,
+            (raw_id,),
+        ).fetchall()
+    }
+
+    investor_rows = connection.execute(
+        """
+        SELECT i.investor_id AS investor_id, i.person_id AS person_id,
+               i.profession AS profession, i.place_of_residence AS place_of_residence,
+               i.is_widow AS is_widow, i.is_guardian AS is_guardian, i.is_joint AS is_joint,
+               p.first_name AS first_name, p.last_name AS last_name, p.nickname AS nickname,
+               inv.investment_id AS investment_id, inv.type AS inv_type,
+               inv.investment_cash AS investment_cash, inv.investment_non_cash AS investment_non_cash
+        FROM investor i
+        LEFT JOIN person p ON p.person_id = i.person_id
+        LEFT JOIN investor_group ig ON ig.investor_id = i.investor_id AND ig.is_deleted = 0
+        LEFT JOIN investment inv ON inv.investment_id = ig.investment_id AND inv.is_deleted = 0
+        WHERE i.contract_id = ? AND i.is_deleted = 0
+        ORDER BY i.investor_id
+        """,
+        (raw_id,),
+    ).fetchall()
+
+    def status_flags(inv: sqlite3.Row) -> str:
+        return (
+            ", ".join(
+                flag
+                for flag, present in (
+                    ("widow", inv["is_widow"]),
+                    ("guardian", inv["is_guardian"]),
+                    ("joint", inv["is_joint"]),
+                )
+                if present in (1, "1", True)
+            )
+            or "—"
+        )
+
+    def cash_cell(inv_id: Any, cash: Any, non_cash: Any) -> dict[str, Any]:
+        count = joint_counts.get(inv_id, 1) if inv_id is not None else 0
+        return {
+            "display": display_text(cash),
+            "non_cash": display_text(non_cash),
+            "joint": count > 1,
+            "joint_count": count,
+            "field": editable_cell("investment", inv_id, "investment_cash", cash, display_text(cash), proposals)
+            if inv_id is not None
+            else None,
+        }
+
+    rows: list[dict[str, Any]] = []
+    for inv in investor_rows:
+        inv_id = inv["investment_id"]
+        rows.append(
+            {
+                "key": f"investor:{inv['investor_id']}",
+                "person": {
+                    "id": str(inv["person_id"]),
+                    "name": person_display_name(inv["first_name"], inv["last_name"], inv["nickname"]),
+                }
+                if inv["person_id"] is not None
+                else None,
+                "role": editable_cell("investment", inv_id, "type", inv["inv_type"], display_text(inv["inv_type"]), proposals)
+                if inv_id is not None
+                else None,
+                "cash": cash_cell(inv_id, inv["investment_cash"], inv["investment_non_cash"]),
+                "profession": editable_cell(
+                    "investor", inv["investor_id"], "profession", inv["profession"], display_text(inv["profession"]), proposals
+                ),
+                "residence": display_text(
+                    lookup_value(connection, "place", "place_id", inv["place_of_residence"], "place_name")
+                ),
+                "status": status_flags(inv),
+            }
+        )
+
+    # Unattached investments: money recorded on the contract with no investor
+    # linked through the junction. Rare, but surfacing beats silently dropping.
+    orphan_investments = connection.execute(
+        """
+        SELECT inv.investment_id AS investment_id, inv.type AS inv_type,
+               inv.investment_cash AS investment_cash, inv.investment_non_cash AS investment_non_cash
+        FROM investment inv
+        WHERE inv.contract_id = ? AND inv.is_deleted = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM investor_group ig
+            JOIN investor i ON i.investor_id = ig.investor_id
+            WHERE ig.investment_id = inv.investment_id AND ig.is_deleted = 0 AND i.is_deleted = 0
+          )
+        ORDER BY inv.investment_id
+        """,
+        (raw_id,),
+    ).fetchall()
+    for iv in orphan_investments:
+        inv_id = iv["investment_id"]
+        rows.append(
+            {
+                "key": f"investment:{inv_id}",
+                "person": None,
+                "role": editable_cell("investment", inv_id, "type", iv["inv_type"], display_text(iv["inv_type"]), proposals),
+                "cash": cash_cell(inv_id, iv["investment_cash"], iv["investment_non_cash"]),
+                "profession": None,
+                "residence": "—",
+                "status": "unattached",
+            }
+        )
+
+    return {"count": len(rows), "rows": rows}
+
+
 def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]:
     row = connection.execute(
         "SELECT * FROM contract WHERE contract_id = ?", (raw_id,)
@@ -1608,34 +1828,22 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         SELECT cp.address AS address, p.place_name AS place_name
         FROM contract_place cp
         LEFT JOIN place p ON p.place_id = cp.place_id
-        WHERE cp.contract_id = ?
+        WHERE cp.contract_id = ? AND cp.is_deleted = 0
         """,
-        (raw_id,),
-    ).fetchall()
-    investors = connection.execute(
-        """
-        SELECT i.person_id AS person_id, i.profession AS profession,
-               i.is_widow AS is_widow, i.is_guardian AS is_guardian, i.is_joint AS is_joint,
-               i.place_of_residence AS place_of_residence,
-               p.first_name AS first_name, p.last_name AS last_name, p.nickname AS nickname
-        FROM investor i
-        LEFT JOIN person p ON p.person_id = i.person_id
-        WHERE i.contract_id = ?
-        """,
-        (raw_id,),
-    ).fetchall()
-    investments = connection.execute(
-        "SELECT type, partnership_name, investment_cash, investment_non_cash FROM investment WHERE contract_id = ?",
         (raw_id,),
     ).fetchall()
     subs = connection.execute(
         """
         SELECT contract_id, sub_type, registration_date, folio, sub_firm_name
-        FROM sub_contract WHERE main_contract_id = ?
+        FROM sub_contract WHERE main_contract_id = ? AND is_deleted = 0
         ORDER BY registration_date
         """,
         (raw_id,),
     ).fetchall()
+
+    # Investors + investments are merged into one editable Partners block
+    # (people + role + capital), keyed through investor_group — see build_partners.
+    partners = build_partners(connection, raw_id)
 
     sections: list[dict[str, Any]] = []
     if subs:
@@ -1658,41 +1866,6 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
                 ],
             }
         )
-    if investors:
-        sections.append(
-            {
-                "title": f"Investors ({len(investors)})",
-                "columns": ["Person", "Profession", "Residence", "Role"],
-                "link_table": "person",
-                "rows": [
-                    {
-                        "id": str(inv["person_id"]),
-                        "cells": [
-                            person_display_name(
-                                inv["first_name"], inv["last_name"], inv["nickname"]
-                            ),
-                            display_text(inv["profession"]),
-                            display_text(
-                                lookup_value(
-                                    connection, "place", "place_id", inv["place_of_residence"], "place_name"
-                                )
-                            ),
-                            ", ".join(
-                                flag
-                                for flag, present in (
-                                    ("widow", inv["is_widow"]),
-                                    ("guardian", inv["is_guardian"]),
-                                    ("joint", inv["is_joint"]),
-                                )
-                                if present in (1, "1", True)
-                            )
-                            or "—",
-                        ],
-                    }
-                    for inv in investors
-                ],
-            }
-        )
     if places:
         sections.append(
             {
@@ -1708,26 +1881,6 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
                 ],
             }
         )
-    if investments:
-        sections.append(
-            {
-                "title": f"Investments ({len(investments)})",
-                "columns": ["Type", "Partnership", "Cash", "Non-cash"],
-                "link_table": None,
-                "rows": [
-                    {
-                        "id": "",
-                        "cells": [
-                            display_text(iv["type"]),
-                            display_text(iv["partnership_name"]),
-                            display_text(iv["investment_cash"]),
-                            display_text(iv["investment_non_cash"]),
-                        ],
-                    }
-                    for iv in investments
-                ],
-            }
-        )
 
     return {
         "table": "contract",
@@ -1736,6 +1889,7 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         "title": data.get("firm_name") or f"Contract {raw_id}",
         "subtitle": f"Main contract · {raw_id}",
         "fields": fields,
+        "partners": partners,
         "sections": sections,
         "document": clean_document(data.get("document")),
         "document_correction": corrections.get("document"),
@@ -3288,6 +3442,48 @@ def reject_correction(proposal_id: str, action: CorrectionAction) -> dict[str, A
     return _transition(proposal_id, action, to_status="rejected", from_status="proposed")
 
 
+def _log_update_op(
+    *,
+    table: str,
+    pk_col: str,
+    pk_value: Any,
+    field: str,
+    before_value: Any,
+    after_value: Any,
+    reviewer: str,
+    reason: str | None,
+    run_id: str | None,
+    note: str | None,
+) -> None:
+    """Mirror an applied inline field edit into the authoritative op-log
+    (corrections.db) as an `update`. The JSONL proposal store drives the review
+    UI; this is what `db_import.replay_corrections` actually replays onto a fresh
+    seed — so without this, a `main.db` rebuild would silently drop the edit.
+    Raw (un-normalized) values are passed so a NULL pre-image stays NULL on
+    replay. Best-effort: a failure here must not undo the committed main.db write."""
+    try:
+        pk_int: Any = int(pk_value)
+    except (TypeError, ValueError):
+        pk_int = pk_value
+    clog = open_corrections()
+    try:
+        corrections_db.record_operation(
+            clog,
+            op="update",
+            db_table=table,
+            pk={pk_col: pk_int},
+            field=field,
+            before_value=before_value,
+            after_value=after_value,
+            by=reviewer,
+            reason=reason,
+            run_id=run_id,
+            note=note,
+        )
+    finally:
+        clog.close()
+
+
 @app.post("/api/corrections/{proposal_id}/apply")
 def apply_correction(proposal_id: str, action: CorrectionAction) -> dict[str, Any]:
     proposal = proposal_by_id(proposal_id)
@@ -3334,6 +3530,19 @@ def apply_correction(proposal_id: str, action: CorrectionAction) -> dict[str, An
 
     now = datetime.now(timezone.utc).isoformat()
     run_id = f"apply-{now[:10]}"
+    # §5: persist the edit to the authoritative op-log so it survives a reseed.
+    _log_update_op(
+        table=table,
+        pk_col=pk_col,
+        pk_value=pk_value,
+        field=field,
+        before_value=current,
+        after_value=new_value,
+        reviewer=action.reviewer,
+        reason=proposal.get("rationale") or None,
+        run_id=run_id,
+        note=action.note.strip() or None,
+    )
     proposal["status"] = "applied"
     proposal["applied_at"] = now
     proposal["applied_by"] = action.reviewer
@@ -3388,6 +3597,20 @@ def revert_correction(proposal_id: str, action: CorrectionAction) -> dict[str, A
         connection.close()
 
     now = datetime.now(timezone.utc).isoformat()
+    # §5: a revert is itself a change — log a compensating `update` (applied value
+    # → original) so replay nets out to the original on a reseed.
+    _log_update_op(
+        table=table,
+        pk_col=pk_col,
+        pk_value=pk_value,
+        field=field,
+        before_value=current,
+        after_value=restore,
+        reviewer=action.reviewer,
+        reason="revert",
+        run_id=f"revert-{now[:10]}",
+        note=action.note.strip() or None,
+    )
     proposal["status"] = "reverted"
     save_proposal(proposal)
     append_correction_event(

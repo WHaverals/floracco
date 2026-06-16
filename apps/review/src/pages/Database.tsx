@@ -12,8 +12,10 @@ import { manuscriptImageCaption } from "../utils/manuscriptImages";
 import type {
   ChangeHistoryItem,
   DbBrowseTable,
+  DbEditableCell,
   DbField,
   DbLinkStatus,
+  DbPartnerRow,
   DbRecord,
   DbSearchResult,
 } from "../types";
@@ -292,6 +294,185 @@ function historyLabel(item: ChangeHistoryItem): string {
   return item.op;
 }
 
+function partnerChipLabel(c: NonNullable<DbEditableCell["correction"]>): string {
+  if (c.status === "applied") return `Corrected → ${c.proposed_value ?? ""}`;
+  if (c.status === "reverted") return "Correction reverted";
+  return `Change ${c.status}: → ${c.proposed_value ?? "(flag)"}`;
+}
+
+/** One Partners cell: shows the value with a hover ✎, swaps to the shared
+ * InlineFieldEditor while editing, and surfaces any pending correction chip. */
+function PartnerCell({
+  cell,
+  editing,
+  onEdit,
+  onCancel,
+  onSaved,
+  disabled,
+}: {
+  cell: DbEditableCell | null;
+  editing: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSaved: () => void;
+  disabled: boolean;
+}) {
+  if (!cell) return <span className="muted">—</span>;
+  if (editing) {
+    return (
+      <InlineFieldEditor
+        dbRowId={cell.db_row_id}
+        column={cell.column}
+        label={cell.column}
+        inputType={cell.input_type}
+        options={cell.options}
+        currentValue={cell.current}
+        onSaved={onSaved}
+        onCancel={onCancel}
+      />
+    );
+  }
+  return (
+    <div className="partner-cell">
+      <span className="partner-cell-value">{cell.value}</span>
+      {cell.editable && !disabled && (
+        <button type="button" className="field-fix" onClick={onEdit} title={`Fix ${cell.column}`}>
+          ✎
+        </button>
+      )}
+      {cell.correction && (
+        <span className={`field-correction is-${cell.correction.status}`}>
+          {partnerChipLabel(cell.correction)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Investors + investments as one editable table. Role comes from the linked
+ * investment (gp/lp); a joint investment is shared, so its cash is shown once
+ * as shared rather than repeated per partner. */
+function PartnersBlock({
+  partners,
+  hidden,
+  onOpen,
+  onCorrectName,
+  onAddInvestor,
+  onRefresh,
+}: {
+  partners: DbRecord["partners"];
+  hidden: boolean;
+  onOpen: (table: DbBrowseTable, id: string) => void;
+  onCorrectName?: () => void;
+  onAddInvestor: () => void;
+  onRefresh: () => void;
+}) {
+  // Keyed by `${rowKey}:${column}` (not the cell's db_row_id) so a shared joint
+  // investment opens just the one cell you clicked, not both partners' at once.
+  const [editing, setEditing] = useState<string | null>(null);
+  const rows = partners?.rows ?? [];
+  const count = partners?.count ?? 0;
+
+  const renderCell = (rowKey: string, cell: DbEditableCell | null) => {
+    const key = cell ? `${rowKey}:${cell.column}` : "";
+    return (
+      <PartnerCell
+        cell={cell}
+        editing={Boolean(cell) && editing === key}
+        onEdit={() => setEditing(key)}
+        onCancel={() => setEditing(null)}
+        onSaved={() => {
+          setEditing(null);
+          onRefresh();
+        }}
+        disabled={hidden}
+      />
+    );
+  };
+
+  return (
+    <section className="db-block">
+      <div className="db-block-head">
+        <h3>Partners ({count})</h3>
+        {!hidden && onCorrectName && (
+          <button type="button" className="field-fix" onClick={onCorrectName} title="Correct a person’s name">
+            ✎ Fix a name
+          </button>
+        )}
+        {!hidden && (
+          <button
+            type="button"
+            className="field-fix"
+            onClick={onAddInvestor}
+            title="Add a person to this contract (role + capital)"
+          >
+            + Add investor
+          </button>
+        )}
+      </div>
+      {count === 0 ? (
+        <p className="muted">
+          No investors are recorded yet — every accomandita needs at least an accomandatario (gp) and an
+          accomandante (lp).
+        </p>
+      ) : (
+        <table className="db-table partners-table">
+          <thead>
+            <tr>
+              <th>Person</th>
+              <th>Role</th>
+              <th>Capital</th>
+              <th>Profession</th>
+              <th>Residence</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row: DbPartnerRow) => (
+              <tr key={row.key}>
+                <td>
+                  {row.person ? (
+                    <button
+                      type="button"
+                      className="db-person-link"
+                      onClick={() => onOpen("person", row.person!.id)}
+                    >
+                      {row.person.name}
+                    </button>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </td>
+                <td>{renderCell(row.key, row.role)}</td>
+                <td>
+                  <div className="partner-cash">
+                    {row.cash.field ? (
+                      renderCell(row.key, row.cash.field)
+                    ) : (
+                      <span>{row.cash.display}</span>
+                    )}
+                    {row.cash.joint && (
+                      <span className="partner-badge" title={`Shared by ${row.cash.joint_count} partners`}>
+                        joint · {row.cash.joint_count}
+                      </span>
+                    )}
+                  </div>
+                  {!["", "—", "0"].includes(row.cash.non_cash.trim()) && (
+                    <p className="partner-noncash muted">+ {row.cash.non_cash}</p>
+                  )}
+                </td>
+                <td>{renderCell(row.key, row.profession)}</td>
+                <td>{row.residence}</td>
+                <td>{row.status}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 function RecordDetail({
   record,
   onOpen,
@@ -330,7 +511,6 @@ function RecordDetail({
   // its provenance is the create op's source line, not a Word summary.
   const createdOp = history.find((item) => item.op === "create");
   const hasSubSection = record.sections.some((s) => s.title.startsWith("Sub-contracts"));
-  const hasInvestorsSection = record.sections.some((s) => s.title.startsWith("Investors"));
   const manuscriptImages = record.manuscript_images ?? [];
   const documentEditable = !record.is_deleted && (record.table === "contract" || record.table === "sub_contract");
   const documentCorrection = record.document_correction ?? null;
@@ -599,28 +779,21 @@ function RecordDetail({
         </section>
       )}
 
+      {record.table === "contract" && (
+        <PartnersBlock
+          partners={record.partners}
+          hidden={Boolean(record.is_deleted)}
+          onOpen={onOpen}
+          onCorrectName={onCorrectName}
+          onAddInvestor={() => setAddingInvestor((v) => !v)}
+          onRefresh={closeAndRefresh}
+        />
+      )}
+
       {record.sections.map((section) => (
         <section key={section.title} className="db-block">
           <div className="db-block-head">
             <h3>{section.title}</h3>
-            {/* Fixing a name belongs where the people are listed, not in the
-                record-level Actions menu: rows below open the person's record;
-                this opens the contract-scoped picker (with whole-DB search). */}
-            {onCorrectName && section.title.startsWith("Investors") && !record.is_deleted && (
-              <button type="button" className="field-fix" onClick={onCorrectName} title="Correct a person’s name">
-                ✎ Fix a name
-              </button>
-            )}
-            {record.table === "contract" && section.title.startsWith("Investors") && !record.is_deleted && (
-              <button
-                type="button"
-                className="field-fix"
-                onClick={() => setAddingInvestor((v) => !v)}
-                title="Add a person to this contract (role + capital)"
-              >
-                + Add investor
-              </button>
-            )}
             {record.table === "contract" && section.title.startsWith("Sub-contracts") && !record.is_deleted && (
               <button
                 type="button"
@@ -663,26 +836,6 @@ function RecordDetail({
           </table>
         </section>
       ))}
-
-      {record.table === "contract" && !hasInvestorsSection && !record.is_deleted && (
-        <section className="db-block">
-          <div className="db-block-head">
-            <h3>Investors (0)</h3>
-            <button
-              type="button"
-              className="field-fix"
-              onClick={() => setAddingInvestor((v) => !v)}
-              title="Add a person to this contract (role + capital)"
-            >
-              + Add investor
-            </button>
-          </div>
-          <p className="muted">
-            No investors are recorded yet — every accomandita needs at least an accomandatario and an
-            accomandante.
-          </p>
-        </section>
-      )}
 
       {investorMessage && <div className="notice success">{investorMessage}</div>}
       {addingInvestor && record.table === "contract" && !record.is_deleted && (

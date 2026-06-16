@@ -2400,6 +2400,69 @@ progress {
   color: #6b5840;
 }
 
+/* Partners block — investors + investments merged into one editable table. */
+.partners-table td {
+  vertical-align: top;
+}
+
+.partners-table tbody tr:hover td {
+  background: #fbf4e8;
+}
+
+.partners-table tbody tr:hover .field-fix {
+  opacity: 1;
+}
+
+.partner-cell {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.partner-cell-value {
+  white-space: pre-wrap;
+}
+
+.partner-cash {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.partner-badge {
+  background: #efe2cc;
+  border-radius: 999px;
+  color: #8a5a36;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.partner-noncash {
+  font-size: 0.78rem;
+  margin: 3px 0 0;
+}
+
+.db-person-link {
+  background: none;
+  border: none;
+  color: #9d5b2f;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.db-person-link:hover {
+  color: #7a4521;
+}
+
 .propose-drawer {
   background: #f6f1ea;
   box-shadow: -18px 0 40px rgba(20, 14, 9, 0.25);

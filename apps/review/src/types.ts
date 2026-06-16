@@ -241,6 +241,44 @@ export type DbSectionRow = {
   cells: string[];
 };
 
+/** One editable cell of a child row (investor/investment) in the Partners block.
+ * Carries its own db_row_id because each partner addresses a different SQLite row. */
+export type DbEditableCell = {
+  db_row_id: string;
+  column: string;
+  value: string;
+  editable: boolean;
+  current: string;
+  input_type: DbFieldInputType;
+  options?: string[] | null;
+  correction?: DbFieldCorrection;
+};
+
+export type DbPartnerCash = {
+  display: string;
+  non_cash: string;
+  /** A joint investment is shared by several investors — its cash is the shared
+   * figure, not per-person. */
+  joint: boolean;
+  joint_count: number;
+  field: DbEditableCell | null;
+};
+
+export type DbPartnerRow = {
+  key: string;
+  person: { id: string; name: string } | null;
+  role: DbEditableCell | null;
+  cash: DbPartnerCash;
+  profession: DbEditableCell | null;
+  residence: string;
+  status: string;
+};
+
+export type DbPartners = {
+  count: number;
+  rows: DbPartnerRow[];
+};
+
 export type DbSection = {
   title: string;
   columns: string[];
@@ -373,6 +411,8 @@ export type DbRecord = {
   title: string;
   subtitle: string;
   fields: DbField[];
+  /** Contracts only: people + role + capital, merged from investor/investment. */
+  partners?: DbPartners | null;
   sections: DbSection[];
   document: string | null;
   /** Latest correction touching the narrative (document) field, if any. */
