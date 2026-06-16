@@ -64,7 +64,7 @@ export default function WordSourceDrawer({
       <aside className="word-drawer" onClick={(event) => event.stopPropagation()}>
         <header className="word-drawer-head">
           <div>
-            <p className="eyebrow">Word summary · frozen source</p>
+            <p className="eyebrow">Word summary</p>
             <h3>{entry?.label || sourceEntryId}</h3>
             {meta && <p className="muted word-drawer-meta">{meta}</p>}
           </div>

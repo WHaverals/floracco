@@ -510,7 +510,7 @@ function RecordDetail({
           {record.table !== "person" && record.word_sources.length > 0 && (
             <div className="ws-inline-list">
               <p className="ws-inline-eyebrow muted">
-                Word summar{record.word_sources.length > 1 ? "ies" : "y"} — frozen source, for
+                Word summar{record.word_sources.length > 1 ? "ies" : "y"}, for
                 comparison
               </p>
               {record.word_sources.map((source) => (
