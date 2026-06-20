@@ -1709,26 +1709,41 @@ def build_partners(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any
     ).fetchall()
 
     def status_flags(inv: sqlite3.Row) -> str:
+        # Status carries only the investor's *personal standing* (widow/guardian).
+        # "joint" deliberately lives on the Capital cell instead — it is a property
+        # of the *stake*, not the person, and showing it here too produced
+        # on-screen contradictions with the derived joint badge (see the joint
+        # handling in cash_cell + docs/data_quality/is_joint.md).
         return (
             ", ".join(
                 flag
                 for flag, present in (
                     ("widow", inv["is_widow"]),
                     ("guardian", inv["is_guardian"]),
-                    ("joint", inv["is_joint"]),
                 )
                 if present in (1, "1", True)
             )
             or "—"
         )
 
-    def cash_cell(inv_id: Any, cash: Any, non_cash: Any) -> dict[str, Any]:
+    def cash_cell(inv_id: Any, cash: Any, non_cash: Any, is_joint: Any = 0) -> dict[str, Any]:
+        # "Joint" is encoded two structurally-incompatible ways in this corpus:
+        #   1. one investment shared by several investors (derivable: joint_counts
+        #      gives the live share count → the authoritative "joint · N" badge);
+        #   2. parallel investments of the same role+amount on one contract, marked
+        #      only by the per-investor `is_joint` flag (no shared tranche to count).
+        # The count sees (1) and is blind to (2); the flag is the only signal for
+        # (2). We mark joint on EITHER, so we never hide real co-investment, and we
+        # show "· N" only when N is structurally known (case 1). The stored flag is
+        # noisy (stale/lonely cases) — those are surfaced for review, not trusted
+        # silently. See docs/data_quality/is_joint.md.
         count = joint_counts.get(inv_id, 1) if inv_id is not None else 0
+        joint = inv_id is not None and (count > 1 or is_joint in (1, "1", True))
         return {
             "display": display_text(cash),
             "non_cash": display_text(non_cash),
-            "joint": count > 1,
-            "joint_count": count,
+            "joint": joint,
+            "joint_count": count,  # frontend shows "· N" only when count > 1
             "field": editable_cell("investment", inv_id, "investment_cash", cash, display_text(cash), proposals)
             if inv_id is not None
             else None,
@@ -1749,7 +1764,7 @@ def build_partners(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any
                 "role": editable_cell("investment", inv_id, "type", inv["inv_type"], display_text(inv["inv_type"]), proposals)
                 if inv_id is not None
                 else None,
-                "cash": cash_cell(inv_id, inv["investment_cash"], inv["investment_non_cash"]),
+                "cash": cash_cell(inv_id, inv["investment_cash"], inv["investment_non_cash"], inv["is_joint"]),
                 "profession": editable_cell(
                     "investor", inv["investor_id"], "profession", inv["profession"], display_text(inv["profession"]), proposals
                 ),

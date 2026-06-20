@@ -452,8 +452,15 @@ function PartnersBlock({
                       <span>{row.cash.display}</span>
                     )}
                     {row.cash.joint && (
-                      <span className="partner-badge" title={`Shared by ${row.cash.joint_count} partners`}>
-                        joint · {row.cash.joint_count}
+                      <span
+                        className="partner-badge"
+                        title={
+                          row.cash.joint_count > 1
+                            ? `One tranche shared by ${row.cash.joint_count} partners — this is the shared figure, not per-person`
+                            : "Recorded as a joint stake (parallel investments)"
+                        }
+                      >
+                        joint{row.cash.joint_count > 1 ? ` · ${row.cash.joint_count}` : ""}
                       </span>
                     )}
                   </div>

@@ -257,9 +257,13 @@ export type DbEditableCell = {
 export type DbPartnerCash = {
   display: string;
   non_cash: string;
-  /** A joint investment is shared by several investors — its cash is the shared
-   * figure, not per-person. */
+  /** Joint = this stake is co-held, recorded either as one shared investment
+   * (then `joint_count` > 1, shown as "joint · N") or as parallel investments
+   * marked by the per-investor flag (then `joint_count` is 1, shown as "joint").
+   * Where shown, the cash is the *shared* figure, not per-person. */
   joint: boolean;
+  /** Live count of investors on the shared tranche; 1 when joint comes from the
+   * stored flag rather than a shared investment (so the UI omits "· N"). */
   joint_count: number;
   field: DbEditableCell | null;
 };
