@@ -138,13 +138,14 @@ def build(main_db_path: Path, search_db_path: Path | None = None) -> dict[str, A
                       group_concat(DISTINCT i.husband_first_name || ' ' || i.husband_last_name) hb,
                       group_concat(DISTINCT p.place_name) pl
                FROM investor i LEFT JOIN place p ON p.place_id = i.place_of_residence
+               WHERE i.is_deleted = 0
                GROUP BY i.person_id"""
         ):
             person_extra[r["person_id"]] = " ".join(filter(None, [r["pr"], r["hb"], r["pl"]]))
         person_contracts = {
             r["person_id"]: r["n"]
             for r in src.execute(
-                "SELECT person_id, count(DISTINCT contract_id) n FROM investor GROUP BY person_id"
+                "SELECT person_id, count(DISTINCT contract_id) n FROM investor WHERE is_deleted = 0 GROUP BY person_id"
             )
         }
         for r in src.execute("SELECT * FROM person WHERE is_deleted = 0"):
