@@ -2000,7 +2000,7 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
                c.firm_name AS firm_name, c.registration_date AS registration_date
         FROM investor i
         LEFT JOIN contract c ON c.contract_id = i.contract_id
-        WHERE i.person_id = ?
+        WHERE i.person_id = ? AND i.is_deleted = 0
         ORDER BY c.registration_date
         """,
         (raw_id,),
@@ -2397,7 +2397,7 @@ def db_registers() -> dict[str, Any]:
     try:
         rows = connection.execute(
             "SELECT trim(archive) a, trim(series) s, trim(folder) f, count(*) n FROM contract "
-            "GROUP BY trim(archive), trim(series), trim(folder)"
+            "WHERE is_deleted = 0 GROUP BY trim(archive), trim(series), trim(folder)"
         ).fetchall()
     finally:
         connection.close()
@@ -2503,16 +2503,16 @@ def db_lookup(kind: str, q: str = "") -> dict[str, Any]:
     if not meta:
         raise HTTPException(status_code=400, detail="Unknown lookup kind.")
     usage_sql = {
-        "economic_activity": "SELECT economic_sector k, count(*) n FROM contract WHERE economic_sector IS NOT NULL GROUP BY economic_sector",
-        "currency": "SELECT currency_id k, count(*) n FROM contract WHERE currency_id IS NOT NULL GROUP BY currency_id",
+        "economic_activity": "SELECT economic_sector k, count(*) n FROM contract WHERE economic_sector IS NOT NULL AND is_deleted = 0 GROUP BY economic_sector",
+        "currency": "SELECT currency_id k, count(*) n FROM contract WHERE currency_id IS NOT NULL AND is_deleted = 0 GROUP BY currency_id",
         "place": (
             "SELECT k, sum(n) n FROM ("
-            "SELECT place_id k, count(*) n FROM contract_place GROUP BY place_id "
-            "UNION ALL SELECT place_of_residence k, count(*) n FROM investor WHERE place_of_residence IS NOT NULL GROUP BY place_of_residence "
-            "UNION ALL SELECT place_of_origin k, count(*) n FROM investor WHERE place_of_origin IS NOT NULL GROUP BY place_of_origin"
+            "SELECT place_id k, count(*) n FROM contract_place WHERE is_deleted = 0 GROUP BY place_id "
+            "UNION ALL SELECT place_of_residence k, count(*) n FROM investor WHERE place_of_residence IS NOT NULL AND is_deleted = 0 GROUP BY place_of_residence "
+            "UNION ALL SELECT place_of_origin k, count(*) n FROM investor WHERE place_of_origin IS NOT NULL AND is_deleted = 0 GROUP BY place_of_origin"
             ") GROUP BY k"
         ),
-        "title": "SELECT title k, count(*) n FROM investor WHERE title IS NOT NULL GROUP BY title",
+        "title": "SELECT title k, count(*) n FROM investor WHERE title IS NOT NULL AND is_deleted = 0 GROUP BY title",
     }[kind]
     needle = _lookup_norm(q)
     connection = open_db()
@@ -2853,8 +2853,8 @@ def contract_investments(contract_id: str) -> dict[str, Any]:
                       v.partnership_name,
                       group_concat(p.first_name || ' ' || coalesce(p.last_name, ''), '; ') AS members
                FROM investment v
-               LEFT JOIN investor_group g ON g.investment_id = v.investment_id
-               LEFT JOIN investor i ON i.investor_id = g.investor_id
+               LEFT JOIN investor_group g ON g.investment_id = v.investment_id AND g.is_deleted = 0
+               LEFT JOIN investor i ON i.investor_id = g.investor_id AND i.is_deleted = 0
                LEFT JOIN person p ON p.person_id = i.person_id
                WHERE v.contract_id = ? AND v.is_deleted = 0
                GROUP BY v.investment_id
@@ -3054,7 +3054,8 @@ def create_investor(payload: InvestorCreate) -> dict[str, Any]:
         if joining:
             siblings = connection.execute(
                 """SELECT i.investor_id FROM investor_group g JOIN investor i ON i.investor_id = g.investor_id
-                   WHERE g.investment_id = ? AND i.investor_id <> ? AND i.is_joint = 0""",
+                   WHERE g.investment_id = ? AND i.investor_id <> ? AND i.is_joint = 0
+                     AND g.is_deleted = 0 AND i.is_deleted = 0""",
                 (investment_id, investor_id),
             ).fetchall()
             clog = open_corrections()
@@ -3114,7 +3115,7 @@ def contract_persons(contract_id: str) -> dict[str, Any]:
                    p.first_name AS first_name, p.last_name AS last_name, p.nickname AS nickname
             FROM investor i
             LEFT JOIN person p ON p.person_id = i.person_id
-            WHERE i.contract_id = ?
+            WHERE i.contract_id = ? AND i.is_deleted = 0
             """,
             (contract_id,),
         ).fetchall()
@@ -3130,7 +3131,7 @@ def contract_persons(contract_id: str) -> dict[str, Any]:
                 part for part in (r["profession"] or "", residence or "") if part
             )
             appears = connection.execute(
-                "SELECT COUNT(DISTINCT contract_id) AS c FROM investor WHERE person_id = ?",
+                "SELECT COUNT(DISTINCT contract_id) AS c FROM investor WHERE person_id = ? AND is_deleted = 0",
                 (pid,),
             ).fetchone()["c"]
             persons.append({
