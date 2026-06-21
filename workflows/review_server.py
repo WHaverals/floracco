@@ -87,6 +87,14 @@ CORRECTABLE_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "folio": {"label": "Folio", "input_type": "text"},
         "total": {"label": "Total capital", "input_type": "number"},
         "duration_months": {"label": "Duration (months)", "input_type": "number"},
+        # Boolean source facts about the contract (stored 0/1, no NULLs → Yes/No).
+        "automatic_renewal": {"label": "Automatic renewal", "input_type": "bool"},
+        "automatic_renewal_months": {"label": "Renewal period (months)", "input_type": "number"},
+        "clauses": {"label": "Special clauses", "input_type": "bool"},
+        "pl_discretion": {"label": "Place at discretion", "input_type": "bool"},
+        "ec_discretion": {"label": "Economic activity at discretion", "input_type": "bool"},
+        "administrators": {"label": "Administrators named", "input_type": "bool"},
+        "additional_docs": {"label": "Additional documents", "input_type": "bool"},
         # The DB's own narrative text. Editable by decision (2026-06-11): Word
         # summaries are frozen provenance shown alongside; the document field is
         # the living text of record and may diverge from Word over time.
@@ -111,6 +119,7 @@ CORRECTABLE_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "grandfather": {"label": "Grandfather", "input_type": "text"},
         "last_name": {"label": "Last name", "input_type": "text"},
         "nickname": {"label": "Nickname", "input_type": "text"},
+        "is_woman": {"label": "Recorded as woman", "input_type": "bool"},
     },
     # An investor is one person's appearance on one contract. Only the scalar,
     # free-text columns are correctable here; the FK columns (title, place_of_*)
@@ -1519,6 +1528,9 @@ def validate_correction(table: str, field: str, change_type: str, proposed_value
             status_code=400,
             detail=f"Value must be one of: {', '.join(meta.get('options') or [])}.",
         )
+    # bool is stored as 0/1 (the corpus has no NULL booleans — Yes/No is exact).
+    if input_type == "bool" and value not in ("0", "1"):
+        raise HTTPException(status_code=400, detail="Value must be Yes (1) or No (0).")
     return value
 
 
@@ -1664,7 +1676,9 @@ def proposals_by_row() -> dict[str, dict[str, dict[str, Any]]]:
     return out
 
 
-def build_partners(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]:
+def build_partners(
+    connection: sqlite3.Connection, raw_id: str, include_hidden: bool = False
+) -> dict[str, Any]:
     """The contract's people-and-money, as one joined 'Partners' block.
 
     An investor (one person's appearance on this contract) is linked to its
@@ -1749,34 +1763,36 @@ def build_partners(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any
             else None,
         }
 
-    rows: list[dict[str, Any]] = []
-    for inv in investor_rows:
+    def make_partner_row(inv: sqlite3.Row, *, removed: bool = False) -> dict[str, Any]:
         inv_id = inv["investment_id"]
-        rows.append(
-            {
-                "key": f"investor:{inv['investor_id']}",
-                "person": {
-                    "id": str(inv["person_id"]),
-                    "name": person_display_name(inv["first_name"], inv["last_name"], inv["nickname"]),
-                }
-                if inv["person_id"] is not None
-                else None,
-                "role": editable_cell("investment", inv_id, "type", inv["inv_type"], display_text(inv["inv_type"]), proposals)
-                if inv_id is not None
-                else None,
-                "cash": cash_cell(inv_id, inv["investment_cash"], inv["investment_non_cash"], inv["is_joint"]),
-                "profession": editable_cell(
-                    "investor", inv["investor_id"], "profession", inv["profession"], display_text(inv["profession"]), proposals
-                ),
-                "residence": display_text(
-                    lookup_value(connection, "place", "place_id", inv["place_of_residence"], "place_name")
-                ),
-                "status": status_flags(inv),
+        return {
+            "key": f"investor:{inv['investor_id']}",
+            "person": {
+                "id": str(inv["person_id"]),
+                "name": person_display_name(inv["first_name"], inv["last_name"], inv["nickname"]),
             }
-        )
+            if inv["person_id"] is not None
+            else None,
+            "role": editable_cell("investment", inv_id, "type", inv["inv_type"], display_text(inv["inv_type"]), proposals)
+            if inv_id is not None
+            else None,
+            # A removed row shows no joint badge (it's greyed and read-only anyway).
+            "cash": cash_cell(inv_id, inv["investment_cash"], inv["investment_non_cash"], 0 if removed else inv["is_joint"]),
+            "profession": editable_cell(
+                "investor", inv["investor_id"], "profession", inv["profession"], display_text(inv["profession"]), proposals
+            ),
+            "residence": display_text(
+                lookup_value(connection, "place", "place_id", inv["place_of_residence"], "place_name")
+            ),
+            "status": "removed" if removed else status_flags(inv),
+            "removed": removed,
+        }
+
+    rows: list[dict[str, Any]] = [make_partner_row(inv) for inv in investor_rows]
 
     # Unattached investments: money recorded on the contract with no investor
-    # linked through the junction. Rare, but surfacing beats silently dropping.
+    # linked through the junction. Rare, but surfacing beats silently dropping —
+    # and it's exactly the state left when the sole holder of a stake is removed.
     orphan_investments = connection.execute(
         """
         SELECT inv.investment_id AS investment_id, inv.type AS inv_type,
@@ -1803,10 +1819,36 @@ def build_partners(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any
                 "profession": None,
                 "residence": "—",
                 "status": "unattached",
+                "removed": False,
             }
         )
 
-    return {"count": len(rows), "rows": rows}
+    live_count = len(rows)
+
+    # Removed (soft-deleted) partners — only on request; rendered greyed with a
+    # Restore action. Joins their now-deleted links so we can still show who/what
+    # was removed (the investment row itself is left in place, decision 2026-06-17).
+    if include_hidden:
+        removed_rows = connection.execute(
+            """
+            SELECT i.investor_id AS investor_id, i.person_id AS person_id,
+                   i.profession AS profession, i.place_of_residence AS place_of_residence,
+                   i.is_widow AS is_widow, i.is_guardian AS is_guardian, i.is_joint AS is_joint,
+                   p.first_name AS first_name, p.last_name AS last_name, p.nickname AS nickname,
+                   inv.investment_id AS investment_id, inv.type AS inv_type,
+                   inv.investment_cash AS investment_cash, inv.investment_non_cash AS investment_non_cash
+            FROM investor i
+            LEFT JOIN person p ON p.person_id = i.person_id
+            LEFT JOIN investor_group ig ON ig.investor_id = i.investor_id
+            LEFT JOIN investment inv ON inv.investment_id = ig.investment_id
+            WHERE i.contract_id = ? AND i.is_deleted = 1
+            ORDER BY i.investor_id
+            """,
+            (raw_id,),
+        ).fetchall()
+        rows.extend(make_partner_row(inv, removed=True) for inv in removed_rows)
+
+    return {"count": live_count, "rows": rows, "removed_count": len(rows) - live_count}
 
 
 def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]:
@@ -1834,7 +1876,13 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         record_field("Archive / series / folder", "contract", None, None, display_text(archive_ref), corrections),
         record_field("Total capital", "contract", "total", data.get("total"), display_text(total_text), corrections),
         record_field("Duration (months)", "contract", "duration_months", data.get("duration_months"), display_text(data.get("duration_months")), corrections),
-        record_field("Automatic renewal", "contract", None, None, yes_no(data.get("automatic_renewal")), corrections),
+        record_field("Automatic renewal", "contract", "automatic_renewal", data.get("automatic_renewal"), yes_no(data.get("automatic_renewal")), corrections),
+        record_field("Renewal period (months)", "contract", "automatic_renewal_months", data.get("automatic_renewal_months"), display_text(data.get("automatic_renewal_months")), corrections),
+        record_field("Special clauses", "contract", "clauses", data.get("clauses"), yes_no(data.get("clauses")), corrections),
+        record_field("Place at discretion", "contract", "pl_discretion", data.get("pl_discretion"), yes_no(data.get("pl_discretion")), corrections),
+        record_field("Economic activity at discretion", "contract", "ec_discretion", data.get("ec_discretion"), yes_no(data.get("ec_discretion")), corrections),
+        record_field("Administrators named", "contract", "administrators", data.get("administrators"), yes_no(data.get("administrators")), corrections),
+        record_field("Additional documents", "contract", "additional_docs", data.get("additional_docs"), yes_no(data.get("additional_docs")), corrections),
         record_field("Economic sector", "contract", None, None, display_text(sector), corrections),
     ]
 
@@ -1991,7 +2039,7 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
         record_field("Grandfather", "person", "grandfather", data.get("grandfather"), display_text(data.get("grandfather")), corrections),
         record_field("Last name", "person", "last_name", data.get("last_name"), display_text(data.get("last_name")), corrections),
         record_field("Nickname", "person", "nickname", data.get("nickname"), display_text(data.get("nickname")), corrections),
-        record_field("Recorded as woman", "person", None, None, yes_no(data.get("is_woman")), corrections),
+        record_field("Recorded as woman", "person", "is_woman", data.get("is_woman"), yes_no(data.get("is_woman")), corrections),
     ]
 
     contracts = connection.execute(
@@ -2204,7 +2252,7 @@ def db_search(
 
 
 @app.get("/api/db/record/{table}/{record_id}")
-def db_record(table: str, record_id: str) -> dict[str, Any]:
+def db_record(table: str, record_id: str, include_hidden: bool = False) -> dict[str, Any]:
     if table not in DB_BROWSE_TABLES:
         raise HTTPException(status_code=400, detail="Unknown table.")
     connection = open_db()
@@ -2212,6 +2260,9 @@ def db_record(table: str, record_id: str) -> dict[str, Any]:
         if table == "contract":
             record = contract_detail(connection, record_id)
             record["dependents"] = contract_dependents(connection, record_id)
+            # With removed partners requested, rebuild the block to include them.
+            if include_hidden:
+                record["partners"] = build_partners(connection, record_id, include_hidden=True)
         elif table == "sub_contract":
             record = sub_contract_detail(connection, record_id)
         else:
@@ -2281,6 +2332,138 @@ def hide_record(table: str, record_id: str, action: RecordAction) -> dict[str, A
 @app.post("/api/db/record/{table}/{record_id}/restore")
 def restore_record(table: str, record_id: str, action: RecordAction) -> dict[str, Any]:
     return _set_hidden(table, record_id, hidden=False, action=action)
+
+
+# ---------------------------------------------------------------------------
+# Remove / restore a PARTNER (an investor's appearance on a contract).
+#
+# Unlike record hide (one row), this is a small audited cascade: soft-delete the
+# investor + its investor_group link(s), and re-derive `is_joint` on a tranche
+# that drops to a single survivor. The investment row is LEFT in place — if it
+# loses its last investor it simply shows as "unattached" (decision 2026-06-17).
+# Never touches `person` (identity, may appear elsewhere) or lookups. Cross-
+# contract links are unlinked but their (foreign) investment is never re-derived.
+# Reversible + fully logged; see docs/remove_partner_design.md.
+# ---------------------------------------------------------------------------
+
+
+def _rederive_is_joint(
+    connection: sqlite3.Connection,
+    clog: sqlite3.Connection,
+    investment_id: Any,
+    *,
+    reviewer: str,
+    reason: str,
+) -> None:
+    """Set `is_joint` to match the live share structure of one investment:
+    1 if ≥2 live investors share it, else 0. Idempotent — writes (and logs) only
+    the rows that actually change, so a normal solo remove is a no-op here."""
+    members = connection.execute(
+        """SELECT i.investor_id AS investor_id, i.is_joint AS is_joint
+           FROM investor_group g JOIN investor i ON i.investor_id = g.investor_id
+           WHERE g.investment_id = ? AND g.is_deleted = 0 AND i.is_deleted = 0""",
+        (investment_id,),
+    ).fetchall()
+    target = 1 if len(members) >= 2 else 0
+    for m in members:
+        current = 1 if m["is_joint"] in (1, "1", True) else 0
+        if current == target:
+            continue
+        with connection:
+            connection.execute(
+                "UPDATE investor SET is_joint = ? WHERE investor_id = ?", (target, m["investor_id"])
+            )
+        corrections_db.record_operation(
+            clog,
+            op="update",
+            db_table="investor",
+            pk={"investor_id": int(m["investor_id"])},
+            field="is_joint",
+            before_value=str(current),
+            after_value=str(target),
+            by=reviewer,
+            reason=f"is_joint re-derived ({reason})",
+        )
+
+
+def _set_partner_removed(cid: str, investor_id: str, *, removed: bool, action: RecordAction) -> dict[str, Any]:
+    if removed and not action.reason.strip():
+        raise HTTPException(status_code=400, detail="A reason is required to remove a partner.")
+    connection = open_db()
+    clog = open_corrections()
+    try:
+        inv = connection.execute(
+            "SELECT investor_id, contract_id, is_deleted FROM investor WHERE investor_id = ?",
+            (investor_id,),
+        ).fetchone()
+        if not inv or str(inv["contract_id"]) != str(cid):
+            raise HTTPException(status_code=404, detail="Partner not found on this contract.")
+        if bool(inv["is_deleted"]) == removed:
+            raise HTTPException(
+                status_code=409,
+                detail="Partner is already removed." if removed else "Partner is not removed.",
+            )
+        reason = action.reason.strip() or None
+        # Which links to act on: live ones when removing, soft-deleted ones when restoring.
+        links = connection.execute(
+            "SELECT investment_id FROM investor_group WHERE investor_id = ? AND is_deleted = ?",
+            (investor_id, 0 if removed else 1),
+        ).fetchall()
+
+        with connection:
+            connection.execute(
+                "UPDATE investor SET is_deleted = ? WHERE investor_id = ?", (1 if removed else 0, investor_id)
+            )
+        corrections_db.record_operation(
+            clog, op="delete" if removed else "restore", db_table="investor",
+            pk={"investor_id": int(investor_id)}, by=action.reviewer, reason=reason, note=reason,
+        )
+        for link in links:
+            with connection:
+                connection.execute(
+                    "UPDATE investor_group SET is_deleted = ? WHERE investor_id = ? AND investment_id = ?",
+                    (1 if removed else 0, investor_id, link["investment_id"]),
+                )
+            corrections_db.record_operation(
+                clog, op="delete" if removed else "restore", db_table="investor_group",
+                pk={"investor_id": int(investor_id), "investment_id": int(link["investment_id"])},
+                by=action.reviewer, reason=reason, note=reason,
+            )
+
+        unattached = False
+        for link in links:
+            investment = connection.execute(
+                "SELECT contract_id FROM investment WHERE investment_id = ?", (link["investment_id"],)
+            ).fetchone()
+            # Cross-contract guard: never re-derive a foreign contract's tranche.
+            if not investment or str(investment["contract_id"]) != str(cid):
+                continue
+            _rederive_is_joint(
+                connection, clog, link["investment_id"],
+                reviewer=action.reviewer, reason=reason or ("removed" if removed else "restored"),
+            )
+            remaining = connection.execute(
+                """SELECT COUNT(*) AS c FROM investor_group g JOIN investor i ON i.investor_id = g.investor_id
+                   WHERE g.investment_id = ? AND g.is_deleted = 0 AND i.is_deleted = 0""",
+                (link["investment_id"],),
+            ).fetchone()["c"]
+            if removed and remaining == 0:
+                unattached = True
+    finally:
+        clog.close()
+        connection.close()
+    # search.db refreshes on demand (search_index.ensure_fresh) on the next query.
+    return {"ok": True, "removed": removed, "left_unattached": unattached}
+
+
+@app.post("/api/db/contract/{cid}/partner/{investor_id}/remove")
+def remove_partner(cid: str, investor_id: str, action: RecordAction) -> dict[str, Any]:
+    return _set_partner_removed(cid, investor_id, removed=True, action=action)
+
+
+@app.post("/api/db/contract/{cid}/partner/{investor_id}/restore")
+def restore_partner(cid: str, investor_id: str, action: RecordAction) -> dict[str, Any]:
+    return _set_partner_removed(cid, investor_id, removed=False, action=action)
 
 
 # ---------------------------------------------------------------------------
@@ -3535,7 +3718,7 @@ def apply_correction(proposal_id: str, action: CorrectionAction) -> dict[str, An
                 ),
             )
         new_value: Any = proposal["proposed_value"]
-        if meta["input_type"] == "number":
+        if meta["input_type"] in ("number", "bool"):
             new_value = int(proposal["proposed_value"])
         with connection:  # transaction: commit on success, rollback on error
             connection.execute(
@@ -3603,7 +3786,7 @@ def revert_correction(proposal_id: str, action: CorrectionAction) -> dict[str, A
             raise HTTPException(status_code=400, detail=f"'{field}' is not a column of {table}.")
         current = read_db_value(connection, table, pk_value, field)
         restore: Any = proposal["current_value"]
-        if meta["input_type"] == "number":
+        if meta["input_type"] in ("number", "bool"):
             restore = int(proposal["current_value"]) if proposal["current_value"] != "" else None
         with connection:
             connection.execute(

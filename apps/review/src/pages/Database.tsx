@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { hideRecord, imageUrl, loadDbRecord, restoreRecord, searchDb } from "../api";
+import {
+  hideRecord,
+  imageUrl,
+  loadDbRecord,
+  removePartner,
+  restorePartner,
+  restoreRecord,
+  searchDb,
+} from "../api";
 import AddInvestorPanel from "../components/AddInvestorPanel";
 import CreateRecordForm from "../components/CreateRecordForm";
 import InlineFieldEditor from "../components/InlineFieldEditor";
@@ -68,7 +76,8 @@ export default function Database() {
 
   const refreshRecord = useCallback(() => {
     if (!routeId) return;
-    loadDbRecord(routeTable, routeId)
+    // include_hidden so removed partners stay visible (greyed, restorable).
+    loadDbRecord(routeTable, routeId, true)
       .then(setRecord)
       .catch((err: Error) => setRecordError(err.message));
   }, [routeTable, routeId]);
@@ -135,7 +144,7 @@ export default function Database() {
       return;
     }
     setLoadingRecord(true);
-    loadDbRecord(routeTable, routeId)
+    loadDbRecord(routeTable, routeId, true)
       .then((data) => {
         setRecord(data);
         setRecordError("");
@@ -300,6 +309,12 @@ function partnerChipLabel(c: NonNullable<DbEditableCell["correction"]>): string 
   return `Change ${c.status}: → ${c.proposed_value ?? "(flag)"}`;
 }
 
+/** Human-readable proposed value — maps a bool's 0/1 to No/Yes for chips. */
+function proposedLabel(value: string | null | undefined, inputType?: string | null): string {
+  if (inputType === "bool") return value === "1" ? "Yes" : value === "0" ? "No" : value ?? "";
+  return value ?? "";
+}
+
 /** One Partners cell: shows the value with a hover ✎, swaps to the shared
  * InlineFieldEditor while editing, and surfaces any pending correction chip. */
 function PartnerCell({
@@ -349,11 +364,91 @@ function PartnerCell({
   );
 }
 
+/** A self-contained confirm panel for removing or restoring a partner: captures
+ * the reviewer + (for removal) a required reason, states the consequence, and
+ * runs the audited cascade. Mirrors InlineFieldEditor's pattern. */
+function PartnerActionConfirm({
+  mode,
+  consequence,
+  warning,
+  onConfirm,
+  onClose,
+}: {
+  mode: "remove" | "restore";
+  consequence: string;
+  warning: string;
+  onConfirm: (reviewer: string, reason: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const run = async () => {
+    setError("");
+    if (!reviewer.trim()) {
+      setError("Initials needed.");
+      return;
+    }
+    if (mode === "remove" && !reason.trim()) {
+      setError("A reason is required to remove a partner.");
+      return;
+    }
+    localStorage.setItem("floracco_reviewer", reviewer.trim());
+    setBusy(true);
+    try {
+      await onConfirm(reviewer.trim(), reason.trim());
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="partner-confirm">
+      <p className="partner-confirm-lead">
+        {mode === "remove" ? "Remove this partner? " : "Restore this partner? "}
+        <span className="muted">{consequence}</span>
+      </p>
+      {warning && <p className="partner-confirm-warn">⚠ {warning}</p>}
+      <div className="inline-editor-row">
+        {mode === "remove" && (
+          <input
+            className="inline-editor-note"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="reason (required)"
+            aria-label="Reason for removing this partner"
+          />
+        )}
+        <input
+          className="inline-editor-initials"
+          value={reviewer}
+          onChange={(e) => setReviewer(e.target.value)}
+          placeholder="initials"
+          aria-label="Your initials"
+        />
+        <button type="button" className="pill-button" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+        <button type="button" className="pill-button is-active" onClick={run} disabled={busy}>
+          {busy ? "Working…" : mode === "remove" ? "Remove" : "Restore"}
+        </button>
+      </div>
+      {error && <p className="error-text">{error}</p>}
+    </div>
+  );
+}
+
 /** Investors + investments as one editable table. Role comes from the linked
  * investment (gp/lp); a joint investment is shared, so its cash is shown once
- * as shared rather than repeated per partner. */
+ * as shared rather than repeated per partner. Partners can be removed (an
+ * audited soft-delete cascade) and restored — removed rows show greyed below. */
 function PartnersBlock({
   partners,
+  contractId,
   hidden,
   onOpen,
   onCorrectName,
@@ -361,6 +456,7 @@ function PartnersBlock({
   onRefresh,
 }: {
   partners: DbRecord["partners"];
+  contractId: string;
   hidden: boolean;
   onOpen: (table: DbBrowseTable, id: string) => void;
   onCorrectName?: () => void;
@@ -370,8 +466,30 @@ function PartnersBlock({
   // Keyed by `${rowKey}:${column}` (not the cell's db_row_id) so a shared joint
   // investment opens just the one cell you clicked, not both partners' at once.
   const [editing, setEditing] = useState<string | null>(null);
+  // The partner row (key) with an open remove/restore confirm.
+  const [pending, setPending] = useState<{ key: string; mode: "remove" | "restore" } | null>(null);
   const rows = partners?.rows ?? [];
   const count = partners?.count ?? 0;
+  const liveRows = rows.filter((r) => !r.removed);
+  const removedRows = rows.filter((r) => r.removed);
+
+  const investorId = (key: string) => key.split(":")[1];
+
+  const consequenceFor = (row: DbPartnerRow): { text: string; warning: string } => {
+    const shared = row.cash.joint && row.cash.joint_count > 1;
+    const text = shared
+      ? "The shared tranche stays with the other partner(s); it will no longer show as joint."
+      : "Their stake will be left unattached on this contract (not deleted).";
+    let warning = "";
+    const role = row.role?.value;
+    if (role === "gp" || role === "lp") {
+      const sameRole = liveRows.filter((r) => r.person && r.role?.value === role).length;
+      if (sameRole <= 1) {
+        warning = `This is the contract's last ${role === "gp" ? "general (gp)" : "limited (lp)"} partner.`;
+      }
+    }
+    return { text, warning };
+  };
 
   const renderCell = (rowKey: string, cell: DbEditableCell | null) => {
     const key = cell ? `${rowKey}:${cell.column}` : "";
@@ -389,6 +507,44 @@ function PartnersBlock({
       />
     );
   };
+
+  const editableCells = (row: DbPartnerRow) => (
+    <>
+      <td>{renderCell(row.key, row.role)}</td>
+      <td>
+        <div className="partner-cash">
+          {row.cash.field ? renderCell(row.key, row.cash.field) : <span>{row.cash.display}</span>}
+          {row.cash.joint && (
+            <span
+              className="partner-badge"
+              title={
+                row.cash.joint_count > 1
+                  ? `One tranche shared by ${row.cash.joint_count} partners — this is the shared figure, not per-person`
+                  : "Recorded as a joint stake (parallel investments)"
+              }
+            >
+              joint{row.cash.joint_count > 1 ? ` · ${row.cash.joint_count}` : ""}
+            </span>
+          )}
+        </div>
+        {!["", "—", "0"].includes(row.cash.non_cash.trim()) && (
+          <p className="partner-noncash muted">+ {row.cash.non_cash}</p>
+        )}
+      </td>
+      <td>{renderCell(row.key, row.profession)}</td>
+      <td>{row.residence}</td>
+      <td>{row.status}</td>
+    </>
+  );
+
+  const personCell = (row: DbPartnerRow) =>
+    row.person ? (
+      <button type="button" className="db-person-link" onClick={() => onOpen("person", row.person!.id)}>
+        {row.person.name}
+      </button>
+    ) : (
+      <span className="muted">—</span>
+    );
 
   return (
     <section className="db-block">
@@ -425,56 +581,107 @@ function PartnersBlock({
               <th>Profession</th>
               <th>Residence</th>
               <th>Status</th>
+              <th aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
-            {rows.map((row: DbPartnerRow) => (
-              <tr key={row.key}>
-                <td>
-                  {row.person ? (
-                    <button
-                      type="button"
-                      className="db-person-link"
-                      onClick={() => onOpen("person", row.person!.id)}
-                    >
-                      {row.person.name}
-                    </button>
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                </td>
-                <td>{renderCell(row.key, row.role)}</td>
-                <td>
-                  <div className="partner-cash">
-                    {row.cash.field ? (
-                      renderCell(row.key, row.cash.field)
-                    ) : (
-                      <span>{row.cash.display}</span>
-                    )}
-                    {row.cash.joint && (
-                      <span
-                        className="partner-badge"
-                        title={
-                          row.cash.joint_count > 1
-                            ? `One tranche shared by ${row.cash.joint_count} partners — this is the shared figure, not per-person`
-                            : "Recorded as a joint stake (parallel investments)"
+            {liveRows.map((row: DbPartnerRow) => (
+              <Fragment key={row.key}>
+                <tr>
+                  <td>{personCell(row)}</td>
+                  {editableCells(row)}
+                  <td className="partner-actions">
+                    {!hidden && row.person && (
+                      <button
+                        type="button"
+                        className="field-fix partner-remove"
+                        onClick={() =>
+                          setPending(pending?.key === row.key ? null : { key: row.key, mode: "remove" })
                         }
+                        title="Remove this partner from the contract"
                       >
-                        joint{row.cash.joint_count > 1 ? ` · ${row.cash.joint_count}` : ""}
-                      </span>
+                        ✕ Remove
+                      </button>
                     )}
-                  </div>
-                  {!["", "—", "0"].includes(row.cash.non_cash.trim()) && (
-                    <p className="partner-noncash muted">+ {row.cash.non_cash}</p>
-                  )}
-                </td>
-                <td>{renderCell(row.key, row.profession)}</td>
-                <td>{row.residence}</td>
-                <td>{row.status}</td>
-              </tr>
+                  </td>
+                </tr>
+                {pending?.key === row.key && pending.mode === "remove" && (
+                  <tr className="partner-confirm-row">
+                    <td colSpan={7}>
+                      <PartnerActionConfirm
+                        mode="remove"
+                        consequence={consequenceFor(row).text}
+                        warning={consequenceFor(row).warning}
+                        onClose={() => setPending(null)}
+                        onConfirm={async (reviewer, reason) => {
+                          await removePartner(contractId, investorId(row.key), { reviewer, reason });
+                          setPending(null);
+                          onRefresh();
+                        }}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
+      )}
+
+      {removedRows.length > 0 && (
+        <div className="partners-removed">
+          <p className="partners-removed-head muted">
+            Removed partner{removedRows.length > 1 ? "s" : ""} ({removedRows.length}) — hidden from the
+            record, kept in the audit trail.
+          </p>
+          <table className="db-table partners-table is-removed">
+            <tbody>
+              {removedRows.map((row: DbPartnerRow) => (
+                <Fragment key={row.key}>
+                  <tr className="partner-row-removed">
+                    <td>{personCell(row)}</td>
+                    <td className="muted">{row.role?.value ?? "—"}</td>
+                    <td className="muted">{row.cash.display}</td>
+                    <td className="muted">{row.profession?.value ?? "—"}</td>
+                    <td className="muted">{row.residence}</td>
+                    <td className="muted">removed</td>
+                    <td className="partner-actions">
+                      {!hidden && (
+                        <button
+                          type="button"
+                          className="field-fix"
+                          onClick={() =>
+                            setPending(pending?.key === row.key ? null : { key: row.key, mode: "restore" })
+                          }
+                          title="Restore this partner"
+                        >
+                          ↩ Restore
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                  {pending?.key === row.key && pending.mode === "restore" && (
+                    <tr className="partner-confirm-row">
+                      <td colSpan={7}>
+                        <PartnerActionConfirm
+                          mode="restore"
+                          consequence="The partner and their link to the stake come back; a joint tranche is re-formed if applicable."
+                          warning=""
+                          onClose={() => setPending(null)}
+                          onConfirm={async (reviewer, reason) => {
+                            await restorePartner(contractId, investorId(row.key), { reviewer, reason });
+                            setPending(null);
+                            onRefresh();
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );
@@ -633,10 +840,10 @@ function RecordDetail({
             {field.correction && (
               <span className={`field-correction is-${field.correction.status}`}>
                 {field.correction.status === "applied"
-                  ? `Corrected → ${field.correction.proposed_value ?? ""}`
+                  ? `Corrected → ${proposedLabel(field.correction.proposed_value, field.input_type)}`
                   : field.correction.status === "reverted"
                     ? "Correction reverted"
-                    : `Change ${field.correction.status}: → ${field.correction.proposed_value ?? "(flag)"}`}
+                    : `Change ${field.correction.status}: → ${proposedLabel(field.correction.proposed_value, field.input_type) || "(flag)"}`}
               </span>
             )}
             {editingColumn !== null && editingColumn === field.column && (
@@ -789,6 +996,7 @@ function RecordDetail({
       {record.table === "contract" && (
         <PartnersBlock
           partners={record.partners}
+          contractId={record.id}
           hidden={Boolean(record.is_deleted)}
           onOpen={onOpen}
           onCorrectName={onCorrectName}

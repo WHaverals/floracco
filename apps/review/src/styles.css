@@ -2447,6 +2447,57 @@ progress {
   margin: 3px 0 0;
 }
 
+/* Remove / restore a partner */
+.partner-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.partner-remove:hover {
+  color: #a33b2e;
+}
+
+.partner-confirm-row td {
+  background: #fbf4e8;
+}
+
+.partner-confirm {
+  border-left: 3px solid #c98a52;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.partner-confirm-lead {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.partner-confirm-warn {
+  margin: 0;
+  color: #a33b2e;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.partners-removed {
+  margin-top: 14px;
+}
+
+.partners-removed-head {
+  font-size: 0.8rem;
+  margin: 0 0 6px;
+}
+
+.partners-table.is-removed tbody tr.partner-row-removed td {
+  opacity: 0.6;
+}
+
+.partners-table.is-removed tbody tr.partner-row-removed .db-person-link {
+  text-decoration: line-through;
+}
+
 .db-person-link {
   background: none;
   border: none;

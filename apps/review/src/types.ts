@@ -223,7 +223,7 @@ export type DbFieldCorrection = {
   reviewed_by: string | null;
 };
 
-export type DbFieldInputType = "text" | "date" | "number" | "enum" | "textarea";
+export type DbFieldInputType = "text" | "date" | "number" | "enum" | "textarea" | "bool";
 
 export type DbField = {
   label: string;
@@ -276,11 +276,16 @@ export type DbPartnerRow = {
   profession: DbEditableCell | null;
   residence: string;
   status: string;
+  /** Soft-deleted ("removed") partner — only present when the record was loaded
+   * with include_hidden; rendered greyed with a Restore action. */
+  removed: boolean;
 };
 
 export type DbPartners = {
   count: number;
   rows: DbPartnerRow[];
+  /** Number of soft-deleted partner rows included (0 unless include_hidden). */
+  removed_count?: number;
 };
 
 export type DbSection = {

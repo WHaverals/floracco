@@ -68,8 +68,35 @@ export function searchDb(
   return request<DbSearchResponse>(`/api/db/search?${params.toString()}`);
 }
 
-export function loadDbRecord(table: DbBrowseTable, id: string): Promise<DbRecord> {
-  return request<DbRecord>(`/api/db/record/${table}/${encodeURIComponent(id)}`);
+export function loadDbRecord(
+  table: DbBrowseTable,
+  id: string,
+  includeHidden = false,
+): Promise<DbRecord> {
+  const q = includeHidden ? "?include_hidden=1" : "";
+  return request<DbRecord>(`/api/db/record/${table}/${encodeURIComponent(id)}${q}`);
+}
+
+export function removePartner(
+  contractId: string,
+  investorId: string,
+  body: { reviewer: string; reason: string },
+): Promise<{ ok: boolean; left_unattached: boolean }> {
+  return request(
+    `/api/db/contract/${encodeURIComponent(contractId)}/partner/${encodeURIComponent(investorId)}/remove`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export function restorePartner(
+  contractId: string,
+  investorId: string,
+  body: { reviewer: string; reason: string },
+): Promise<{ ok: boolean }> {
+  return request(
+    `/api/db/contract/${encodeURIComponent(contractId)}/partner/${encodeURIComponent(investorId)}/restore`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 }
 
 export function hideRecord(

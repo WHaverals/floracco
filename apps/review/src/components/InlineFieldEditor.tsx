@@ -95,7 +95,17 @@ export default function InlineFieldEditor({
 
   return (
     <div className={`inline-editor${isTextarea ? " is-textarea" : ""}`}>
-      {inputType === "enum" ? (
+      {inputType === "bool" ? (
+        // Stored as 0/1; the corpus has no NULL booleans, so Yes/No is exact.
+        <select
+          ref={inputRef as React.RefObject<HTMLSelectElement>}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        >
+          <option value="1">Yes</option>
+          <option value="0">No</option>
+        </select>
+      ) : inputType === "enum" ? (
         <select
           ref={inputRef as React.RefObject<HTMLSelectElement>}
           value={value}
