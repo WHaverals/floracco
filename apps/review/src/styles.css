@@ -2597,6 +2597,32 @@ progress {
   opacity: 0.55;
 }
 
+/* FK relink field (value + ✎ → lookup combobox) */
+.lookup-field {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.partner-attr:hover .lookup-field .field-fix,
+.db-field:hover .lookup-field .field-fix {
+  opacity: 1;
+}
+
+.lookup-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lookup-editor .lookup-combobox {
+  position: relative;
+}
+
+.lookup-editor .create-label:empty {
+  display: none;
+}
+
 .db-person-link {
   background: none;
   border: none;

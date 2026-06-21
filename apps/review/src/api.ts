@@ -88,6 +88,17 @@ export function removePartner(
   );
 }
 
+export function relinkField(
+  table: string,
+  recordId: string,
+  body: { field: string; value: string; reviewer: string; reason: string },
+): Promise<{ ok: boolean; value: string }> {
+  return request(`/api/db/relink/${encodeURIComponent(table)}/${encodeURIComponent(recordId)}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function restorePartner(
   contractId: string,
   investorId: string,

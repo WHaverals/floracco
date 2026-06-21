@@ -1624,6 +1624,34 @@ def record_field(
     return field
 
 
+def relink_field(
+    connection: sqlite3.Connection,
+    label: str,
+    table: str,
+    pk: Any,
+    column: str,
+    kind: str,
+    current_id: Any,
+) -> dict[str, Any]:
+    """An FK field that re-points to a lookup row (title/place/currency/activity).
+    Shows the resolved phrase + a `relink` descriptor the UI uses to pick an
+    existing phrase, create one verbatim, or clear it — via /api/db/relink. The
+    phrase itself is never edited in place (verbatim rows stay immutable)."""
+    meta = LOOKUP_KINDS[kind]
+    current_text = lookup_value(connection, meta["table"], meta["id"], current_id, meta["value"]) or ""
+    return {
+        "label": label,
+        "value": display_text(current_text),
+        "relink": {
+            "table": table,
+            "pk": str(pk),
+            "field": column,
+            "kind": kind,
+            "current": current_text,
+        },
+    }
+
+
 def _correction_chip(proposal: dict[str, Any] | None) -> dict[str, Any] | None:
     """The compact correction state a record cell carries, or None."""
     if not proposal:
@@ -1784,10 +1812,9 @@ def build_partners(
 
     def partner_attributes(inv: sqlite3.Row) -> dict[str, Any]:
         """The investor's full per-appearance record, grouped for the expand panel.
-        Bool + free-text fields are editable cells; title/place FKs are read-only
-        for now (relink deferred) — shown so the record is complete. `notable`
-        counts the *sparse* meaningful attrs (excludes the ubiquitous title) to
-        drive the row's expand cue."""
+        Bool + free-text fields are editable cells; title/place FKs re-point to a
+        lookup row (relink). `notable` counts the *sparse* meaningful attrs
+        (excludes the ubiquitous title) to drive the row's expand cue."""
         iid = inv["investor_id"]
 
         def boolf(label: str, col: str) -> dict[str, Any]:
@@ -1796,14 +1823,13 @@ def build_partners(
         def textf(label: str, col: str) -> dict[str, Any]:
             return {"label": label, "cell": editable_cell("investor", iid, col, inv[col], display_text(inv[col]), proposals)}
 
-        def titlef(label: str, col: str) -> dict[str, Any]:
-            value = lookup_value(connection, "title", "title_id", inv[col], "title_name")
-            return {"label": label, "locked": True, "value": display_text(value)}
+        def relinkf(label: str, col: str, kind: str) -> dict[str, Any]:
+            return relink_field(connection, label, "investor", iid, col, kind, inv[col])
 
         groups = [
             {"label": "Origin & citizenship", "fields": [
-                {"label": "Place of origin", "locked": True,
-                 "value": display_text(lookup_value(connection, "place", "place_id", inv["place_of_origin"], "place_name"))},
+                relinkf("Place of residence", "place_of_residence", "place"),
+                relinkf("Place of origin", "place_of_origin", "place"),
                 boolf("Citizen of Florence", "citizen_florence"),
             ]},
             {"label": "Religion", "fields": [
@@ -1822,10 +1848,10 @@ def build_partners(
                 boolf("“& company” (e compagni)", "and_c"),
             ]},
             {"label": "Titles", "fields": [
-                titlef("Title", "title"),
-                titlef("Father/mother's title", "title_father_mother"),
-                titlef("Grandfather's title", "title_grandfather"),
-                titlef("Husband's title", "title_husband"),
+                relinkf("Title", "title", "title"),
+                relinkf("Father/mother's title", "title_father_mother", "title"),
+                relinkf("Grandfather's title", "title_grandfather", "title"),
+                relinkf("Husband's title", "title_husband", "title"),
             ]},
         ]
 
@@ -1941,9 +1967,6 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         raise HTTPException(status_code=404, detail="Contract not found.")
     data = dict(row)
     currency = lookup_value(connection, "currency", "currency_id", data.get("currency_id"), "currency")
-    sector = lookup_value(
-        connection, "economic_activity", "ec_activity_id", data.get("economic_sector"), "activity"
-    )
     archive_ref = " / ".join(
         str(part) for part in (data.get("archive"), data.get("series"), data.get("folder")) if part
     )
@@ -1965,7 +1988,8 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         record_field("Economic activity at discretion", "contract", "ec_discretion", data.get("ec_discretion"), yes_no(data.get("ec_discretion")), corrections),
         record_field("Administrators named", "contract", "administrators", data.get("administrators"), yes_no(data.get("administrators")), corrections),
         record_field("Additional documents", "contract", "additional_docs", data.get("additional_docs"), yes_no(data.get("additional_docs")), corrections),
-        record_field("Economic sector", "contract", None, None, display_text(sector), corrections),
+        relink_field(connection, "Economic sector", "contract", raw_id, "economic_sector", "economic_activity", data.get("economic_sector")),
+        relink_field(connection, "Currency", "contract", raw_id, "currency_id", "currency", data.get("currency_id")),
     ]
 
     places = connection.execute(
@@ -2570,6 +2594,20 @@ LOOKUP_KINDS: dict[str, dict[str, str]] = {
     "title": {"table": "title", "id": "title_id", "value": "title_name"},
 }
 
+# FK columns a reviewer may re-point to a lookup row (→ kind). Gate for the relink
+# endpoint; the matching `relink` descriptors are emitted by `relink_field`.
+# (contract_place.place_id — the "Places" section — is deferred: composite PK.)
+RELINK_FIELDS: dict[tuple[str, str], str] = {
+    ("contract", "economic_sector"): "economic_activity",
+    ("contract", "currency_id"): "currency",
+    ("investor", "title"): "title",
+    ("investor", "title_husband"): "title",
+    ("investor", "title_grandfather"): "title",
+    ("investor", "title_father_mother"): "title",
+    ("investor", "place_of_residence"): "place",
+    ("investor", "place_of_origin"): "place",
+}
+
 
 def _strip_accents(text: str) -> str:
     return "".join(
@@ -2876,6 +2914,52 @@ def _resolve_lookup_id(
         reason=reason,
     )
     return new_id
+
+
+class RelinkAction(BaseModel):
+    reviewer: str = Field(min_length=1)
+    field: str
+    value: str = ""          # the chosen/typed phrase; "" → clear to none
+    reason: str = ""
+
+
+@app.post("/api/db/relink/{table}/{record_id}")
+def relink_record(table: str, record_id: str, action: RelinkAction) -> dict[str, Any]:
+    """Re-point an FK column (title/place/currency/economic_sector) to a lookup
+    row: reuse an existing phrase, create one verbatim, or clear to none. Audited
+    as create?(new phrase) + update(FK) — both replay-safe; the deferred `relink`
+    op is not needed. The phrase itself is never edited in place."""
+    kind = RELINK_FIELDS.get((table, action.field))
+    if not kind:
+        raise HTTPException(status_code=400, detail=f"'{action.field}' is not a relinkable field on {table}.")
+    pk_col = PRIMARY_KEY_COLUMN.get(table)
+    if not pk_col:
+        raise HTTPException(status_code=400, detail="Unknown table.")
+    reason = action.reason.strip() or None
+    connection = open_db()
+    clog = open_corrections()
+    try:
+        row = connection.execute(
+            f"SELECT {pk_col} AS pk, {action.field} AS old FROM {table} WHERE {pk_col} = ?", (record_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Record not found.")
+        old_id = row["old"]
+        # reuse-or-create-verbatim (logs a `create` op if a new phrase is minted)
+        new_id = _resolve_lookup_id(connection, kind, action.value, reviewer=action.reviewer, reason=reason or "relink")
+        if normalize_value(new_id) == normalize_value(old_id):
+            raise HTTPException(status_code=409, detail="That is already the recorded value.")
+        with connection:
+            connection.execute(f"UPDATE {table} SET {action.field} = ? WHERE {pk_col} = ?", (new_id, record_id))
+        corrections_db.record_operation(
+            clog, op="update", db_table=table, pk={pk_col: int(record_id)}, field=action.field,
+            before_value=old_id, after_value=new_id, by=action.reviewer, reason=reason,
+        )
+    finally:
+        clog.close()
+        connection.close()
+    # The chosen/typed phrase IS the new display text (verbatim); "" → none ("—").
+    return {"ok": True, "value": action.value.strip()}
 
 
 class ContractCreate(BaseModel):

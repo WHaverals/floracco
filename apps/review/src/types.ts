@@ -225,6 +225,17 @@ export type DbFieldCorrection = {
 
 export type DbFieldInputType = "text" | "date" | "number" | "enum" | "textarea" | "bool";
 
+/** An FK field that re-points to a lookup row (title/place/currency/activity)
+ * via the relink endpoint — reuse an existing phrase, create one verbatim, or
+ * clear. The phrase itself is never edited in place. */
+export type DbRelink = {
+  table: string;
+  pk: string;
+  field: string;
+  kind: "economic_activity" | "place" | "currency" | "title";
+  current: string;
+};
+
 export type DbField = {
   label: string;
   value: string;
@@ -234,6 +245,7 @@ export type DbField = {
   options?: string[] | null;
   current?: string;
   correction?: DbFieldCorrection;
+  relink?: DbRelink;
 };
 
 export type DbSectionRow = {
@@ -275,6 +287,7 @@ export type DbPartnerAttrField = {
   cell?: DbEditableCell;
   value?: string;
   locked?: boolean;
+  relink?: DbRelink;
 };
 
 export type DbPartnerAttrGroup = { label: string; fields: DbPartnerAttrField[] };

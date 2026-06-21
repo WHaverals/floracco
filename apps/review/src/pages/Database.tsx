@@ -5,11 +5,13 @@ import {
   hideRecord,
   imageUrl,
   loadDbRecord,
+  relinkField,
   removePartner,
   restorePartner,
   restoreRecord,
   searchDb,
 } from "../api";
+import LookupCombobox from "../components/LookupCombobox";
 import AddInvestorPanel from "../components/AddInvestorPanel";
 import CreateRecordForm from "../components/CreateRecordForm";
 import InlineFieldEditor from "../components/InlineFieldEditor";
@@ -27,6 +29,7 @@ import type {
   DbPartnerAttrField,
   DbPartnerRow,
   DbRecord,
+  DbRelink,
   DbSearchResult,
 } from "../types";
 
@@ -444,6 +447,125 @@ function PartnerActionConfirm({
   );
 }
 
+/** In-place editor for an FK field: search/pick an existing lookup phrase,
+ * type a new one (stored verbatim), or clear it. Re-points via the relink
+ * endpoint (create?+update) — never edits the shared phrase in place. */
+function InlineLookupEditor({
+  relink,
+  onSaved,
+  onCancel,
+}: {
+  relink: DbRelink;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(relink.current);
+  const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    setError("");
+    if (!reviewer.trim()) {
+      setError("Initials needed.");
+      return;
+    }
+    if (value.trim() === relink.current.trim()) {
+      setError("Value is unchanged.");
+      return;
+    }
+    localStorage.setItem("floracco_reviewer", reviewer.trim());
+    setBusy(true);
+    try {
+      await relinkField(relink.table, relink.pk, {
+        field: relink.field,
+        value: value.trim(),
+        reviewer: reviewer.trim(),
+        reason: reason.trim(),
+      });
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="inline-editor lookup-editor">
+      <LookupCombobox
+        kind={relink.kind}
+        label=""
+        value={value}
+        onChange={setValue}
+        placeholder="search, or type a new phrase — empty = none"
+      />
+      <div className="inline-editor-row">
+        <input
+          className="inline-editor-note"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="why? (optional)"
+        />
+        <input
+          className="inline-editor-initials"
+          value={reviewer}
+          onChange={(e) => setReviewer(e.target.value)}
+          placeholder="initials"
+        />
+        <button type="button" className="pill-button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button type="button" className="pill-button is-active" onClick={save} disabled={busy}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+      {error && <p className="error-text">{error}</p>}
+      <p className="inline-editor-foot muted">
+        Re-points to a lookup phrase (reuse / create verbatim / clear) — audited; the phrase is never edited in place.
+      </p>
+    </div>
+  );
+}
+
+/** An FK value shown read-with-✎: click to re-point it (combobox). */
+function LookupField({
+  relink,
+  value,
+  disabled,
+  onRefresh,
+}: {
+  relink: DbRelink;
+  value: string;
+  disabled: boolean;
+  onRefresh: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    return (
+      <InlineLookupEditor
+        relink={relink}
+        onSaved={() => {
+          setEditing(false);
+          onRefresh();
+        }}
+        onCancel={() => setEditing(false)}
+      />
+    );
+  }
+  return (
+    <span className="lookup-field">
+      <span className="lookup-field-value">{value || "—"}</span>
+      {!disabled && (
+        <button type="button" className="field-fix" onClick={() => setEditing(true)} title="Re-point to a lookup phrase">
+          ✎
+        </button>
+      )}
+    </span>
+  );
+}
+
 /** The expand panel for one partner: the investor's full per-appearance record,
  * grouped, with set values emphasised and unset/empty ones muted (the ✎ appears
  * on hover). Everything stays visible so a reviewer can add a missing flag.
@@ -452,10 +574,14 @@ function PartnerDetailPanel({
   attributes,
   rowKey,
   renderCell,
+  hidden,
+  onRefresh,
 }: {
   attributes: NonNullable<DbPartnerRow["attributes"]>;
   rowKey: string;
   renderCell: (rowKey: string, cell: DbEditableCell | null) => ReactNode;
+  hidden: boolean;
+  onRefresh: () => void;
 }) {
   const isSet = (f: DbPartnerAttrField): boolean => {
     if (f.cell) {
@@ -476,13 +602,10 @@ function PartnerDetailPanel({
                 <dd>
                   {f.cell ? (
                     renderCell(rowKey, f.cell)
+                  ) : f.relink ? (
+                    <LookupField relink={f.relink} value={f.value ?? ""} disabled={hidden} onRefresh={onRefresh} />
                   ) : (
-                    <span
-                      className="partner-attr-locked"
-                      title="Editing titles & places is coming (needs the relink picker)"
-                    >
-                      {f.value} <span className="lock" aria-hidden>🔒</span>
-                    </span>
+                    <span className="partner-attr-locked">{f.value}</span>
                   )}
                 </dd>
               </div>
@@ -680,7 +803,7 @@ function PartnersBlock({
                 {isOpen && row.attributes && (
                   <tr className="partner-detail-row">
                     <td colSpan={8}>
-                      <PartnerDetailPanel attributes={row.attributes} rowKey={row.key} renderCell={renderCell} />
+                      <PartnerDetailPanel attributes={row.attributes} rowKey={row.key} renderCell={renderCell} hidden={hidden} onRefresh={onRefresh} />
                     </td>
                   </tr>
                 )}
@@ -916,7 +1039,18 @@ function RecordDetail({
                 </button>
               )}
             </dt>
-            <dd>{field.value}</dd>
+            <dd>
+              {field.relink ? (
+                <LookupField
+                  relink={field.relink}
+                  value={field.value}
+                  disabled={Boolean(record.is_deleted)}
+                  onRefresh={closeAndRefresh}
+                />
+              ) : (
+                field.value
+              )}
+            </dd>
             {field.correction && (
               <span className={`field-correction is-${field.correction.status}`}>
                 {field.correction.status === "applied"
