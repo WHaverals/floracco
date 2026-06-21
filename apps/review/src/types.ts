@@ -268,6 +268,21 @@ export type DbPartnerCash = {
   field: DbEditableCell | null;
 };
 
+/** One field inside the per-partner detail panel: either an editable cell, or a
+ * read-only FK display value (`locked` — title/place, until relink ships). */
+export type DbPartnerAttrField = {
+  label: string;
+  cell?: DbEditableCell;
+  value?: string;
+  locked?: boolean;
+};
+
+export type DbPartnerAttrGroup = { label: string; fields: DbPartnerAttrField[] };
+
+/** The investor's full per-appearance record, grouped for the expand panel.
+ * `notable` counts the sparse meaningful attrs (drives the row's expand cue). */
+export type DbPartnerAttributes = { notable: number; groups: DbPartnerAttrGroup[] };
+
 export type DbPartnerRow = {
   key: string;
   person: { id: string; name: string } | null;
@@ -279,6 +294,8 @@ export type DbPartnerRow = {
   /** Soft-deleted ("removed") partner — only present when the record was loaded
    * with include_hidden; rendered greyed with a Restore action. */
   removed: boolean;
+  /** Full attribute set for the expand panel (live rows only; null when removed). */
+  attributes: DbPartnerAttributes | null;
 };
 
 export type DbPartners = {

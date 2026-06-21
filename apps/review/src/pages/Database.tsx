@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   hideRecord,
@@ -23,6 +24,7 @@ import type {
   DbEditableCell,
   DbField,
   DbLinkStatus,
+  DbPartnerAttrField,
   DbPartnerRow,
   DbRecord,
   DbSearchResult,
@@ -442,6 +444,56 @@ function PartnerActionConfirm({
   );
 }
 
+/** The expand panel for one partner: the investor's full per-appearance record,
+ * grouped, with set values emphasised and unset/empty ones muted (the ✎ appears
+ * on hover). Everything stays visible so a reviewer can add a missing flag.
+ * Title/place fields are read-only for now (relink deferred). */
+function PartnerDetailPanel({
+  attributes,
+  rowKey,
+  renderCell,
+}: {
+  attributes: NonNullable<DbPartnerRow["attributes"]>;
+  rowKey: string;
+  renderCell: (rowKey: string, cell: DbEditableCell | null) => ReactNode;
+}) {
+  const isSet = (f: DbPartnerAttrField): boolean => {
+    if (f.cell) {
+      if (f.cell.input_type === "bool") return f.cell.current === "1";
+      return (f.cell.current ?? "").trim() !== "";
+    }
+    return Boolean(f.value && f.value !== "—");
+  };
+  return (
+    <div className="partner-detail">
+      {attributes.groups.map((group) => (
+        <section className="partner-detail-group" key={group.label}>
+          <h5>{group.label}</h5>
+          <dl>
+            {group.fields.map((f) => (
+              <div className={`partner-attr ${isSet(f) ? "is-set" : "is-unset"}`} key={f.label}>
+                <dt>{f.label}</dt>
+                <dd>
+                  {f.cell ? (
+                    renderCell(rowKey, f.cell)
+                  ) : (
+                    <span
+                      className="partner-attr-locked"
+                      title="Editing titles & places is coming (needs the relink picker)"
+                    >
+                      {f.value} <span className="lock" aria-hidden>🔒</span>
+                    </span>
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 /** Investors + investments as one editable table. Role comes from the linked
  * investment (gp/lp); a joint investment is shared, so its cash is shown once
  * as shared rather than repeated per partner. Partners can be removed (an
@@ -468,6 +520,8 @@ function PartnersBlock({
   const [editing, setEditing] = useState<string | null>(null);
   // The partner row (key) with an open remove/restore confirm.
   const [pending, setPending] = useState<{ key: string; mode: "remove" | "restore" } | null>(null);
+  // The partner row (key) whose detail panel is expanded (one at a time).
+  const [expanded, setExpanded] = useState<string | null>(null);
   const rows = partners?.rows ?? [];
   const count = partners?.count ?? 0;
   const liveRows = rows.filter((r) => !r.removed);
@@ -575,6 +629,7 @@ function PartnersBlock({
         <table className="db-table partners-table">
           <thead>
             <tr>
+              <th aria-label="Expand" />
               <th>Person</th>
               <th>Role</th>
               <th>Capital</th>
@@ -585,9 +640,26 @@ function PartnersBlock({
             </tr>
           </thead>
           <tbody>
-            {liveRows.map((row: DbPartnerRow) => (
+            {liveRows.map((row: DbPartnerRow) => {
+              const notable = row.attributes?.notable ?? 0;
+              const isOpen = expanded === row.key;
+              return (
               <Fragment key={row.key}>
-                <tr>
+                <tr className={isOpen ? "partner-row-open" : undefined}>
+                  <td className="partner-expand-cell">
+                    {row.person && row.attributes && (
+                      <button
+                        type="button"
+                        className="partner-expand"
+                        aria-expanded={isOpen}
+                        onClick={() => setExpanded(isOpen ? null : row.key)}
+                        title={notable ? `${notable} recorded attribute${notable === 1 ? "" : "s"} — click to view/edit` : "View / edit all attributes"}
+                      >
+                        <span className="partner-chevron">{isOpen ? "▾" : "▸"}</span>
+                        {notable > 0 && <span className="partner-cue">{notable}</span>}
+                      </button>
+                    )}
+                  </td>
                   <td>{personCell(row)}</td>
                   {editableCells(row)}
                   <td className="partner-actions">
@@ -605,9 +677,16 @@ function PartnersBlock({
                     )}
                   </td>
                 </tr>
+                {isOpen && row.attributes && (
+                  <tr className="partner-detail-row">
+                    <td colSpan={8}>
+                      <PartnerDetailPanel attributes={row.attributes} rowKey={row.key} renderCell={renderCell} />
+                    </td>
+                  </tr>
+                )}
                 {pending?.key === row.key && pending.mode === "remove" && (
                   <tr className="partner-confirm-row">
-                    <td colSpan={7}>
+                    <td colSpan={8}>
                       <PartnerActionConfirm
                         mode="remove"
                         consequence={consequenceFor(row).text}
@@ -623,7 +702,8 @@ function PartnersBlock({
                   </tr>
                 )}
               </Fragment>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}

@@ -130,6 +130,17 @@ CORRECTABLE_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "husband_first_name": {"label": "Husband — first name", "input_type": "text"},
         "husband_last_name": {"label": "Husband — last name", "input_type": "text"},
         "guardian_of": {"label": "Guardian of", "input_type": "text"},
+        # Boolean source facts about this investor's appearance (all 0/1, no NULLs).
+        # FK columns (title*, place_of_*) stay read-only here — relink is deferred.
+        "citizen_florence": {"label": "Citizen of Florence", "input_type": "bool"},
+        "via_proxy": {"label": "Acted via proxy", "input_type": "bool"},
+        "is_widow": {"label": "Recorded as widow", "input_type": "bool"},
+        "is_guardian": {"label": "Acting as guardian", "input_type": "bool"},
+        "is_jewish": {"label": "Recorded as Jewish", "input_type": "bool"},
+        "is_convert": {"label": "Recorded as convert", "input_type": "bool"},
+        "heirs": {"label": "Heirs", "input_type": "bool"},
+        "heirs_of": {"label": "Heirs of", "input_type": "bool"},
+        "and_c": {"label": "“& company” (e compagni)", "input_type": "bool"},
     },
     # The money side of an investor's stake. `type` (gp/lp) is the real partnership
     # role. A joint investment is one shared by several investors, so editing its
@@ -1708,7 +1719,15 @@ def build_partners(
         """
         SELECT i.investor_id AS investor_id, i.person_id AS person_id,
                i.profession AS profession, i.place_of_residence AS place_of_residence,
+               i.place_of_origin AS place_of_origin,
                i.is_widow AS is_widow, i.is_guardian AS is_guardian, i.is_joint AS is_joint,
+               i.citizen_florence AS citizen_florence, i.via_proxy AS via_proxy,
+               i.is_jewish AS is_jewish, i.is_convert AS is_convert,
+               i.heirs AS heirs, i.heirs_of AS heirs_of, i.and_c AS and_c,
+               i.husband_first_name AS husband_first_name, i.husband_last_name AS husband_last_name,
+               i.guardian_of AS guardian_of,
+               i.title AS title, i.title_husband AS title_husband,
+               i.title_grandfather AS title_grandfather, i.title_father_mother AS title_father_mother,
                p.first_name AS first_name, p.last_name AS last_name, p.nickname AS nickname,
                inv.investment_id AS investment_id, inv.type AS inv_type,
                inv.investment_cash AS investment_cash, inv.investment_non_cash AS investment_non_cash
@@ -1763,6 +1782,66 @@ def build_partners(
             else None,
         }
 
+    def partner_attributes(inv: sqlite3.Row) -> dict[str, Any]:
+        """The investor's full per-appearance record, grouped for the expand panel.
+        Bool + free-text fields are editable cells; title/place FKs are read-only
+        for now (relink deferred) — shown so the record is complete. `notable`
+        counts the *sparse* meaningful attrs (excludes the ubiquitous title) to
+        drive the row's expand cue."""
+        iid = inv["investor_id"]
+
+        def boolf(label: str, col: str) -> dict[str, Any]:
+            return {"label": label, "cell": editable_cell("investor", iid, col, inv[col], yes_no(inv[col]), proposals)}
+
+        def textf(label: str, col: str) -> dict[str, Any]:
+            return {"label": label, "cell": editable_cell("investor", iid, col, inv[col], display_text(inv[col]), proposals)}
+
+        def titlef(label: str, col: str) -> dict[str, Any]:
+            value = lookup_value(connection, "title", "title_id", inv[col], "title_name")
+            return {"label": label, "locked": True, "value": display_text(value)}
+
+        groups = [
+            {"label": "Origin & citizenship", "fields": [
+                {"label": "Place of origin", "locked": True,
+                 "value": display_text(lookup_value(connection, "place", "place_id", inv["place_of_origin"], "place_name"))},
+                boolf("Citizen of Florence", "citizen_florence"),
+            ]},
+            {"label": "Religion", "fields": [
+                boolf("Recorded as Jewish", "is_jewish"),
+                boolf("Recorded as convert", "is_convert"),
+            ]},
+            {"label": "Capacity — how they participate", "fields": [
+                boolf("Acted via proxy", "via_proxy"),
+                boolf("Recorded as widow", "is_widow"),
+                textf("Husband — first name", "husband_first_name"),
+                textf("Husband — last name", "husband_last_name"),
+                boolf("Acting as guardian", "is_guardian"),
+                textf("Guardian of", "guardian_of"),
+                boolf("Heirs", "heirs"),
+                boolf("Heirs of", "heirs_of"),
+                boolf("“& company” (e compagni)", "and_c"),
+            ]},
+            {"label": "Titles", "fields": [
+                titlef("Title", "title"),
+                titlef("Father/mother's title", "title_father_mother"),
+                titlef("Grandfather's title", "title_grandfather"),
+                titlef("Husband's title", "title_husband"),
+            ]},
+        ]
+
+        notable = sum(
+            1 for col in ("citizen_florence", "via_proxy", "is_widow", "is_guardian",
+                          "is_jewish", "is_convert", "heirs", "heirs_of", "and_c")
+            if inv[col] in (1, "1", True)
+        )
+        if (inv["husband_first_name"] or "").strip() or (inv["husband_last_name"] or "").strip():
+            notable += 1
+        if (inv["guardian_of"] or "").strip():
+            notable += 1
+        if inv["place_of_origin"] not in (0, None):
+            notable += 1
+        return {"notable": notable, "groups": groups}
+
     def make_partner_row(inv: sqlite3.Row, *, removed: bool = False) -> dict[str, Any]:
         inv_id = inv["investment_id"]
         return {
@@ -1786,6 +1865,9 @@ def build_partners(
             ),
             "status": "removed" if removed else status_flags(inv),
             "removed": removed,
+            # The expand panel's full attribute set — live rows only (removed rows
+            # are greyed/read-only and don't carry the extra columns).
+            "attributes": None if removed else partner_attributes(inv),
         }
 
     rows: list[dict[str, Any]] = [make_partner_row(inv) for inv in investor_rows]

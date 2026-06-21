@@ -2498,6 +2498,105 @@ progress {
   text-decoration: line-through;
 }
 
+/* Per-partner expand: chevron + cue, and the detail panel */
+.partner-expand-cell {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.partner-expand {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #8a5a36;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px;
+  font: inherit;
+}
+
+.partner-chevron {
+  font-size: 0.8rem;
+}
+
+.partner-cue {
+  background: #e7d3b4;
+  color: #6f4a2b;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  min-width: 15px;
+  text-align: center;
+  padding: 1px 5px;
+}
+
+.partner-row-open > td {
+  background: #fbf4e8;
+}
+
+.partner-detail-row > td {
+  background: #fcf7ee;
+  padding: 14px 18px;
+}
+
+.partner-detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px 28px;
+}
+
+.partner-detail-group h5 {
+  margin: 0 0 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9d5b2f;
+}
+
+.partner-detail-group dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.partner-attr {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.partner-attr dt {
+  font-size: 0.8rem;
+  color: #6f5a44;
+}
+
+.partner-attr dd {
+  margin: 0;
+}
+
+/* Set values pop; unset/empty recede (✎ still on hover, nothing hidden). */
+.partner-attr.is-unset dd {
+  opacity: 0.5;
+}
+
+.partner-attr.is-set dt {
+  color: #3a2c1d;
+  font-weight: 600;
+}
+
+.partner-attr:hover .field-fix {
+  opacity: 1;
+}
+
+.partner-attr-locked .lock {
+  font-size: 0.72rem;
+  opacity: 0.55;
+}
+
 .db-person-link {
   background: none;
   border: none;
