@@ -1755,6 +1755,118 @@ progress {
   padding: 16px;
 }
 
+/* "Needs review" tab + worklist */
+.db-tab-review {
+  margin-left: auto;
+}
+
+.db-tab-review.is-active {
+  background: #8a5a36;
+  color: #fff;
+}
+
+.db-worklist {
+  overflow: auto;
+  padding: 6px 0 16px;
+}
+
+.worklist-group {
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid #ece1cd;
+}
+
+.worklist-group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.worklist-group-head h4 {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.worklist-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c98a52;
+  flex: none;
+}
+
+.worklist-group.sev-high .worklist-dot {
+  background: #b4452f;
+}
+
+.worklist-count {
+  background: #efe2cc;
+  color: #6f4a2b;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  margin-left: 2px;
+}
+
+.worklist-why {
+  font-size: 0.76rem;
+  margin: 4px 0 8px;
+  line-height: 1.35;
+}
+
+.worklist-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.worklist-group li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.worklist-group li.is-active .worklist-item {
+  background: #f4e7d2;
+}
+
+.worklist-item {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: #3a2c1d;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.worklist-item:hover {
+  background: #fbf4e8;
+}
+
+.worklist-dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #b0a48f;
+  opacity: 0;
+  padding: 2px 6px;
+  font-size: 0.8rem;
+}
+
+.worklist-group li:hover .worklist-dismiss {
+  opacity: 1;
+}
+
+.worklist-dismiss:hover {
+  color: #a33b2e;
+}
+
 .db-detail {
   height: 100%;
   overflow: auto;

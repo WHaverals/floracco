@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from workflows import corrections_db, search_index
+from workflows import corrections_db, data_quality, search_index
 from workflows.word_pipeline import act_components_for_review, folio_sort_key, parse_db_folio
 
 
@@ -64,6 +64,9 @@ EVENTS_PATH = CORRECTIONS_DIR / "corrections_events.jsonl"
 # plus its append-only human dismissal log. Candidates are hypotheses, never writes.
 CANDIDATES_PATH = CORRECTIONS_DIR / "correction_candidates.jsonl"
 CANDIDATE_DISMISSALS_PATH = CORRECTIONS_DIR / "correction_candidate_dismissals.jsonl"
+# DB-intrinsic "Needs review" flags (workflows/data_quality.py, computed live) +
+# their append-only dismissal log ("reviewed, not an error").
+FLAG_DISMISSALS_PATH = CORRECTIONS_DIR / "flag_dismissals.jsonl"
 DEFAULT_DB_PATH = DATA_ROOT / "sqlite/main.db"
 
 # Fields a reviewer may correct in v1: scalar values only, safe to edit as plain
@@ -2960,6 +2963,56 @@ def relink_record(table: str, record_id: str, action: RelinkAction) -> dict[str,
         connection.close()
     # The chosen/typed phrase IS the new display text (verbatim); "" → none ("—").
     return {"ok": True, "value": action.value.strip()}
+
+
+# ---------------------------------------------------------------------------
+# "Needs review" — DB-intrinsic data-quality flags (Tier 1). Computed live over
+# main.db (no Word dependency, is_deleted-filtered); fixing a record removes its
+# flag on the next load. Dismiss = "reviewed, not an error" (append-only log).
+# ---------------------------------------------------------------------------
+
+
+def dismissed_flag_keys() -> set[str]:
+    return {row.get("key") for row in load_jsonl(FLAG_DISMISSALS_PATH) if row.get("key")}
+
+
+@app.get("/api/db/flags")
+def db_flags() -> dict[str, Any]:
+    connection = open_db()
+    try:
+        items = data_quality.flags(connection)
+    finally:
+        connection.close()
+    dismissed = dismissed_flag_keys()
+    items = [f for f in items if f["key"] not in dismissed]
+    groups: dict[str, dict[str, Any]] = {}
+    for f in items:
+        meta = data_quality.GROUP_META[f["group"]]
+        g = groups.setdefault(
+            f["group"],
+            {"group": f["group"], "label": meta["label"], "severity": meta["severity"],
+             "explanation": meta["explanation"], "items": []},
+        )
+        g["items"].append(f)
+    # high severity first, then larger groups
+    ordered = sorted(groups.values(), key=lambda g: (0 if g["severity"] == "high" else 1, -len(g["items"])))
+    return {"total": len(items), "groups": ordered}
+
+
+class FlagDismiss(BaseModel):
+    reviewer: str = Field(min_length=1)
+    reason: str = ""
+
+
+@app.post("/api/db/flags/{key:path}/dismiss")
+def dismiss_flag(key: str, action: FlagDismiss) -> dict[str, Any]:
+    FLAG_DISMISSALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with FLAG_DISMISSALS_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "key": key, "reviewer": action.reviewer, "reason": action.reason.strip(),
+            "at": datetime.now(timezone.utc).isoformat(),
+        }) + "\n")
+    return {"ok": True, "dismissed": key}
 
 
 class ContractCreate(BaseModel):

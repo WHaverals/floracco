@@ -88,6 +88,20 @@ export function removePartner(
   );
 }
 
+export function loadFlags(): Promise<import("./types").DbFlagsResponse> {
+  return request("/api/db/flags");
+}
+
+export function dismissFlag(
+  key: string,
+  body: { reviewer: string; reason: string },
+): Promise<{ ok: boolean }> {
+  return request(`/api/db/flags/${encodeURIComponent(key)}/dismiss`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function relinkField(
   table: string,
   recordId: string,

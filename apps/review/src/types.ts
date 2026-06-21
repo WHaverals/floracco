@@ -199,6 +199,27 @@ export type HighlightValue = {
 
 export type DbBrowseTable = "contract" | "sub_contract" | "person";
 
+/** A "Needs review" data-quality flag (computed live by the backend). */
+export type DbFlagFix = { kind: string; field: string | null; investor_id?: string };
+export type DbFlag = {
+  key: string;
+  group: string;
+  table: DbBrowseTable;
+  pk: string;
+  title: string;
+  severity: "high" | "medium";
+  explanation: string;
+  fix: DbFlagFix;
+};
+export type DbFlagGroup = {
+  group: string;
+  label: string;
+  severity: "high" | "medium";
+  explanation: string;
+  items: DbFlag[];
+};
+export type DbFlagsResponse = { total: number; groups: DbFlagGroup[] };
+
 export type DbSearchResult = {
   id: string;
   row_id: string;

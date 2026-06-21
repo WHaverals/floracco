@@ -2,9 +2,11 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
+  dismissFlag,
   hideRecord,
   imageUrl,
   loadDbRecord,
+  loadFlags,
   relinkField,
   removePartner,
   restorePartner,
@@ -26,6 +28,8 @@ import type {
   DbEditableCell,
   DbField,
   DbLinkStatus,
+  DbFlag,
+  DbFlagGroup,
   DbPartnerAttrField,
   DbPartnerRow,
   DbRecord,
@@ -79,13 +83,28 @@ export default function Database() {
   const [actionMessage, setActionMessage] = useState("");
   const debounce = useRef<number | undefined>(undefined);
 
+  // "Needs review" worklist (a query-param mode, orthogonal to the shown record).
+  const reviewMode = searchParams.get("review") === "1";
+  const [flagGroups, setFlagGroups] = useState<DbFlagGroup[]>([]);
+  const [flagTotal, setFlagTotal] = useState(0);
+
+  const loadFlagsNow = useCallback(() => {
+    loadFlags()
+      .then((r) => {
+        setFlagGroups(r.groups);
+        setFlagTotal(r.total);
+      })
+      .catch(() => undefined);
+  }, []);
+
   const refreshRecord = useCallback(() => {
     if (!routeId) return;
     // include_hidden so removed partners stay visible (greyed, restorable).
     loadDbRecord(routeTable, routeId, true)
       .then(setRecord)
       .catch((err: Error) => setRecordError(err.message));
-  }, [routeTable, routeId]);
+    if (reviewMode) loadFlagsNow(); // a fix drops the flag from the live list
+  }, [routeTable, routeId, reviewMode, loadFlagsNow]);
 
   useEffect(() => {
     setTable(routeTable);
@@ -172,9 +191,34 @@ export default function Database() {
   const changeTable = useCallback(
     (nextTable: DbBrowseTable) => {
       setSearch("");
-      navigate(`/database/${nextTable}`);
+      navigate(`/database/${nextTable}`);   // (drops ?review)
     },
     [navigate],
+  );
+
+  // Keep the flag count/worklist fresh: on mount, and whenever the record changes
+  // (so the tab badge is live and a just-fixed record drops off the list).
+  useEffect(() => {
+    loadFlagsNow();
+  }, [routeId, loadFlagsNow]);
+
+  const flagHref = useCallback((flag: DbFlag) => {
+    const param = flag.fix.field ?? flag.fix.kind;
+    const inv = flag.fix.investor_id ? `&inv=${flag.fix.investor_id}` : "";
+    return `/database/${flag.table}/${encodeURIComponent(flag.pk)}?review=1&fix=${encodeURIComponent(param)}${inv}`;
+  }, []);
+
+  const dismissFlagNow = useCallback(
+    (flag: DbFlag) => {
+      let who = localStorage.getItem("floracco_reviewer") ?? "";
+      if (!who.trim()) {
+        who = window.prompt("Your initials (for the audit trail):") ?? "";
+        if (!who.trim()) return;
+        localStorage.setItem("floracco_reviewer", who.trim());
+      }
+      dismissFlag(flag.key, { reviewer: who.trim(), reason: "" }).then(loadFlagsNow).catch(() => undefined);
+    },
+    [loadFlagsNow],
   );
 
   // Picker → open the person's own record, where every name field is editable
@@ -198,37 +242,88 @@ export default function Database() {
               <button
                 key={tab.id}
                 type="button"
-                className={tab.id === table ? "db-tab is-active" : "db-tab"}
+                className={!reviewMode && tab.id === table ? "db-tab is-active" : "db-tab"}
                 onClick={() => changeTable(tab.id)}
               >
                 {tab.label}
               </button>
             ))}
-          </div>
-          <input
-            className="db-search"
-            type="search"
-            placeholder="Search firm, folio, name, or id…"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          {table === "contract" && (
             <button
               type="button"
-              className="db-new-button"
-              onClick={() => navigate("/database/contract/new")}
+              className={reviewMode ? "db-tab db-tab-review is-active" : "db-tab db-tab-review"}
+              onClick={() => navigate(routeId ? `/database/${routeTable}/${routeId}?review=1` : "/database?review=1")}
+              title="Records the data flags as possibly needing a fix"
             >
-              + New contract
+              ⚑ Needs review{flagTotal ? ` (${flagTotal})` : ""}
             </button>
+          </div>
+          {reviewMode ? (
+            <p className="db-count muted">
+              {flagTotal === 0
+                ? "All clear — no records flagged."
+                : `${flagTotal} record${flagTotal === 1 ? "" : "s"} flagged. Suggestions only — you decide; nothing changes until you edit.`}
+            </p>
+          ) : (
+            <>
+              <input
+                className="db-search"
+                type="search"
+                placeholder="Search firm, folio, name, or id…"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              {table === "contract" && (
+                <button
+                  type="button"
+                  className="db-new-button"
+                  onClick={() => navigate("/database/contract/new")}
+                >
+                  + New contract
+                </button>
+              )}
+              <label className="db-show-hidden">
+                <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
+                Show hidden
+              </label>
+              <p className="db-count muted">
+                {listError ? listError : `Showing ${shown} of ${total.toLocaleString()}`}
+              </p>
+            </>
           )}
-          <label className="db-show-hidden">
-            <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
-            Show hidden
-          </label>
-          <p className="db-count muted">
-            {listError ? listError : `Showing ${shown} of ${total.toLocaleString()}`}
-          </p>
         </div>
+        {reviewMode ? (
+          <div className="db-worklist">
+            {flagGroups.length === 0 && <p className="db-empty muted">All clear.</p>}
+            {flagGroups.map((group) => (
+              <section key={group.group} className={`worklist-group sev-${group.severity}`}>
+                <header className="worklist-group-head">
+                  <span className="worklist-dot" aria-hidden />
+                  <h4>
+                    {group.label} <span className="worklist-count">{group.items.length}</span>
+                  </h4>
+                </header>
+                <p className="worklist-why muted">{group.explanation}</p>
+                <ul>
+                  {group.items.map((flag) => (
+                    <li key={flag.key} className={flag.table === routeTable && flag.pk === routeId ? "is-active" : undefined}>
+                      <button type="button" className="worklist-item" onClick={() => navigate(flagHref(flag))}>
+                        {flag.title}
+                      </button>
+                      <button
+                        type="button"
+                        className="worklist-dismiss"
+                        title="Not an issue — dismiss"
+                        onClick={() => dismissFlagNow(flag)}
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        ) : (
         <ul className="db-results">
           {results.map((item) => (
             <li key={item.row_id}>
@@ -246,6 +341,7 @@ export default function Database() {
             <li className="db-empty muted">No records match.</li>
           )}
         </ul>
+        )}
       </aside>
 
       <section className="db-detail">
