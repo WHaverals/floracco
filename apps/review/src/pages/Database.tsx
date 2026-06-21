@@ -367,6 +367,8 @@ export default function Database() {
         {record && !loadingRecord && (
           <RecordDetail
             record={record}
+            autoFixField={searchParams.get("fix") ?? ""}
+            autoFixInv={searchParams.get("inv") ?? ""}
             onOpen={openRecord}
             onOpenSource={setOpenSourceId}
             onRefresh={refreshRecord}
@@ -631,13 +633,15 @@ function LookupField({
   value,
   disabled,
   onRefresh,
+  autoOpen = false,
 }: {
   relink: DbRelink;
   value: string;
   disabled: boolean;
   onRefresh: () => void;
+  autoOpen?: boolean;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(autoOpen && !disabled);
   if (editing) {
     return (
       <InlineLookupEditor
@@ -721,6 +725,7 @@ function PartnersBlock({
   partners,
   contractId,
   hidden,
+  autoExpandInvestor = null,
   onOpen,
   onCorrectName,
   onAddInvestor,
@@ -729,6 +734,7 @@ function PartnersBlock({
   partners: DbRecord["partners"];
   contractId: string;
   hidden: boolean;
+  autoExpandInvestor?: string | null;
   onOpen: (table: DbBrowseTable, id: string) => void;
   onCorrectName?: () => void;
   onAddInvestor: () => void;
@@ -740,7 +746,13 @@ function PartnersBlock({
   // The partner row (key) with an open remove/restore confirm.
   const [pending, setPending] = useState<{ key: string; mode: "remove" | "restore" } | null>(null);
   // The partner row (key) whose detail panel is expanded (one at a time).
-  const [expanded, setExpanded] = useState<string | null>(null);
+  // A deep-link from the worklist (?inv=) expands the flagged partner on arrival.
+  const [expanded, setExpanded] = useState<string | null>(
+    autoExpandInvestor ? `investor:${autoExpandInvestor}` : null,
+  );
+  useEffect(() => {
+    if (autoExpandInvestor) setExpanded(`investor:${autoExpandInvestor}`);
+  }, [autoExpandInvestor]);
   const rows = partners?.rows ?? [];
   const count = partners?.count ?? 0;
   const liveRows = rows.filter((r) => !r.removed);
@@ -988,6 +1000,8 @@ function PartnersBlock({
 
 function RecordDetail({
   record,
+  autoFixField,
+  autoFixInv,
   onOpen,
   onOpenSource,
   onRefresh,
@@ -1002,6 +1016,8 @@ function RecordDetail({
   actionMessage,
 }: {
   record: DbRecord;
+  autoFixField: string;
+  autoFixInv: string;
   onOpen: (table: DbBrowseTable, id: string) => void;
   onOpenSource: (sourceEntryId: string) => void;
   onRefresh: () => void;
@@ -1037,10 +1053,24 @@ function RecordDetail({
       ].filter(Boolean)
     : [];
 
-  // Close any open editor when the record changes.
+  // Close any open editor when the record changes, then act on a deep-link
+  // `?fix=` from the "Needs review" worklist: open the right editor on arrival.
+  // (Contract relink fields + partner-scoped fixes are auto-opened by the
+  // LookupField/PartnersBlock props below; here we handle scalar + add-investor.)
   useEffect(() => {
     setEditingColumn(null);
-  }, [record.row_id]);
+    setAddingInvestor(false);
+    if (!autoFixField) return;
+    if (autoFixField === "add_investor") {
+      setAddingInvestor(true);
+    } else if (autoFixField !== "review_partners" && !autoFixInv) {
+      const f = record.fields.find((x) => x.column === autoFixField);
+      if (f) setEditingColumn(autoFixField); // scalar/bool/date/enum field
+    }
+    // Deps exclude record.fields on purpose: fire once per navigation, not on
+    // every refresh (a save reloads the record but must not re-open the editor).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [record.row_id, autoFixField, autoFixInv]);
 
   const closeAndRefresh = () => {
     setEditingColumn(null);
@@ -1142,6 +1172,7 @@ function RecordDetail({
                   value={field.value}
                   disabled={Boolean(record.is_deleted)}
                   onRefresh={closeAndRefresh}
+                  autoOpen={!autoFixInv && field.relink.field === autoFixField}
                 />
               ) : (
                 field.value
@@ -1308,6 +1339,7 @@ function RecordDetail({
           partners={record.partners}
           contractId={record.id}
           hidden={Boolean(record.is_deleted)}
+          autoExpandInvestor={autoFixInv || null}
           onOpen={onOpen}
           onCorrectName={onCorrectName}
           onAddInvestor={() => setAddingInvestor((v) => !v)}
