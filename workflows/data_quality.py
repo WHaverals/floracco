@@ -39,7 +39,7 @@ GROUP_META: dict[str, dict[str, str]] = {
     "dup_partner": {
         "label": "Possible duplicate partner",
         "severity": "medium",
-        "explanation": "This person appears twice on the contract with the same role and the same stake — likely entered twice. Check the act; remove the duplicate if so.",
+        "explanation": "This person appears more than once on the contract without a second distinct stake — either an extra appearance with no investment attached, or two links to the same single investment. Likely entered twice. Check the act; if so, remove the redundant appearance (the stake's capital is unaffected — it's one investment).",
     },
     "person_no_name": {
         "label": "Unnamed person",

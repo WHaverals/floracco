@@ -1731,12 +1731,17 @@ def build_partners(
     are both surfaced rather than dropped. Live rows only (is_deleted = 0)."""
     proposals = proposals_by_row()
 
-    # How many live investors share each investment on this contract → joint.
+    # How many *distinct people* share each investment on this contract → joint.
+    # COUNT(DISTINCT person_id), NOT COUNT(*): a person double-linked to one
+    # investment (a real data fault, separately flagged as dup_partner) must not
+    # inflate the "joint · N" badge — that would over-report co-investment, which is
+    # exactly what the project studies. Two real co-holders still count as 2; one
+    # person entered twice counts as 1 (so the stake is correctly not joint).
     joint_counts = {
         r["investment_id"]: r["c"]
         for r in connection.execute(
             """
-            SELECT ig.investment_id AS investment_id, COUNT(*) AS c
+            SELECT ig.investment_id AS investment_id, COUNT(DISTINCT i.person_id) AS c
             FROM investor_group ig
             JOIN investor i ON i.investor_id = ig.investor_id
             WHERE i.contract_id = ? AND ig.is_deleted = 0 AND i.is_deleted = 0
