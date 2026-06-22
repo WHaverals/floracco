@@ -66,6 +66,11 @@ GROUP_META: dict[str, dict[str, str]] = {
         "severity": "medium",
         "explanation": "This later act has no type (balance / renewal / termination / variation). Set it from the act.",
     },
+    "widow_not_woman": {
+        "label": "Marked widow, not a woman",
+        "severity": "medium",
+        "explanation": "Recorded as a widow on a contract but not marked as a woman — one of the two is likely wrong. Check the act and fix whichever it is.",
+    },
 }
 
 
@@ -182,5 +187,18 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
         "SELECT contract_id AS scid, sub_firm_name AS firm FROM sub_contract WHERE is_deleted=0 AND COALESCE(sub_type,'')=''"
     ):
         add("missing_sub_type", "sub_contract", r["scid"], _firm(r["firm"], r["scid"]), {"kind": "edit", "field": "sub_type"})
+
+    # 10. recorded as a widow but the person isn't marked a woman — a human decides
+    # which is wrong (we deliberately do NOT auto-backfill this). The fix deep-links
+    # to the person's "Recorded as woman" toggle; if instead the widow flag is the
+    # error, the reviewer corrects that on the contract.
+    for r in connection.execute(
+        """SELECT DISTINCT p.person_id AS pid, p.first_name AS fn, p.last_name AS ln
+           FROM person p
+           WHERE p.is_deleted=0 AND p.is_woman=0
+             AND EXISTS (SELECT 1 FROM investor i WHERE i.person_id=p.person_id AND i.is_widow=1 AND i.is_deleted=0)"""
+    ):
+        who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"Person #{r['pid']}"
+        add("widow_not_woman", "person", r["pid"], who, {"kind": "edit", "field": "is_woman"})
 
     return out
