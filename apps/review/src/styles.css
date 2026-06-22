@@ -1831,6 +1831,7 @@ progress {
 
 .worklist-group li.is-active .worklist-item {
   background: #f4e7d2;
+  color: #3a2c1d; /* dark text on the cream highlight */
 }
 
 .worklist-item {
@@ -1840,13 +1841,14 @@ progress {
   border: none;
   cursor: pointer;
   font: inherit;
-  color: #3a2c1d;
+  color: #d8c7ac; /* warm light tan — readable on the dark rail (was #3a2c1d, ~1.5:1) */
   padding: 4px 8px;
   border-radius: 6px;
 }
 
 .worklist-item:hover {
   background: #fbf4e8;
+  color: #3a2c1d; /* dark text once the background turns cream */
 }
 
 .worklist-dismiss {
@@ -2521,7 +2523,8 @@ progress {
   background: #fbf4e8;
 }
 
-.partners-table tbody tr:hover .field-fix {
+.partners-table tbody tr:hover .field-fix,
+.db-table tbody tr:hover .field-fix {
   opacity: 1;
 }
 
@@ -2565,7 +2568,18 @@ progress {
   white-space: nowrap;
 }
 
+/* Remove is destructive + uncommon → quieter than the edit pills: borderless and
+   muted, with destructive (red) intent only on direct hover. */
+.partner-remove {
+  border-color: transparent;
+  color: #b2a081;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
 .partner-remove:hover {
+  background: transparent;
+  border-color: #d8b3a8;
   color: #a33b2e;
 }
 

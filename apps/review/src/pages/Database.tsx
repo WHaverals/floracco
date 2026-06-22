@@ -458,8 +458,8 @@ function PartnerCell({
     <div className="partner-cell">
       <span className="partner-cell-value">{cell.value}</span>
       {cell.editable && !disabled && (
-        <button type="button" className="field-fix" onClick={onEdit} title={`Fix ${cell.column}`}>
-          ✎
+        <button type="button" className="field-fix" onClick={onEdit} title={`Edit ${cell.column}`}>
+          ✎ Edit
         </button>
       )}
       {cell.correction && (
@@ -662,8 +662,8 @@ function LookupField({
     <span className="lookup-field">
       <span className="lookup-field-value">{value || "—"}</span>
       {!disabled && (
-        <button type="button" className="field-fix" onClick={() => setEditing(true)} title="Re-point to a lookup phrase">
-          ✎
+        <button type="button" className="field-fix" onClick={() => setEditing(true)} title="Edit — re-points to a lookup phrase">
+          ✎ Edit
         </button>
       )}
     </span>
@@ -841,7 +841,7 @@ function PartnersBlock({
         <h3>Partners ({count})</h3>
         {!hidden && onCorrectName && (
           <button type="button" className="field-fix" onClick={onCorrectName} title="Correct a person’s name">
-            ✎ Fix a name
+            ✎ Edit a name
           </button>
         )}
         {!hidden && (
@@ -1149,7 +1149,7 @@ function PlacesBlock({
                       <span className="lookup-field">
                         <span className="lookup-field-value">{row.address || "—"}</span>
                         {!hidden && (
-                          <button type="button" className="field-fix" onClick={() => setEditingAddr(row.key)} title="Edit the address">✎</button>
+                          <button type="button" className="field-fix" onClick={() => setEditingAddr(row.key)} title="Edit the address">✎ Edit</button>
                         )}
                       </span>
                     )}
@@ -1403,9 +1403,9 @@ function RecordDetail({
                   type="button"
                   className="field-fix"
                   onClick={() => setEditingColumn(field.column)}
-                  title={`Fix ${field.label}`}
+                  title={`Edit ${field.label}`}
                 >
-                  ✎ Fix
+                  ✎ Edit
                 </button>
               )}
             </dt>
