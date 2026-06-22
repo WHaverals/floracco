@@ -2,7 +2,9 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
+  addPlace,
   dismissFlag,
+  editPlaceAddress,
   hideRecord,
   imageUrl,
   loadDbRecord,
@@ -12,6 +14,7 @@ import {
   restorePartner,
   restoreRecord,
   searchDb,
+  setPlaceRemoved,
 } from "../api";
 import LookupCombobox from "../components/LookupCombobox";
 import AddInvestorPanel from "../components/AddInvestorPanel";
@@ -32,6 +35,7 @@ import type {
   DbFlagGroup,
   DbPartnerAttrField,
   DbPartnerRow,
+  DbPlace,
   DbRecord,
   DbRelink,
   DbSearchResult,
@@ -998,6 +1002,246 @@ function PartnersBlock({
   );
 }
 
+/** Inline editor for a place's free-text address (composite-PK row → its own
+ * endpoint, not the shared correction flow). */
+function PlaceAddressEditor({
+  contractId,
+  placeId,
+  current,
+  onSaved,
+  onCancel,
+}: {
+  contractId: string;
+  placeId: string;
+  current: string;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(current);
+  const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const save = async () => {
+    setError("");
+    if (!reviewer.trim()) return setError("Initials needed.");
+    if (value.trim() === current.trim()) return setError("Address is unchanged.");
+    localStorage.setItem("floracco_reviewer", reviewer.trim());
+    setBusy(true);
+    try {
+      await editPlaceAddress(contractId, placeId, { address: value.trim(), reviewer: reviewer.trim(), reason: "" });
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="inline-editor">
+      <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="address (empty = none)" autoFocus />
+      <div className="inline-editor-row">
+        <input className="inline-editor-initials" value={reviewer} onChange={(e) => setReviewer(e.target.value)} placeholder="initials" />
+        <button type="button" className="pill-button" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button type="button" className="pill-button is-active" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+      </div>
+      {error && <p className="error-text">{error}</p>}
+    </div>
+  );
+}
+
+/** Add a place to a contract: pick/create the place (combobox) + optional address. */
+function AddPlaceForm({ contractId, onSaved, onCancel }: { contractId: string; onSaved: () => void; onCancel: () => void }) {
+  const [place, setPlace] = useState("");
+  const [address, setAddress] = useState("");
+  const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const save = async () => {
+    setError("");
+    if (!place.trim()) return setError("A place is required.");
+    if (!reviewer.trim()) return setError("Initials needed.");
+    localStorage.setItem("floracco_reviewer", reviewer.trim());
+    setBusy(true);
+    try {
+      await addPlace(contractId, { place: place.trim(), address: address.trim(), reviewer: reviewer.trim(), reason: "" });
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="inline-editor lookup-editor">
+      <LookupCombobox kind="place" label="" value={place} onChange={setPlace} placeholder="search, or type a new place" />
+      <div className="inline-editor-row">
+        <input className="inline-editor-note" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="address (optional)" />
+        <input className="inline-editor-initials" value={reviewer} onChange={(e) => setReviewer(e.target.value)} placeholder="initials" />
+        <button type="button" className="pill-button" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button type="button" className="pill-button is-active" onClick={save} disabled={busy}>{busy ? "Adding…" : "Add place"}</button>
+      </div>
+      {error && <p className="error-text">{error}</p>}
+    </div>
+  );
+}
+
+/** The contract's place(s), editable: edit the address, remove/restore a place,
+ * or add one. Re-pointing a place = remove + add (its id is part of the key). */
+function PlacesBlock({
+  places,
+  contractId,
+  hidden,
+  onRefresh,
+}: {
+  places: DbRecord["places"];
+  contractId: string;
+  hidden: boolean;
+  onRefresh: () => void;
+}) {
+  const [pending, setPending] = useState<{ key: string; mode: "remove" | "restore" } | null>(null);
+  const [editingAddr, setEditingAddr] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const rows = places?.rows ?? [];
+  const count = places?.count ?? 0;
+  const live = rows.filter((r) => !r.removed);
+  const removed = rows.filter((r) => r.removed);
+  const placeId = (key: string) => key.split(":")[1];
+
+  return (
+    <section className="db-block">
+      <div className="db-block-head">
+        <h3>Places ({count})</h3>
+        {!hidden && (
+          <button type="button" className="field-fix" onClick={() => setAdding((v) => !v)} title="Add a place this firm operated in">
+            + Add place
+          </button>
+        )}
+      </div>
+      {adding && !hidden && (
+        <AddPlaceForm contractId={contractId} onCancel={() => setAdding(false)} onSaved={() => { setAdding(false); onRefresh(); }} />
+      )}
+      {count === 0 && !adding ? (
+        <p className="muted">No place is recorded for this contract.</p>
+      ) : (
+        <table className="db-table">
+          <thead>
+            <tr>
+              <th>Place</th>
+              <th>Address</th>
+              <th aria-label="Actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {live.map((row: DbPlace) => (
+              <Fragment key={row.key}>
+                <tr>
+                  <td>{row.place}</td>
+                  <td>
+                    {editingAddr === row.key ? (
+                      <PlaceAddressEditor
+                        contractId={contractId}
+                        placeId={row.place_id}
+                        current={row.address}
+                        onCancel={() => setEditingAddr(null)}
+                        onSaved={() => { setEditingAddr(null); onRefresh(); }}
+                      />
+                    ) : (
+                      <span className="lookup-field">
+                        <span className="lookup-field-value">{row.address || "—"}</span>
+                        {!hidden && (
+                          <button type="button" className="field-fix" onClick={() => setEditingAddr(row.key)} title="Edit the address">✎</button>
+                        )}
+                      </span>
+                    )}
+                  </td>
+                  <td className="partner-actions">
+                    {!hidden && (
+                      <button
+                        type="button"
+                        className="field-fix partner-remove"
+                        onClick={() => setPending(pending?.key === row.key ? null : { key: row.key, mode: "remove" })}
+                        title="Remove this place from the contract"
+                      >
+                        ✕ Remove
+                      </button>
+                    )}
+                  </td>
+                </tr>
+                {pending?.key === row.key && pending.mode === "remove" && (
+                  <tr className="partner-confirm-row">
+                    <td colSpan={3}>
+                      <PartnerActionConfirm
+                        mode="remove"
+                        consequence={`"${row.place}" will be removed from this contract.`}
+                        warning=""
+                        onClose={() => setPending(null)}
+                        onConfirm={async (reviewer, reason) => {
+                          await setPlaceRemoved(contractId, row.place_id, true, { reviewer, reason });
+                          setPending(null);
+                          onRefresh();
+                        }}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {removed.length > 0 && (
+        <div className="partners-removed">
+          <p className="partners-removed-head muted">
+            Removed place{removed.length > 1 ? "s" : ""} ({removed.length}) — kept in the audit trail.
+          </p>
+          <table className="db-table is-removed">
+            <tbody>
+              {removed.map((row: DbPlace) => (
+                <Fragment key={row.key}>
+                  <tr className="partner-row-removed">
+                    <td className="muted">{row.place}</td>
+                    <td className="muted">{row.address || "—"}</td>
+                    <td className="partner-actions">
+                      {!hidden && (
+                        <button
+                          type="button"
+                          className="field-fix"
+                          onClick={() => setPending(pending?.key === row.key ? null : { key: row.key, mode: "restore" })}
+                          title="Restore this place"
+                        >
+                          ↩ Restore
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                  {pending?.key === row.key && pending.mode === "restore" && (
+                    <tr className="partner-confirm-row">
+                      <td colSpan={3}>
+                        <PartnerActionConfirm
+                          mode="restore"
+                          consequence="The place comes back on this contract."
+                          warning=""
+                          onClose={() => setPending(null)}
+                          onConfirm={async (reviewer, reason) => {
+                            await setPlaceRemoved(contractId, row.place_id, false, { reviewer, reason });
+                            setPending(null);
+                            onRefresh();
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function RecordDetail({
   record,
   autoFixField,
@@ -1343,6 +1587,15 @@ function RecordDetail({
           onOpen={onOpen}
           onCorrectName={onCorrectName}
           onAddInvestor={() => setAddingInvestor((v) => !v)}
+          onRefresh={closeAndRefresh}
+        />
+      )}
+
+      {record.table === "contract" && (
+        <PlacesBlock
+          places={record.places}
+          contractId={record.id}
+          hidden={Boolean(record.is_deleted)}
           onRefresh={closeAndRefresh}
         />
       )}

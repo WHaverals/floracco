@@ -102,6 +102,40 @@ export function dismissFlag(
   });
 }
 
+export function addPlace(
+  contractId: string,
+  body: { place: string; address: string; reviewer: string; reason: string },
+): Promise<{ ok: boolean }> {
+  return request(`/api/db/contract/${encodeURIComponent(contractId)}/place/add`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function setPlaceRemoved(
+  contractId: string,
+  placeId: string,
+  removed: boolean,
+  body: { reviewer: string; reason: string },
+): Promise<{ ok: boolean }> {
+  const verb = removed ? "remove" : "restore";
+  return request(`/api/db/contract/${encodeURIComponent(contractId)}/place/${encodeURIComponent(placeId)}/${verb}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function editPlaceAddress(
+  contractId: string,
+  placeId: string,
+  body: { address: string; reviewer: string; reason: string },
+): Promise<{ ok: boolean; value: string }> {
+  return request(`/api/db/contract/${encodeURIComponent(contractId)}/place/${encodeURIComponent(placeId)}/address`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function relinkField(
   table: string,
   recordId: string,

@@ -1962,6 +1962,31 @@ def build_partners(
     return {"count": live_count, "rows": rows, "removed_count": len(rows) - live_count}
 
 
+def build_places(connection: sqlite3.Connection, raw_id: str, include_hidden: bool = False) -> dict[str, Any]:
+    """The contract's place(s) — where the firm operated — as an editable block.
+    `address` is free text (editable); the place itself is re-pointed by remove +
+    add (its place_id is part of the composite PK). Live rows only by default."""
+    def make(pl: sqlite3.Row, *, removed: bool = False) -> dict[str, Any]:
+        return {
+            "key": f"place:{pl['place_id']}",
+            "place_id": str(pl["place_id"]),
+            "place": display_text(pl["place_name"]),
+            "address": pl["address"] or "",
+            "removed": removed,
+        }
+
+    sql = (
+        "SELECT cp.place_id AS place_id, cp.address AS address, p.place_name AS place_name "
+        "FROM contract_place cp LEFT JOIN place p ON p.place_id = cp.place_id "
+        "WHERE cp.contract_id = ? AND cp.is_deleted = ? ORDER BY cp.place_id"
+    )
+    rows = [make(pl) for pl in connection.execute(sql, (raw_id, 0)).fetchall()]
+    live_count = len(rows)
+    if include_hidden:
+        rows.extend(make(pl, removed=True) for pl in connection.execute(sql, (raw_id, 1)).fetchall())
+    return {"count": live_count, "rows": rows, "removed_count": len(rows) - live_count}
+
+
 def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]:
     row = connection.execute(
         "SELECT * FROM contract WHERE contract_id = ?", (raw_id,)
@@ -1995,15 +2020,7 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         relink_field(connection, "Currency", "contract", raw_id, "currency_id", "currency", data.get("currency_id")),
     ]
 
-    places = connection.execute(
-        """
-        SELECT cp.address AS address, p.place_name AS place_name
-        FROM contract_place cp
-        LEFT JOIN place p ON p.place_id = cp.place_id
-        WHERE cp.contract_id = ? AND cp.is_deleted = 0
-        """,
-        (raw_id,),
-    ).fetchall()
+    places = build_places(connection, raw_id)
     subs = connection.execute(
         """
         SELECT contract_id, sub_type, registration_date, folio, sub_firm_name
@@ -2038,22 +2055,6 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
                 ],
             }
         )
-    if places:
-        sections.append(
-            {
-                "title": f"Places ({len(places)})",
-                "columns": ["Place", "Address"],
-                "link_table": None,
-                "rows": [
-                    {
-                        "id": "",
-                        "cells": [display_text(pl["place_name"]), display_text(pl["address"])],
-                    }
-                    for pl in places
-                ],
-            }
-        )
-
     return {
         "table": "contract",
         "id": str(raw_id),
@@ -2062,6 +2063,7 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         "subtitle": f"Main contract · {raw_id}",
         "fields": fields,
         "partners": partners,
+        "places": places,
         "sections": sections,
         "document": clean_document(data.get("document")),
         "document_correction": corrections.get("document"),
@@ -2372,6 +2374,7 @@ def db_record(table: str, record_id: str, include_hidden: bool = False) -> dict[
             # With removed partners requested, rebuild the block to include them.
             if include_hidden:
                 record["partners"] = build_partners(connection, record_id, include_hidden=True)
+                record["places"] = build_places(connection, record_id, include_hidden=True)
         elif table == "sub_contract":
             record = sub_contract_detail(connection, record_id)
         else:
@@ -2963,6 +2966,134 @@ def relink_record(table: str, record_id: str, action: RelinkAction) -> dict[str,
         connection.close()
     # The chosen/typed phrase IS the new display text (verbatim); "" → none ("—").
     return {"ok": True, "value": action.value.strip()}
+
+
+# ---------------------------------------------------------------------------
+# Contract places — add / remove / restore / edit-address. The place itself is
+# part of the composite PK, so "re-pointing" a place = remove + add (both audited
+# + replay-safe). The address is a plain editable text field. No cascade.
+# ---------------------------------------------------------------------------
+
+
+class PlaceAdd(BaseModel):
+    reviewer: str = Field(min_length=1)
+    place: str = Field(min_length=1)   # the place phrase (reused on exact match, else created verbatim)
+    address: str = ""
+    reason: str = ""
+
+
+class PlaceAddress(BaseModel):
+    reviewer: str = Field(min_length=1)
+    address: str = ""
+    reason: str = ""
+
+
+@app.post("/api/db/contract/{cid}/place/add")
+def add_place(cid: str, payload: PlaceAdd) -> dict[str, Any]:
+    connection = open_db()
+    clog = open_corrections()
+    try:
+        if not connection.execute("SELECT 1 FROM contract WHERE contract_id = ?", (cid,)).fetchone():
+            raise HTTPException(status_code=404, detail="Contract not found.")
+        reason = payload.reason.strip() or "added a place"
+        place_id = _resolve_lookup_id(connection, "place", payload.place, reviewer=payload.reviewer, reason=reason)
+        if place_id is None:
+            raise HTTPException(status_code=400, detail="A place is required.")
+        addr = payload.address.strip() or None
+        existing = connection.execute(
+            "SELECT is_deleted FROM contract_place WHERE contract_id = ? AND place_id = ?", (cid, place_id)
+        ).fetchone()
+        if existing and not existing["is_deleted"]:
+            raise HTTPException(status_code=409, detail="That place is already on this contract.")
+        if existing:  # a soft-deleted link → restore it (+ refresh address) rather than duplicate the PK
+            with connection:
+                connection.execute(
+                    "UPDATE contract_place SET is_deleted = 0, address = ? WHERE contract_id = ? AND place_id = ?",
+                    (addr, cid, place_id),
+                )
+            corrections_db.record_operation(
+                clog, op="restore", db_table="contract_place",
+                pk={"place_id": int(place_id), "contract_id": int(cid)}, by=payload.reviewer, reason=reason,
+            )
+        else:
+            _insert_and_log(
+                connection, table="contract_place",
+                pk={"place_id": int(place_id), "contract_id": int(cid)},
+                data={"place_id": int(place_id), "contract_id": int(cid), "address": addr, "place_db": 0, "is_deleted": 0},
+                reviewer=payload.reviewer, reason=reason,
+            )
+    finally:
+        clog.close()
+        connection.close()
+    return {"ok": True}
+
+
+def _set_place_removed(cid: str, place_id: str, *, removed: bool, action: RecordAction) -> dict[str, Any]:
+    if removed and not action.reason.strip():
+        raise HTTPException(status_code=400, detail="A reason is required to remove a place.")
+    connection = open_db()
+    clog = open_corrections()
+    try:
+        row = connection.execute(
+            "SELECT is_deleted FROM contract_place WHERE contract_id = ? AND place_id = ?", (cid, place_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Place not found on this contract.")
+        if bool(row["is_deleted"]) == removed:
+            raise HTTPException(status_code=409, detail="Place is already in that state.")
+        with connection:
+            connection.execute(
+                "UPDATE contract_place SET is_deleted = ? WHERE contract_id = ? AND place_id = ?",
+                (1 if removed else 0, cid, place_id),
+            )
+        corrections_db.record_operation(
+            clog, op="delete" if removed else "restore", db_table="contract_place",
+            pk={"place_id": int(place_id), "contract_id": int(cid)},
+            by=action.reviewer, reason=action.reason.strip() or None,
+        )
+    finally:
+        clog.close()
+        connection.close()
+    return {"ok": True, "removed": removed}
+
+
+@app.post("/api/db/contract/{cid}/place/{place_id}/remove")
+def remove_place(cid: str, place_id: str, action: RecordAction) -> dict[str, Any]:
+    return _set_place_removed(cid, place_id, removed=True, action=action)
+
+
+@app.post("/api/db/contract/{cid}/place/{place_id}/restore")
+def restore_place(cid: str, place_id: str, action: RecordAction) -> dict[str, Any]:
+    return _set_place_removed(cid, place_id, removed=False, action=action)
+
+
+@app.post("/api/db/contract/{cid}/place/{place_id}/address")
+def edit_place_address(cid: str, place_id: str, payload: PlaceAddress) -> dict[str, Any]:
+    connection = open_db()
+    clog = open_corrections()
+    try:
+        row = connection.execute(
+            "SELECT address FROM contract_place WHERE contract_id = ? AND place_id = ? AND is_deleted = 0", (cid, place_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Place not found on this contract.")
+        old = row["address"]
+        new = payload.address.strip() or None
+        if normalize_value(old) == normalize_value(new):
+            raise HTTPException(status_code=409, detail="The address is unchanged.")
+        with connection:
+            connection.execute(
+                "UPDATE contract_place SET address = ? WHERE contract_id = ? AND place_id = ?", (new, cid, place_id)
+            )
+        corrections_db.record_operation(
+            clog, op="update", db_table="contract_place",
+            pk={"place_id": int(place_id), "contract_id": int(cid)}, field="address",
+            before_value=old, after_value=new, by=payload.reviewer, reason=payload.reason.strip() or None,
+        )
+    finally:
+        clog.close()
+        connection.close()
+    return {"ok": True, "value": payload.address.strip()}
 
 
 # ---------------------------------------------------------------------------

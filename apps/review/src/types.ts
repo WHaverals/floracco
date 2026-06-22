@@ -311,6 +311,18 @@ export type DbPartnerAttrField = {
   relink?: DbRelink;
 };
 
+/** One place a contract's firm operated in. The place itself is re-pointed by
+ * remove + add (its id is part of the composite key); `address` is editable text. */
+export type DbPlace = {
+  key: string;
+  place_id: string;
+  place: string;
+  address: string;
+  removed: boolean;
+};
+
+export type DbPlaces = { count: number; rows: DbPlace[]; removed_count?: number };
+
 export type DbPartnerAttrGroup = { label: string; fields: DbPartnerAttrField[] };
 
 /** The investor's full per-appearance record, grouped for the expand panel.
@@ -473,6 +485,8 @@ export type DbRecord = {
   fields: DbField[];
   /** Contracts only: people + role + capital, merged from investor/investment. */
   partners?: DbPartners | null;
+  /** Contracts only: the place(s) the firm operated in (editable). */
+  places?: DbPlaces | null;
   sections: DbSection[];
   document: string | null;
   /** Latest correction touching the narrative (document) field, if any. */
