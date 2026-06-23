@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from workflows import corrections_db, data_quality, search_index
+from workflows import corrections_db, data_quality, search_index, word_cross_check
 from workflows.word_pipeline import act_components_for_review, folio_sort_key, parse_db_folio
 
 
@@ -1627,6 +1627,22 @@ def record_field(
     return field
 
 
+def _attach_word_check(connection: sqlite3.Connection, fields: list[dict[str, Any]], db_row_id: str) -> None:
+    """Attach the curated Word↔DB registration-date cross-check (if any) to the date field.
+    Read-only evidence for the reviewer; never a write. Degrades gracefully — if the Word
+    derived files are absent, the record still loads."""
+    try:
+        check = word_cross_check.check_for(connection, db_row_id)
+    except Exception:
+        check = None
+    if not check or not check.get("surfaced"):  # T3 (one-day) is computed but held back
+        return
+    for field in fields:
+        if field.get("column") == "registration_date":
+            field["word_check"] = check
+            break
+
+
 def relink_field(
     connection: sqlite3.Connection,
     label: str,
@@ -2024,6 +2040,7 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         relink_field(connection, "Economic sector", "contract", raw_id, "economic_sector", "economic_activity", data.get("economic_sector")),
         relink_field(connection, "Currency", "contract", raw_id, "currency_id", "currency", data.get("currency_id")),
     ]
+    _attach_word_check(connection, fields, f"contract:{raw_id}")
 
     places = build_places(connection, raw_id)
     subs = connection.execute(
@@ -2098,6 +2115,7 @@ def sub_contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str
         record_field("Folio", "sub_contract", "folio", data.get("folio"), display_text(data.get("folio")), corrections),
         record_field("Archive / series / folder", "sub_contract", None, None, display_text(archive_ref), corrections),
     ]
+    _attach_word_check(connection, fields, f"sub_contract:{raw_id}")
 
     sections: list[dict[str, Any]] = []
     main_id = data.get("main_contract_id")
@@ -3112,18 +3130,63 @@ def dismissed_flag_keys() -> set[str]:
     return {row.get("key") for row in load_jsonl(FLAG_DISMISSALS_PATH) if row.get("key")}
 
 
+WORD_DATE_GROUP_META = {
+    "label": "Word source — date differs",
+    "severity": "medium",
+    "explanation": (
+        "An independent transcription (the Word source) records a different registration date for "
+        "this act. Open the record, compare against the narrative and the folio image, and correct "
+        "the date only if the database is wrong — Word is evidence, not the truth."
+    ),
+}
+
+
+def _word_date_flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Surfaced Word↔DB registration-date conflicts as 'Needs review' flags (Word-coupled,
+    kept out of the Word-free data_quality module). Read-only; degrades to [] if the Word
+    build is absent. Deep-links via kind 'word_date' → opens the evidence panel, not the
+    editor (verify against the manuscript before correcting). Tracked-change cases first."""
+    try:
+        checks = word_cross_check.build_checks(connection)
+    except Exception:
+        return []
+    firms = {r[0]: r[1] for r in connection.execute("SELECT contract_id, firm_name FROM contract")}
+    subs = {r[0]: r[1] for r in connection.execute("SELECT contract_id, sub_firm_name FROM sub_contract")}
+    out: list[dict[str, Any]] = []
+    for rid, c in checks.items():
+        if not c.get("surfaced"):
+            continue
+        table, _, pk = rid.partition(":")
+        name = (firms.get(int(pk)) if table == "contract" else subs.get(int(pk))) or ""
+        name = name.strip() or (f"Contract {pk}" if table == "contract" else f"Sub-contract {pk}")
+        tracked = c["tier"] == "tracked_change"
+        out.append({
+            "key": f"{table}:{pk}:word_date_differs",
+            "group": "word_date_differs",
+            "table": table,
+            "pk": str(pk),
+            "title": f"{name} — DB {c['db_display']} vs Word {c['word_display']}" + (" · revision" if tracked else ""),
+            "severity": "medium",
+            "explanation": WORD_DATE_GROUP_META["explanation"],
+            "fix": {"kind": "word_date", "field": None},
+        })
+    out.sort(key=lambda f: 0 if f["title"].endswith("· revision") else 1)  # tracked-change first
+    return out
+
+
 @app.get("/api/db/flags")
 def db_flags() -> dict[str, Any]:
     connection = open_db()
     try:
-        items = data_quality.flags(connection)
+        items = data_quality.flags(connection) + _word_date_flags(connection)
     finally:
         connection.close()
     dismissed = dismissed_flag_keys()
     items = [f for f in items if f["key"] not in dismissed]
+    meta_lookup = {**data_quality.GROUP_META, "word_date_differs": WORD_DATE_GROUP_META}
     groups: dict[str, dict[str, Any]] = {}
     for f in items:
-        meta = data_quality.GROUP_META[f["group"]]
+        meta = meta_lookup[f["group"]]
         g = groups.setdefault(
             f["group"],
             {"group": f["group"], "label": meta["label"], "severity": meta["severity"],

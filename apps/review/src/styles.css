@@ -2514,6 +2514,106 @@ progress {
   color: #6b5840;
 }
 
+/* "Word source — differs" — evidence on the registration-date field. Quiet amber
+   (never error-red: it's a hypothesis to verify, not a defect). */
+.word-check {
+  margin-top: 6px;
+}
+
+.word-check-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid #e2c7a8;
+  border-radius: 999px;
+  color: #8a6a44;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 2px 10px;
+}
+
+.word-check-tag:hover {
+  background: #fbf1e0;
+}
+
+.word-check-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c98a52;
+  flex: none;
+}
+
+.word-check.is-tracked .word-check-dot {
+  background: #b9772f;
+}
+
+.word-check-kind {
+  color: #a98c63;
+  font-weight: 700;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.word-check-chev {
+  color: #b39a78;
+}
+
+.word-check-body {
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: #fbf4e8;
+  border-left: 3px solid #d6aa7d;
+  border-radius: 0 8px 8px 0;
+  max-width: 56ch;
+}
+
+.word-check.is-tracked .word-check-body {
+  border-left-color: #b9772f;
+}
+
+.word-check-statement {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: #3a2c1d;
+}
+
+.word-check-statement strong {
+  font-weight: 700;
+}
+
+.word-check-raw {
+  margin: 4px 0 0;
+  font-size: 0.74rem;
+  font-style: italic;
+}
+
+.word-check-rev {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+}
+
+.word-check-rev-label {
+  color: #6f5a3f;
+  font-weight: 600;
+}
+
+.word-check-thumb {
+  margin-top: 10px;
+  max-width: 220px;
+}
+
+.word-check-hint {
+  margin: 10px 0 0;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
 /* Partners block — investors + investments merged into one editable table. */
 .partners-table td {
   vertical-align: top;

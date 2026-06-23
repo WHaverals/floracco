@@ -257,6 +257,31 @@ export type DbRelink = {
   current: string;
 };
 
+/** A curated Word↔DB registration-date disagreement, surfaced on the date field as
+ * *evidence* for the reviewer to verify against the manuscript — never an assertion or an
+ * auto-fix. `tier` ranks confidence; only tracked_change / clear are surfaced (one_day is
+ * held). Dates are calendar-normalized (stile fiorentino resolved); `word_raw` is the
+ * verbatim transcription. Image paths feed the existing /api/images endpoint. */
+export type WordDateCheck = {
+  db_row_id: string;
+  table: "contract" | "sub_contract";
+  field: "registration_date";
+  tier: "tracked_change" | "clear" | "one_day";
+  surfaced: boolean;
+  db_value: string;
+  db_display: string | null;
+  word_iso: string;
+  word_display: string | null;
+  word_raw: string;
+  gap_days: number;
+  revision: { removed: string[]; added: string[]; author: string | null } | null;
+  source_entry_id: string | null;
+  field_overlap_count: number;
+  folio: string | null;
+  page_side: "recto" | "verso" | null;
+  images: { primary: string | null; prev: string | null; next: string | null };
+};
+
 export type DbField = {
   label: string;
   value: string;
@@ -267,6 +292,8 @@ export type DbField = {
   current?: string;
   correction?: DbFieldCorrection;
   relink?: DbRelink;
+  /** Present only on registration_date when a curated Word↔DB conflict exists (step 3 renders it). */
+  word_check?: WordDateCheck | null;
 };
 
 export type DbSectionRow = {

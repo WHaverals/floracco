@@ -37,6 +37,7 @@ import type {
   DbPartnerRow,
   DbPlace,
   DbRecord,
+  WordDateCheck,
   DbRelink,
   DbSearchResult,
 } from "../types";
@@ -1242,6 +1243,96 @@ function PlacesBlock({
   );
 }
 
+/** Evidence-only "Word source — differs" affordance on the registration-date field.
+ * Shows the calendar-normalized comparison, the tracked-change lens (T1), and the folio
+ * image (correct page + adjacent leaves for the dual-numbering off-by-one). It never
+ * asserts the DB is wrong and never edits — the reviewer verifies, then uses ✎ Edit. */
+function WordDateCheckPanel({ check, autoOpen = false }: { check: WordDateCheck; autoOpen?: boolean }) {
+  const [open, setOpen] = useState(autoOpen);
+  const [lightbox, setLightbox] = useState(false);
+  // Open on a worklist deep-link (?fix=word_date); reset to default when the record changes.
+  useEffect(() => {
+    setOpen(autoOpen);
+  }, [check.db_row_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Leaf order prev · primary · next, so the reviewer can leaf around an off-by-one link.
+  const leaves = (["prev", "primary", "next"] as const)
+    .map((k) => check.images[k])
+    .filter((p): p is string => Boolean(p));
+  const startIdx = Math.max(0, leaves.indexOf(check.images.primary ?? ""));
+  const [leaf, setLeaf] = useState(startIdx);
+  const tracked = check.tier === "tracked_change";
+
+  const nav =
+    leaves.length > 1 ? (
+      <>
+        <button type="button" className="img-nav-btn" disabled={leaf === 0} onClick={() => setLeaf((i) => Math.max(0, i - 1))} aria-label="Previous leaf">◀</button>
+        <span className="img-counter">leaf {leaf + 1} / {leaves.length}</span>
+        <button type="button" className="img-nav-btn" disabled={leaf >= leaves.length - 1} onClick={() => setLeaf((i) => Math.min(leaves.length - 1, i + 1))} aria-label="Next leaf">▶</button>
+      </>
+    ) : null;
+
+  return (
+    <div className={`word-check ${tracked ? "is-tracked" : "is-clear"}`}>
+      <button type="button" className="word-check-tag" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <span className="word-check-dot" aria-hidden />
+        Word source — differs
+        <span className="word-check-kind">{tracked ? "revision" : `±${check.gap_days}d`}</span>
+        <span className="word-check-chev" aria-hidden>{open ? "▾" : "▸"}</span>
+      </button>
+
+      {open && (
+        <div className="word-check-body">
+          <p className="word-check-statement">
+            Word source records this registration date as <strong>{check.word_display}</strong>; the
+            database records <strong>{check.db_display}</strong>. Consult the narrative and folio image
+            before correcting.
+          </p>
+          <p className="word-check-raw muted">transcribed: “{check.word_raw}”</p>
+
+          {check.revision && (
+            <p className="word-check-rev">
+              <span className="word-check-rev-label">Revision in the Word source:</span>{" "}
+              {check.revision.removed.map((t, i) => (
+                <span key={`d${i}`} className="rev-del">{t}</span>
+              ))}
+              {check.revision.removed.length > 0 && check.revision.added.length > 0 ? " → " : null}
+              {check.revision.added.map((t, i) => (
+                <span key={`a${i}`} className="rev-ins">{t}</span>
+              ))}
+              {check.revision.author ? <span className="muted"> · {check.revision.author}</span> : null}
+            </p>
+          )}
+
+          {leaves.length > 0 && (
+            <button type="button" className="manuscript-thumb word-check-thumb" onClick={() => { setLeaf(startIdx); setLightbox(true); }} title="Open the folio — zoom and pan">
+              <img src={imageUrl(leaves[startIdx])} alt={`Folio ${check.folio ?? ""}`} loading="lazy" />
+              <span className="manuscript-thumb-label">
+                Folio {check.folio ?? "?"}{check.page_side ? ` · ${check.page_side}` : ""}
+                <span className="manuscript-thumb-zoom">⤢ inspect</span>
+              </span>
+            </button>
+          )}
+
+          <p className="word-check-hint muted">
+            Word is evidence, not the truth — verify against the image, then correct with ✎ Edit above
+            only if the database is wrong.
+          </p>
+        </div>
+      )}
+
+      {lightbox && leaves.length > 0 && (
+        <ManuscriptLightbox
+          src={imageUrl(leaves[leaf])}
+          alt={`Folio ${check.folio ?? ""}`}
+          label={`Folio ${check.folio ?? ""}${check.page_side ? ` · ${check.page_side}` : ""}`}
+          toolbarExtra={nav}
+          onClose={() => setLightbox(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 function RecordDetail({
   record,
   autoFixField,
@@ -1430,6 +1521,9 @@ function RecordDetail({
                     ? "Correction reverted"
                     : `Change ${field.correction.status}: → ${proposedLabel(field.correction.proposed_value, field.input_type) || "(flag)"}`}
               </span>
+            )}
+            {field.word_check && !record.is_deleted && (
+              <WordDateCheckPanel check={field.word_check} autoOpen={autoFixField === "word_date"} />
             )}
             {editingColumn !== null && editingColumn === field.column && (
               <InlineFieldEditor
