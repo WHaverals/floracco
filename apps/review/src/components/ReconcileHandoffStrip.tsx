@@ -1,5 +1,4 @@
 import { Link } from "react-router-dom";
-import { correctionsHandoffUrl } from "../utils/reviewLinks";
 
 type Props = {
   dbRowId: string;
@@ -8,16 +7,16 @@ type Props = {
   onDismiss: () => void;
 };
 
-export default function ReconcileHandoffStrip({ dbRowId, sourceEntryId, onNext, onDismiss }: Props) {
+export default function ReconcileHandoffStrip({ dbRowId, onNext, onDismiss }: Props) {
   return (
     <div className="reconcile-handoff" role="status">
       <div className="reconcile-handoff-text">
-        <strong>Link confirmed.</strong> Next: check whether the date or folio on{" "}
-        <code>{dbRowId}</code> should match the Word source.
+        <strong>Link confirmed.</strong> Next: open the record — if the date disagrees with the
+        Word source, a “Word source — differs” note on the record shows the evidence.
       </div>
       <div className="reconcile-handoff-actions">
-        <Link className="primary-button" to={correctionsHandoffUrl(sourceEntryId, dbRowId)} onClick={onDismiss}>
-          Fix in Corrections →
+        <Link className="primary-button" to={`/database/${dbRowId.replace(":", "/")}`} onClick={onDismiss}>
+          Open in Database →
         </Link>
         <button type="button" className="pill-button" onClick={() => { onDismiss(); onNext(); }}>
           Next case

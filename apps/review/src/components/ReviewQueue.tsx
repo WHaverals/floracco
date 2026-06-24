@@ -1,5 +1,6 @@
 import type { CasePreview, ReviewSummary } from "../types";
 import { orderReviewBuckets, shortReviewBucket } from "../utils/reviewBuckets";
+import { caseLabel } from "../utils/reviewLabels";
 
 type Filters = {
   bucket: string;
@@ -127,8 +128,10 @@ export default function ReviewQueue({
                 <strong title={currentCase.recommended_review_bucket}>
                   {shortReviewBucket(currentCase.recommended_review_bucket)}
                 </strong>
-                <span>{currentCase.register_id}</span>
-                <span>{currentCase.source_entry_id || currentCase.suggested_db_row_ids}</span>
+                <span>{caseLabel(currentCase).primary}</span>
+                <span title={currentCase.source_entry_id || currentCase.suggested_db_row_ids}>
+                  {caseLabel(currentCase).secondary}
+                </span>
               </>
             ) : (
               <span>No case matches the current filters.</span>
@@ -138,6 +141,7 @@ export default function ReviewQueue({
           <ul className="queue-list" aria-label="Cases in this filtered queue">
             {cases.map((item) => {
               const isActive = item.review_id === selectedReviewId;
+              const label = caseLabel(item);
               return (
                 <li key={item.review_id}>
                   <button
@@ -146,8 +150,12 @@ export default function ReviewQueue({
                     onClick={() => onSelect(item.review_id)}
                     aria-current={isActive}
                   >
-                    <span className="queue-list-text">
-                      <strong>{item.source_entry_id || item.suggested_db_row_ids || item.register_id}</strong>
+                    <span
+                      className="queue-list-text"
+                      title={item.source_entry_id || item.suggested_db_row_ids || item.register_id}
+                    >
+                      <strong>{label.primary}</strong>
+                      {label.secondary ? <span>{label.secondary}</span> : null}
                       <span title={item.recommended_review_bucket}>{shortReviewBucket(item.recommended_review_bucket)}</span>
                     </span>
                     {item.is_reviewed ? (

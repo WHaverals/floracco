@@ -3,6 +3,7 @@ import type { ReviewCase } from "../types";
 import { bestDbRowId, jumpIndexDbRowIds, matchStrengthForRow, shortDbRowId } from "../utils/actComponents";
 import ActComponentBadges from "./ActComponentBadges";
 import HighlightedText from "./HighlightedText";
+import { dbRecordLabel } from "../utils/reviewLabels";
 
 const FACT_FIELDS: [string, string][] = [
   ["registration_date", "Date"],
@@ -122,7 +123,9 @@ export default function DatabasePanel({
               }}
             >
               <div className="db-record-head">
-                <strong className="db-record-id">{dbRowId}</strong>
+                <strong className="db-record-id" title={dbRowId}>
+                  {dbRecordLabel(dbRowId, dbRow).primary}
+                </strong>
                 {strength !== null ? (
                   <span className={`db-record-strength band-${strengthBand(strength)}`}>
                     Text {Math.round(strength * 100)}%

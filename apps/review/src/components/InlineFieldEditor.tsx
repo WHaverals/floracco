@@ -10,7 +10,7 @@ import type { DbFieldInputType } from "../types";
  * page as evidence), just the value, an optional note, and Save. Saving runs
  * the full audited lifecycle (propose → approve → apply) in one step — the
  * "direct-with-audit" mode for the project team — so the change lands
- * immediately, shows in Change history, and stays revertible in Corrections.
+ * immediately and shows in Change history.
  */
 export default function InlineFieldEditor({
   dbRowId,
@@ -158,7 +158,7 @@ export default function InlineFieldEditor({
       </div>
       {error && <p className="error-text">{error}</p>}
       <p className="inline-editor-foot muted">
-        Applies immediately, fully audited — see Change history; revertible in Corrections.
+        Applies immediately, fully audited — see Change history.
       </p>
     </div>
   );

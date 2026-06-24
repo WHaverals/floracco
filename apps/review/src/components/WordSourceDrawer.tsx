@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { imageUrl, loadWordEntry } from "../api";
 import type { WordEntryDetail } from "../types";
 import { manuscriptImageCaption, manuscriptImageCountLabel } from "../utils/manuscriptImages";
+import { prettyRegister } from "../utils/reviewLabels";
 import ManuscriptLightbox from "./ManuscriptLightbox";
 import TrackedText from "./TrackedText";
 
@@ -39,8 +40,10 @@ export default function WordSourceDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, lightboxPath]);
 
+  // entry.folio is already prefixed ("c. 11r") in this payload — unlike the queue's
+  // raw word_folio_range — so it is shown as-is; only the register needs humanising.
   const meta = entry
-    ? [entry.date, entry.folio, entry.register_id].filter(Boolean).join(" · ")
+    ? [entry.date, entry.folio, prettyRegister(entry.register_id)].filter(Boolean).join(" · ")
     : "";
   const manuscriptLabel = entry ? manuscriptImageCountLabel(entry.images) : "";
   const rich = entry?.rich ?? null;
@@ -65,8 +68,12 @@ export default function WordSourceDrawer({
         <header className="word-drawer-head">
           <div>
             <p className="eyebrow">Word summary</p>
-            <h3>{entry?.label || sourceEntryId}</h3>
-            {meta && <p className="muted word-drawer-meta">{meta}</p>}
+            <h3>{entry?.label || "Word entry"}</h3>
+            {meta && (
+              <p className="muted word-drawer-meta" title={entry?.source_entry_id ?? sourceEntryId}>
+                {meta}
+              </p>
+            )}
           </div>
           <button type="button" className="drawer-close" onClick={onClose} aria-label="Close">
             ×
@@ -78,8 +85,6 @@ export default function WordSourceDrawer({
 
         {entry && !loading && (
           <div className="word-drawer-body">
-            <code className="db-row-id">{entry.source_entry_id}</code>
-
             <section>
               <div className="word-drawer-narrative-head">
                 <h4>Narrative</h4>

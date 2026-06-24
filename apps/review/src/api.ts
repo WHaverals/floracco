@@ -1,11 +1,8 @@
 import type {
-  CandidateListResponse,
   CaseListResponse,
   ContractPersonsResponse,
   CorrectionCreatePayload,
-  CorrectionListResponse,
   CorrectionProposal,
-  Dashboard,
   DbBrowseTable,
   DbRecord,
   DbSearchResponse,
@@ -33,14 +30,6 @@ export function loadMe(): Promise<{ authenticated: boolean; email: string }> {
 
 export function loadSummary(): Promise<ReviewSummary> {
   return request<ReviewSummary>("/api/summary");
-}
-
-export function loadDashboard(): Promise<Dashboard> {
-  return request<Dashboard>("/api/dashboard");
-}
-
-export function exportUrl(name: "decisions" | "proposals" | "candidates"): string {
-  return `/api/export/${name}`;
 }
 
 export function loadCases(params: URLSearchParams): Promise<CaseListResponse> {
@@ -194,32 +183,10 @@ export function searchPersons(q: string): Promise<DbSearchResponse> {
   return request<DbSearchResponse>(`/api/db/search?table=person&q=${encodeURIComponent(q)}`);
 }
 
-export function loadCorrections(params: URLSearchParams): Promise<CorrectionListResponse> {
-  return request<CorrectionListResponse>(`/api/corrections?${params.toString()}`);
-}
-
-export function loadCorrection(proposalId: string): Promise<CorrectionProposal> {
-  return request<CorrectionProposal>(`/api/corrections/${encodeURIComponent(proposalId)}`);
-}
-
 export function createCorrection(
   payload: CorrectionCreatePayload,
 ): Promise<{ ok: boolean; proposal: CorrectionProposal }> {
   return request("/api/corrections", { method: "POST", body: JSON.stringify(payload) });
-}
-
-export function loadCandidates(params: URLSearchParams): Promise<CandidateListResponse> {
-  return request<CandidateListResponse>(`/api/correction-candidates?${params.toString()}`);
-}
-
-export function dismissCandidate(
-  candidateKey: string,
-  body: { reviewer: string; reason: string },
-): Promise<{ ok: boolean }> {
-  return request(`/api/correction-candidates/${encodeURIComponent(candidateKey)}/dismiss`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
 }
 
 export function transitionCorrection(

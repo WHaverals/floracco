@@ -4771,7 +4771,7 @@ def review_bucket_for_match(match: dict[str, Any]) -> tuple[str, str]:
         if link_is_right:
             return (
                 "Verify a field",
-                "The link is right; a field disagrees (date, folio, register, or type) — confirm the link, then fix the field in Corrections.",
+                "The link is right; a field disagrees (date, folio, register, or type) — confirm the link, then correct the field on the database record.",
             )
         return (
             "Choose the right row",

@@ -1,6 +1,7 @@
 import type { ReviewCase } from "../types";
 import { caseBarQuestion } from "../utils/reconcileUx";
 import { shortReviewBucket } from "../utils/reviewBuckets";
+import { prettyRegister } from "../utils/reviewLabels";
 
 function value(row: ReviewCase["row"], key: string): string {
   return String(row[key] ?? "");
@@ -29,6 +30,7 @@ export default function CaseBar({
 }: Props) {
   const row = reviewCase.row;
   const bucket = value(row, "recommended_review_bucket");
+  const registrationDate = value(row, "word_registration_date").trim();
   const question = caseBarQuestion(reviewCase);
 
   return (
@@ -40,7 +42,13 @@ export default function CaseBar({
             {shortReviewBucket(bucket)}
           </span>
           <span className="case-bar-context-sep"> · </span>
-          <strong>{value(row, "register_id")}</strong>
+          <strong title={value(row, "register_id")}>{prettyRegister(value(row, "register_id"))}</strong>
+          {registrationDate ? (
+            <>
+              <span className="case-bar-context-sep"> · </span>
+              <span>{registrationDate}</span>
+            </>
+          ) : null}
           {isReviewed ? <span className="reviewed-flag"> · Reviewed</span> : null}
         </p>
       </div>

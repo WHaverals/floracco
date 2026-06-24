@@ -6,7 +6,7 @@ function value(row: ReviewCase["row"], key: string): string {
 
 /** Compact "which field differs" hint for the verify-a-field tier.
  *
- * The case-bar title already says "only a field differs — fix in Corrections";
+ * The case-bar title already says "only a field differs — correct it on the record";
  * this shows *which*. For date/folio it renders a Word→DB value compare; for the
  * conflicts that have no clean two-value compare (register, event type, malformed
  * metadata, low text similarity) it names the conflict so the reviewer still

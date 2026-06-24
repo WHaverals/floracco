@@ -5,8 +5,8 @@ const REVIEW_BUCKET_SHORT: Record<string, string> = {
   "Verify a field": "Verify field",
   "Investigate — no clear DB match": "Investigate",
   "Confirm combined act": "Combined act",
-  "Confirm the link": "Confirm link",
-  "DB row needs a Word link": "DB → Word link",
+  "Confirm the link": "Spot-check link",
+  "DB row needs a Word link": "Unlinked DB row",
   "Non-accomandita (Word-only)": "Non-accomandita",
 };
 

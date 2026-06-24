@@ -51,7 +51,6 @@ QA_PACKET_PATH = DERIVED_ROOT / "06_qa_packet/word_db_match_qa_packet.jsonl"
 LINK_CANDIDATES_PATH = DERIVED_ROOT / "05_db_candidate_matches/source_entry_db_link_candidates.jsonl"
 SOURCE_ENTRIES_PATH = DERIVED_ROOT / "04_source_entries/source_entries.jsonl"
 IMAGE_CANDIDATES_PATH = DERIVED_ROOT / "07_image_links/source_entry_image_candidates.jsonl"
-REGISTER_SUMMARY_PATH = DERIVED_ROOT / "05_db_candidate_matches/register_match_summary.csv"
 WORD_COMMENTS_PATH = DERIVED_ROOT / "03_extracted_registers/comments.jsonl"
 WORD_NOTES_PATH = DERIVED_ROOT / "03_extracted_registers/footnotes.jsonl"
 IMAGE_FOLIO_MAP_PATH = DERIVED_ROOT / "07_image_links/image_folio_map.jsonl"
@@ -783,24 +782,6 @@ def summary() -> dict[str, Any]:
     }
 
 
-# Word-entry match statuses, in the order they read as a coverage funnel
-# (most-trusted → least). Mirrors register_match_summary.csv columns.
-WORD_STATUS_FIELDS = [
-    "matched_high_confidence",
-    "matched_candidate",
-    "matched_multiple",
-    "ambiguous",
-    "word_only",
-]
-WORD_STATUS_LABELS = {
-    "matched_high_confidence": "High-confidence",
-    "matched_candidate": "Candidate",
-    "matched_multiple": "Multi-row",
-    "ambiguous": "Ambiguous",
-    "word_only": "Word-only",
-}
-
-
 def mtime_iso(path: Path) -> str | None:
     """File modification time as ISO-8601 UTC, or None if the file is absent."""
     try:
@@ -809,169 +790,8 @@ def mtime_iso(path: Path) -> str | None:
         return None
 
 
-def load_register_summary() -> list[dict[str, Any]]:
-    """Per-register match counts from the pipeline (status counts + row totals)."""
-    if not REGISTER_SUMMARY_PATH.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    with REGISTER_SUMMARY_PATH.open(encoding="utf-8", newline="") as handle:
-        for row in csv.DictReader(handle):
-            clean: dict[str, Any] = {"register_id": row.get("register_id") or ""}
-            for key, value in row.items():
-                if key == "register_id":
-                    continue
-                try:
-                    clean[key] = int(value)
-                except (TypeError, ValueError):
-                    clean[key] = 0
-            rows.append(clean)
-    return rows
-
-
 def is_truthy(value: Any) -> bool:
     return str(value or "").strip().lower() in {"true", "1", "yes"}
-
-
-@app.get("/api/dashboard")
-def dashboard() -> dict[str, Any]:
-    """Read-only progress/coverage/exports snapshot for the dashboard.
-
-    Aggregates the human logs (decisions, corrections) and the derived pipeline
-    outputs (QA packet, register summary). Writes nothing. Numbers sourced from
-    *derived* files move on a pipeline rebuild; numbers from *logs* are
-    authoritative — the UI labels each accordingly via ``freshness``.
-    """
-    qa_rows = load_qa_rows()
-    decisions = decisions_by_review_id()
-    decision_rows = list(decisions.values())
-
-    # --- Reconcile progress (queue is the QA packet) ---
-    def grouped(field: str) -> dict[str, dict[str, int]]:
-        groups: dict[str, dict[str, int]] = {}
-        for row in qa_rows:
-            label = str(row.get(field) or "—")
-            bucket = groups.setdefault(label, {"total": 0, "reviewed": 0})
-            bucket["total"] += 1
-            if row["review_id"] in decisions:
-                bucket["reviewed"] += 1
-        return groups
-
-    by_bucket = [
-        {"label": label, **counts}
-        for label, counts in sorted(grouped("recommended_review_bucket").items(), key=lambda kv: -kv[1]["total"])
-    ]
-
-    verdicts = {"confirmed": 0, "rejected": 0, "not_sure": 0}
-    for row in decision_rows:
-        action = str(row.get("next_action") or "")
-        if action == "approve_link":
-            verdicts["confirmed"] += 1
-        elif action == "reject_link":
-            verdicts["rejected"] += 1
-        else:
-            verdicts["not_sure"] += 1
-
-    # --- Coverage (from the per-register match summary) ---
-    registers = load_register_summary()
-    status_totals = {field: sum(r.get(field, 0) for r in registers) for field in WORD_STATUS_FIELDS}
-    register_table = sorted(
-        (r for r in registers if r.get("word_entry_count", 0) or r.get("db_row_count", 0)),
-        key=lambda r: -r.get("word_entry_count", 0),
-    )
-    images_with = sum(1 for row in qa_rows if str(row.get("image_candidate_paths") or "").strip())
-    images_need_review = sum(1 for row in qa_rows if is_truthy(row.get("image_candidates_need_review")))
-
-    # --- Corrections funnel + applied-write audit ---
-    proposals = load_proposals()
-    proposal_status = Counter(str(p.get("status") or "unknown") for p in proposals)
-    events = load_jsonl(EVENTS_PATH)
-    applied_events = [event for event in events if event.get("event") == "applied"]
-    recent_applied = sorted(applied_events, key=lambda e: str(e.get("at") or ""), reverse=True)[:10]
-
-    candidates = load_candidates()
-    dismissals = load_candidate_dismissals()
-    handled = open_proposals_by_field()
-    candidate_total = len(candidates)
-    candidate_dismissed = sum(1 for c in candidates if str(c.get("candidate_key")) in dismissals)
-    candidate_handled = sum(
-        1
-        for c in candidates
-        if str(c.get("candidate_key")) not in dismissals
-        and (str(c.get("db_row_id")), str(c.get("field"))) in handled
-    )
-    candidate_open = candidate_total - candidate_dismissed - candidate_handled
-
-    return {
-        "freshness": {
-            "qa_packet_built_at": mtime_iso(QA_PACKET_PATH),
-            "matches_built_at": mtime_iso(LINK_CANDIDATES_PATH),
-            "decisions_updated_at": (
-                max((str(r.get("updated_at") or "") for r in decision_rows), default="")
-                or mtime_iso(DECISIONS_PATH)
-            ),
-            "corrections_updated_at": mtime_iso(PROPOSALS_PATH),
-        },
-        "reconcile": {
-            "total_cases": len(qa_rows),
-            "reviewed_cases": sum(1 for row in qa_rows if row["review_id"] in decisions),
-            "by_bucket": by_bucket,
-            "decisions": verdicts,
-            "decisions_logged": len(decision_rows),
-        },
-        "coverage": {
-            "word_entry_total": sum(status_totals.values()),
-            "word_status_totals": status_totals,
-            "word_status_labels": WORD_STATUS_LABELS,
-            "db_row_total": sum(r.get("db_row_count", 0) for r in registers),
-            "db_only_total": sum(r.get("db_only", 0) for r in registers),
-            "registers": register_table,
-            "images": {"with_candidates": images_with, "need_review": images_need_review, "queue_rows": len(qa_rows)},
-        },
-        "corrections": {
-            "proposals_total": len(proposals),
-            "proposals_by_status": dict(proposal_status),
-            "applied_writes": len(applied_events),
-            "recent_applied": [
-                {
-                    "db_row_id": event.get("db_row_id"),
-                    "field": event.get("field"),
-                    "pre_image": event.get("pre_image"),
-                    "post_image": event.get("post_image"),
-                    "by": event.get("by"),
-                    "at": event.get("at"),
-                }
-                for event in recent_applied
-            ],
-            "candidates": {
-                "total": candidate_total,
-                "open": candidate_open,
-                "handled": candidate_handled,
-                "dismissed": candidate_dismissed,
-                "by_strength": dict(Counter(str(c.get("strength") or "unknown") for c in candidates)),
-                "by_family": dict(Counter(str(c.get("family") or "unknown") for c in candidates)),
-            },
-        },
-    }
-
-
-# Downloadable exports — stream the existing human/derived files as attachments.
-# Read-only: nothing is generated or written, just served for the reviewer/FT.
-EXPORT_FILES: dict[str, tuple[Path, str]] = {
-    "decisions": (DECISIONS_PATH, "text/csv"),
-    "proposals": (PROPOSALS_PATH, "application/x-ndjson"),
-    "candidates": (CANDIDATES_PATH, "application/x-ndjson"),
-}
-
-
-@app.get("/api/export/{name}")
-def export_file(name: str) -> FileResponse:
-    entry = EXPORT_FILES.get(name)
-    if entry is None:
-        raise HTTPException(status_code=404, detail="Unknown export.")
-    path, media_type = entry
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Nothing to export yet.")
-    return FileResponse(path, media_type=media_type, filename=path.name)
 
 
 @app.get("/api/cases")

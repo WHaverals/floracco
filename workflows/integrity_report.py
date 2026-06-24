@@ -59,6 +59,20 @@ CHECKS: list[dict[str, Any]] = [
             ORDER BY s.contract_id""",
     },
     {
+        "key": "incomplete_contract",
+        "bucket": "D",
+        "meaning": "A skeleton contract record — no partners AND no narrative (often just a firm name + folio). Nothing for a reviewer to read or add from; not fixable in the app.",
+        "repair": "A HUMAN decision: complete it from the act/archive, or delete it if it's an erroneous stub. Never auto-deleted.",
+        "sql": """
+            SELECT 'contract ' || c.contract_id AS ref,
+                   'firm: ' || COALESCE(NULLIF(TRIM(c.firm_name), ''), '(none)')
+                     || '  folio: ' || COALESCE(NULLIF(TRIM(c.folio), ''), '(none)') AS detail
+            FROM contract c
+            WHERE c.is_deleted = 0 AND COALESCE(c.document, '') = ''
+              AND NOT EXISTS (SELECT 1 FROM investor i WHERE i.contract_id = c.contract_id AND i.is_deleted = 0)
+            ORDER BY c.contract_id""",
+    },
+    {
         "key": "orphan_link_missing_investor",
         "bucket": "C",
         "meaning": "A junction row pointing at an investor that doesn't exist.",

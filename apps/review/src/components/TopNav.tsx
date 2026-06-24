@@ -5,8 +5,6 @@ import { isToolHidden } from "../features";
 const LINKS = [
   { to: "/reconcile", label: "Reconcile", key: "reconcile" },
   { to: "/database", label: "Database", key: "database" },
-  { to: "/corrections", label: "Corrections", key: "corrections" },
-  { to: "/dashboard", label: "Dashboard", key: "dashboard" },
 ];
 
 /* Global search lives on the home page; every other page carries this compact

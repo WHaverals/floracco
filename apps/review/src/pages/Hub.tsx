@@ -23,18 +23,6 @@ const TOOLS = [
     title: "Attach Word summaries",
     blurb: "Fix unconfirmed Word ↔ database links.",
   },
-  {
-    to: "/corrections",
-    key: "corrections",
-    title: "Flagged for correction",
-    blurb: "Prefiltered queue of database fields that may need fixing.",
-  },
-  {
-    to: "/dashboard",
-    key: "dashboard",
-    title: "Progress & exports",
-    blurb: "Overview of review work and download logs.",
-  },
 ];
 
 const KIND_ROUTE: Record<SearchResult["kind"], string> = {

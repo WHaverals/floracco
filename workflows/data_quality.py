@@ -101,17 +101,24 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
         add("broken_economic_sector", "contract", r["cid"], _firm(r["firm"], r["cid"]),
             {"kind": "relink", "field": "economic_sector"})
 
-    # 2. missing registration date
+    # 2. missing registration date — on a *real* record only (has partners or a narrative).
+    # Empty-stub contracts (no partners AND no narrative) are not reviewer-fixable from the
+    # app; they go to the maintainer integrity report (incomplete_contract), not here.
     for r in connection.execute(
-        "SELECT contract_id AS cid, firm_name AS firm FROM contract WHERE is_deleted=0 AND (registration_date IS NULL OR registration_date IN ('0000-00-00',''))"
+        """SELECT contract_id AS cid, firm_name AS firm FROM contract c
+           WHERE c.is_deleted=0 AND (c.registration_date IS NULL OR c.registration_date IN ('0000-00-00',''))
+             AND (COALESCE(c.document,'')<>''
+                  OR EXISTS (SELECT 1 FROM investor i WHERE i.contract_id=c.contract_id AND i.is_deleted=0))"""
     ):
         add("missing_reg_date", "contract", r["cid"], _firm(r["firm"], r["cid"]),
             {"kind": "edit", "field": "registration_date"})
 
-    # 3. contract with no live partners
+    # 3. contract with no live partners but a recorded narrative to add them from. A
+    # contract with neither partners NOR narrative is an empty stub → integrity report.
     for r in connection.execute(
         """SELECT contract_id AS cid, firm_name AS firm FROM contract c
-           WHERE c.is_deleted=0 AND NOT EXISTS (SELECT 1 FROM investor i WHERE i.contract_id=c.contract_id AND i.is_deleted=0)"""
+           WHERE c.is_deleted=0 AND COALESCE(c.document,'')<>''
+             AND NOT EXISTS (SELECT 1 FROM investor i WHERE i.contract_id=c.contract_id AND i.is_deleted=0)"""
     ):
         add("no_partners", "contract", r["cid"], _firm(r["firm"], r["cid"]), {"kind": "add_investor", "field": None})
 
@@ -182,9 +189,14 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     ):
         add("no_gp", "contract", r["cid"], _firm(r["firm"], r["cid"]), {"kind": "review_partners", "field": None})
 
-    # 9. sub-contract missing its type
+    # 9. sub-contract missing its type — but NOT a fully-blank placeholder row (no parent,
+    # no date, no firm): that is cruft, surfaced in the maintainer integrity report for a
+    # human to complete or delete, not a reviewer "set the type" task.
     for r in connection.execute(
-        "SELECT contract_id AS scid, sub_firm_name AS firm FROM sub_contract WHERE is_deleted=0 AND COALESCE(sub_type,'')=''"
+        """SELECT contract_id AS scid, sub_firm_name AS firm FROM sub_contract
+           WHERE is_deleted=0 AND COALESCE(sub_type,'')=''
+             AND NOT (COALESCE(main_contract_id,0)=0 AND COALESCE(registration_date,'') IN ('0000-00-00','')
+                      AND COALESCE(sub_firm_name,'')='')"""
     ):
         add("missing_sub_type", "sub_contract", r["scid"], _firm(r["firm"], r["scid"]), {"kind": "edit", "field": "sub_type"})
 

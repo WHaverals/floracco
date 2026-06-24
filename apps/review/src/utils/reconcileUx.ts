@@ -40,7 +40,7 @@ export function caseBarQuestion(reviewCase: ReviewCase): string {
   const bucket = String(reviewCase.row.recommended_review_bucket ?? "");
   switch (bucket) {
     case VERIFY_FIELD_BUCKET:
-      return "The link looks right — only a field (date, folio, register, or type) differs. Confirm, then fix it in Corrections.";
+      return "The link looks right — only a field (date, folio, register, or type) differs. Confirm, then correct the field on the database record.";
     case CHOOSE_ROW_BUCKET:
       return "Several database rows could match — mark only the row(s) the Word segment supports.";
     case INVESTIGATE_BUCKET:

@@ -4,8 +4,6 @@ import { loadMe } from "./api";
 import { isToolHidden } from "./features";
 import TopNav from "./components/TopNav";
 import ComingSoon from "./pages/ComingSoon";
-import Corrections from "./pages/Corrections";
-import Dashboard from "./pages/Dashboard";
 import Database from "./pages/Database";
 import Hub from "./pages/Hub";
 import Reconcile from "./pages/Reconcile";
@@ -64,8 +62,6 @@ export default function App() {
           <Route path="/database" element={<Database />} />
           <Route path="/database/:table" element={<Database />} />
           <Route path="/database/:table/:id" element={<Database />} />
-          <Route path="/corrections" element={isToolHidden("corrections") ? NOT_IN_PILOT : <Corrections />} />
-          <Route path="/dashboard" element={isToolHidden("dashboard") ? NOT_IN_PILOT : <Dashboard />} />
           <Route path="*" element={<ComingSoon title="Page not found" blurb="That route does not exist." />} />
         </Routes>
       </main>
