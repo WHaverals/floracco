@@ -174,6 +174,7 @@ export type DbFacets = {
   year_min: number | null;
   year_max: number | null;
   sub_types: { value: string; count: number }[];
+  genders: { value: string; label: string; count: number }[];
 };
 
 export type DbFieldCorrection = {

@@ -2136,6 +2136,7 @@ def db_search(
     year_from: str = "",
     year_to: str = "",
     sub_type: str = "",
+    gender: str = "",
     include_hidden: bool = False,
 ) -> dict[str, Any]:
     if table not in DB_BROWSE_TABLES:
@@ -2151,8 +2152,19 @@ def db_search(
     params: list[Any] = []
     if term:
         if table == "contract":
-            conditions.append("(firm_name LIKE ? OR folio LIKE ? OR CAST(contract_id AS TEXT) LIKE ?)")
-            params += [like, like, like]
+            # Contracts also match a partner's name (investor → person) and the
+            # economic-activity text, so a historian can find a firm by who is in it
+            # or what trade it ran — not only the firm_name string.
+            conditions.append(
+                "(firm_name LIKE ? OR folio LIKE ? OR CAST(contract_id AS TEXT) LIKE ? "
+                "OR EXISTS (SELECT 1 FROM investor iv JOIN person p ON p.person_id = iv.person_id "
+                "  WHERE iv.contract_id = contract.contract_id AND iv.is_deleted = 0 "
+                "  AND (p.first_name LIKE ? OR p.last_name LIKE ? OR p.nickname LIKE ?)) "
+                "OR EXISTS (SELECT 1 FROM economic_activity ea "
+                "  WHERE CAST(ea.ec_activity_id AS TEXT) = CAST(contract.economic_sector AS TEXT) "
+                "  AND ea.activity LIKE ?))"
+            )
+            params += [like, like, like, like, like, like, like]
         elif table == "sub_contract":
             conditions.append("(sub_firm_name LIKE ? OR folio LIKE ? OR CAST(contract_id AS TEXT) LIKE ?)")
             params += [like, like, like]
@@ -2174,6 +2186,9 @@ def db_search(
     if table == "sub_contract" and sub_type:
         conditions.append("sub_type = ?")
         params.append(sub_type)
+    if table == "person" and gender in ("woman", "man"):
+        conditions.append("is_woman = ?")
+        params.append(1 if gender == "woman" else 0)
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     where = hidden_clause(where, include_hidden)
 
@@ -2280,9 +2295,32 @@ def db_facets(table: str) -> dict[str, Any]:
     dates apply only to contracts & sub-contracts; people carry neither."""
     if table not in DB_BROWSE_TABLES:
         raise HTTPException(status_code=400, detail="Unknown table.")
-    empty = {"registers": [], "year_histogram": [], "year_min": None, "year_max": None, "sub_types": []}
+    empty: dict[str, Any] = {
+        "registers": [],
+        "year_histogram": [],
+        "year_min": None,
+        "year_max": None,
+        "sub_types": [],
+        "genders": [],
+    }
     if table == "person":
-        return empty
+        connection = open_db()
+        try:
+            counts = {
+                int(r["is_woman"]): r["c"]
+                for r in connection.execute(
+                    "SELECT is_woman, COUNT(*) AS c FROM person WHERE is_deleted = 0 "
+                    "AND is_woman IS NOT NULL GROUP BY is_woman"
+                ).fetchall()
+            }
+        finally:
+            connection.close()
+        genders = [
+            {"value": value, "label": label, "count": counts.get(flag, 0)}
+            for value, label, flag in (("woman", "Women", 1), ("man", "Men", 0))
+            if counts.get(flag, 0)
+        ]
+        return {**empty, "genders": genders}
     dated = (
         "is_deleted = 0 AND registration_date IS NOT NULL "
         "AND registration_date NOT IN ('', '0000-00-00')"
@@ -2328,6 +2366,7 @@ def db_facets(table: str) -> dict[str, Any]:
             "year_min": int(span["lo"]) if span and span["lo"] else None,
             "year_max": int(span["hi"]) if span and span["hi"] else None,
             "sub_types": sub_types,
+            "genders": [],
         }
     finally:
         connection.close()

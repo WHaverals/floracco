@@ -79,6 +79,8 @@ export default function DbFilters({
   subType,
   onSubType,
   showTypes,
+  gender,
+  onGender,
 }: {
   facets: DbFacets;
   register: string;
@@ -88,7 +90,32 @@ export default function DbFilters({
   subType: string;
   onSubType: (value: string) => void;
   showTypes: boolean;
+  gender: string;
+  onGender: (value: string) => void;
 }) {
+  // People carry no register/date — they get the gender facet on its own.
+  if (facets.genders.length > 0 && facets.registers.length === 0) {
+    return (
+      <div className="db-filters">
+        <div className="db-filter-field">
+          <span className="db-filter-label">Recorded gender</span>
+          <div className="db-type-pills">
+            {facets.genders.map((g) => (
+              <button
+                key={g.value}
+                type="button"
+                className={gender === g.value ? "db-type-pill is-active" : "db-type-pill"}
+                onClick={() => onGender(gender === g.value ? "" : g.value)}
+              >
+                {g.label} <span className="db-type-count">{g.count.toLocaleString()}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="db-filters">
       <label className="db-filter-field">

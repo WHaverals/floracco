@@ -84,6 +84,7 @@ export default function Database() {
   const [register, setRegister] = useState("");
   const [yearRange, setYearRange] = useState<[number, number] | null>(null);
   const [subType, setSubType] = useState("");
+  const [gender, setGender] = useState("");
   const [record, setRecord] = useState<DbRecord | null>(null);
   const [listError, setListError] = useState("");
   const [recordError, setRecordError] = useState("");
@@ -136,8 +137,9 @@ export default function Database() {
       yearFrom: yearRange ? yearRange[0] : null,
       yearTo: yearRange ? yearRange[1] : null,
       subType,
+      gender,
     }),
-    [table, search, showHidden, sort, register, yearRange, subType],
+    [table, search, showHidden, sort, register, yearRange, subType, gender],
   );
 
   const runSearch = useCallback((args: typeof searchArgs, nextOffset: number) => {
@@ -151,12 +153,9 @@ export default function Database() {
       .catch((err: Error) => setListError(err.message));
   }, []);
 
-  // Facet values for the filters; only contracts & sub-contracts carry them.
+  // Facet values for the filters: registers/dates/types for contracts & sub-
+  // contracts, gender for people.
   useEffect(() => {
-    if (table === "person") {
-      setFacets(null);
-      return;
-    }
     loadDbFacets(table).then(setFacets).catch(() => setFacets(null));
   }, [table]);
 
@@ -235,6 +234,7 @@ export default function Database() {
       setRegister("");
       setYearRange(null);
       setSubType("");
+      setGender("");
       navigate(`/database/${nextTable}`);   // (drops ?review)
     },
     [navigate],
@@ -299,16 +299,24 @@ export default function Database() {
           { value: "id_desc", label: "Id ↓" },
         ];
   const searchPlaceholder =
-    table === "person" ? "Search name, nickname, or id…" : "Search firm, folio, or id…";
+    table === "person"
+      ? "Search name, nickname, or id…"
+      : table === "contract"
+        ? "Search firm, party, activity, folio, or id…"
+        : "Search firm, folio, or id…";
 
-  // Filters live on the contract & sub-contract tabs (people carry no date/register).
-  const showFilters = table !== "person" && facets !== null && facets.registers.length > 0;
+  // Filters: register/date/type on contract & sub-contract; gender on people.
+  const showFilters =
+    facets !== null && (facets.registers.length > 0 || facets.genders.length > 0);
   const registerLabel = facets?.registers.find((r) => r.folder === register)?.label ?? register;
-  const activeFilterCount = (register ? 1 : 0) + (yearRange ? 1 : 0) + (subType ? 1 : 0);
+  const genderLabel = facets?.genders.find((g) => g.value === gender)?.label ?? gender;
+  const activeFilterCount =
+    (register ? 1 : 0) + (yearRange ? 1 : 0) + (subType ? 1 : 0) + (gender ? 1 : 0);
   const clearFilters = () => {
     setRegister("");
     setYearRange(null);
     setSubType("");
+    setGender("");
   };
 
   return (
@@ -417,6 +425,11 @@ export default function Database() {
                       {subType} <span aria-hidden>✕</span>
                     </button>
                   )}
+                  {gender && (
+                    <button type="button" className="db-chip" onClick={() => setGender("")}>
+                      {genderLabel} <span aria-hidden>✕</span>
+                    </button>
+                  )}
                 </div>
               )}
               {showFilters && filtersOpen && facets && (
@@ -429,6 +442,8 @@ export default function Database() {
                   subType={subType}
                   onSubType={setSubType}
                   showTypes={table === "sub_contract"}
+                  gender={gender}
+                  onGender={setGender}
                 />
               )}
             </>

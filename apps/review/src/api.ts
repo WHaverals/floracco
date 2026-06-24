@@ -59,6 +59,7 @@ export function searchDb(
     yearFrom?: number | null;
     yearTo?: number | null;
     subType?: string;
+    gender?: string;
   } = {},
 ): Promise<DbSearchResponse> {
   const params = new URLSearchParams({ table, q });
@@ -69,6 +70,7 @@ export function searchDb(
   if (opts.yearFrom != null) params.set("year_from", String(opts.yearFrom));
   if (opts.yearTo != null) params.set("year_to", String(opts.yearTo));
   if (opts.subType) params.set("sub_type", opts.subType);
+  if (opts.gender) params.set("gender", opts.gender);
   return request<DbSearchResponse>(`/api/db/search?${params.toString()}`);
 }
 
