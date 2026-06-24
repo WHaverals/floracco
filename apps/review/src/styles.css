@@ -227,6 +227,351 @@ textarea {
   padding: 48px 30px 60px;
 }
 
+/* ---- Home page: editorial front door ---- */
+.home {
+  margin: 0 auto;
+  max-width: 720px;
+}
+
+.home-masthead h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2.1rem, 4.5vw, 3.1rem);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin: 4px 0 0;
+}
+
+/* "Flor" + "Acco" tinted so the FlorAcco wordmark's origin is visible. */
+.home-acro {
+  color: #b07a47;
+}
+
+.home-lede {
+  color: #2e2620;
+  font-size: 1.12rem;
+  line-height: 1.75;
+  margin: 22px 0 0;
+}
+
+/* A quiet, journal-style figure line — not boxed cards. */
+.home-figures {
+  color: #6a5c4d;
+  font-size: 0.92rem;
+  margin: 24px 0 0;
+}
+
+.home-fig-num {
+  color: #2c231b;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.08rem;
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+.home-fig-dot {
+  color: #c2b39d;
+  padding: 0 10px;
+}
+
+.home-ribbon {
+  margin: 24px 0 0;
+}
+
+.home-ribbon-head {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  justify-content: space-between;
+  margin: 0 0 10px;
+}
+
+.home-ribbon-head h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.15rem;
+  font-weight: 500;
+  margin: 0;
+}
+
+.home-ribbon-legend {
+  color: #6a5c4d;
+  display: flex;
+  font-size: 0.84rem;
+  gap: 16px;
+}
+
+.legend-item {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.legend-swatch {
+  border-radius: 2px;
+  display: inline-block;
+  height: 10px;
+  width: 10px;
+}
+
+.legend-swatch.is-acc {
+  background: #b07a47;
+}
+
+.legend-swatch.is-acts {
+  background: #7d8c6a;
+}
+
+.home-ribbon-chart {
+  position: relative;
+}
+
+.ribbon-tip {
+  background: #2c231b;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(40, 25, 12, 0.18);
+  color: #f3ead9;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  padding: 8px 11px;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  transform: translate(-50%, 0);
+  white-space: nowrap;
+  z-index: 5;
+}
+
+.ribbon-tip-decade {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.ribbon-tip-row {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+}
+
+.ribbon-tip-dot {
+  border-radius: 2px;
+  display: inline-block;
+  height: 8px;
+  width: 8px;
+}
+
+.ribbon-tip-dot.is-acc {
+  background: #cf9a63;
+}
+
+.ribbon-tip-dot.is-acts {
+  background: #9aab83;
+}
+
+/* A real timeline: the three milestones are spread evenly across the full width —
+ * 1408 at the left, 1808 at the right — and the track spans dot-to-dot, so it
+ * starts at 1408 and ends exactly at 1808 (registration's abolition), never past. */
+.home-timeline {
+  display: flex;
+  list-style: none;
+  margin: 30px 0 0;
+  padding: 0;
+  position: relative;
+}
+
+.home-timeline::before {
+  background: #e0d4c0;
+  content: "";
+  height: 2px;
+  left: 6px;
+  position: absolute;
+  right: 6px;
+  top: 5px;
+}
+
+.home-timeline li {
+  flex: 1;
+  padding-top: 22px;
+  position: relative;
+}
+
+.home-timeline li::before {
+  background: #b07a47;
+  border: 2px solid #f6f1ea;
+  border-radius: 50%;
+  content: "";
+  height: 12px;
+  position: absolute;
+  top: 0;
+  width: 12px;
+  z-index: 1;
+}
+
+.home-timeline li:first-child {
+  text-align: left;
+}
+
+.home-timeline li:first-child::before {
+  left: 0;
+}
+
+.home-timeline li:nth-child(2) {
+  text-align: center;
+}
+
+.home-timeline li:nth-child(2)::before {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.home-timeline li:last-child {
+  text-align: right;
+}
+
+.home-timeline li:last-child::before {
+  right: 0;
+}
+
+.home-tl-year {
+  color: #9d7355;
+  display: block;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.home-tl-note {
+  color: #6a5c4d;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.home-essay {
+  margin: 46px 0 0;
+}
+
+.home-essay p {
+  color: #2e2620;
+  font-size: 1.06rem;
+  line-height: 1.78;
+  margin: 0 0 18px;
+}
+
+.home-essay cite {
+  font-style: italic;
+}
+
+.home-essay a {
+  color: #9d7355;
+}
+
+.term {
+  border-bottom: 1.5px solid #d8b48a;
+  font-weight: 500;
+}
+
+.home-callout {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin: 6px 0 20px;
+}
+
+.home-callout-item {
+  background: #fbf4e9;
+  border: 1px solid #eadfcc;
+  border-left: 3px solid #c79a6b;
+  border-radius: 0 12px 12px 0;
+  padding: 14px 16px;
+}
+
+.home-callout-item h3 {
+  color: #5a4632;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1rem;
+  font-weight: 500;
+  margin: 0 0 6px;
+}
+
+.home-callout-item p {
+  color: #4a3f33;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.home-pullquote {
+  border-left: 3px solid #c79a6b;
+  color: #4a3320;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.32rem;
+  font-style: italic;
+  line-height: 1.45;
+  margin: 28px 0;
+  padding: 4px 0 4px 22px;
+}
+
+.home-explore {
+  border-top: 1px solid #e0d4c0;
+  margin: 50px 0 0;
+  padding: 34px 0 0;
+  scroll-margin-top: 18px;
+}
+
+.home-explore > h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.5rem;
+  font-weight: 500;
+  margin: 0;
+}
+
+.home-colophon {
+  border-top: 1px solid #e0d4c0;
+  margin: 56px 0 0;
+  padding: 24px 0 0;
+}
+
+.home-colophon-name {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.1rem;
+  font-weight: 500;
+  margin: 0;
+}
+
+.home-colophon-title {
+  color: #6a5c4d;
+  font-size: 0.9rem;
+  margin: 3px 0 10px;
+}
+
+.home-colophon-links a {
+  color: #9d7355;
+}
+
+.home-colophon-cite {
+  border-top: 1px solid #ece1cf;
+  color: #6a5c4d;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  margin: 16px 0 0;
+  max-width: 640px;
+  padding: 14px 0 0;
+}
+
+.home-colophon-cite-label {
+  color: #9d7355;
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.home-colophon-cite cite {
+  font-style: italic;
+}
+
 .hub-header h1 {
   font-family: Georgia, "Times New Roman", serif;
   font-size: clamp(1.8rem, 3vw, 2.6rem);
