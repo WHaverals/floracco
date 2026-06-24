@@ -4,6 +4,7 @@ import type {
   CorrectionCreatePayload,
   CorrectionProposal,
   DbBrowseTable,
+  DbFacets,
   DbRecord,
   DbSearchResponse,
   DecisionPayload,
@@ -50,11 +51,29 @@ export function saveDecision(decision: DecisionPayload): Promise<{ ok: boolean; 
 export function searchDb(
   table: DbBrowseTable,
   q: string,
-  includeHidden = false,
+  opts: {
+    includeHidden?: boolean;
+    sort?: string;
+    offset?: number;
+    register?: string;
+    yearFrom?: number | null;
+    yearTo?: number | null;
+    subType?: string;
+  } = {},
 ): Promise<DbSearchResponse> {
   const params = new URLSearchParams({ table, q });
-  if (includeHidden) params.set("include_hidden", "true");
+  if (opts.includeHidden) params.set("include_hidden", "true");
+  if (opts.sort) params.set("sort", opts.sort);
+  if (opts.offset) params.set("offset", String(opts.offset));
+  if (opts.register) params.set("register", opts.register);
+  if (opts.yearFrom != null) params.set("year_from", String(opts.yearFrom));
+  if (opts.yearTo != null) params.set("year_to", String(opts.yearTo));
+  if (opts.subType) params.set("sub_type", opts.subType);
   return request<DbSearchResponse>(`/api/db/search?${params.toString()}`);
+}
+
+export function loadDbFacets(table: DbBrowseTable): Promise<DbFacets> {
+  return request<DbFacets>(`/api/db/facets?table=${encodeURIComponent(table)}`);
 }
 
 export function loadDbRecord(

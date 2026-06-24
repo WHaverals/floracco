@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -7,6 +7,7 @@ import {
   editPlaceAddress,
   hideRecord,
   imageUrl,
+  loadDbFacets,
   loadDbRecord,
   loadFlags,
   relinkField,
@@ -19,6 +20,7 @@ import {
 import LookupCombobox from "../components/LookupCombobox";
 import AddInvestorPanel from "../components/AddInvestorPanel";
 import CreateRecordForm from "../components/CreateRecordForm";
+import DbFilters from "../components/DbFilters";
 import InlineFieldEditor from "../components/InlineFieldEditor";
 import ManuscriptLightbox from "../components/ManuscriptLightbox";
 import PersonPicker, { type PersonPick } from "../components/PersonPicker";
@@ -29,6 +31,7 @@ import type {
   ChangeHistoryItem,
   DbBrowseTable,
   DbEditableCell,
+  DbFacets,
   DbField,
   DbLinkStatus,
   DbFlag,
@@ -72,9 +75,15 @@ export default function Database() {
 
   const [table, setTable] = useState<DbBrowseTable>(routeTable);
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("");
   const [results, setResults] = useState<DbSearchResult[]>([]);
   const [total, setTotal] = useState(0);
-  const [shown, setShown] = useState(0);
+  // Browse filters (contract & sub_contract only) + their facet values.
+  const [facets, setFacets] = useState<DbFacets | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [register, setRegister] = useState("");
+  const [yearRange, setYearRange] = useState<[number, number] | null>(null);
+  const [subType, setSubType] = useState("");
   const [record, setRecord] = useState<DbRecord | null>(null);
   const [listError, setListError] = useState("");
   const [recordError, setRecordError] = useState("");
@@ -115,22 +124,47 @@ export default function Database() {
     setTable(routeTable);
   }, [routeTable]);
 
-  const runSearch = useCallback((nextTable: DbBrowseTable, term: string, includeHidden: boolean) => {
-    searchDb(nextTable, term, includeHidden)
+  // Everything that determines a search result set, in one object so the search
+  // effect, "Load more", and the post-edit refresh all stay in lock-step.
+  const searchArgs = useMemo(
+    () => ({
+      table,
+      q: search,
+      includeHidden: showHidden,
+      sort,
+      register,
+      yearFrom: yearRange ? yearRange[0] : null,
+      yearTo: yearRange ? yearRange[1] : null,
+      subType,
+    }),
+    [table, search, showHidden, sort, register, yearRange, subType],
+  );
+
+  const runSearch = useCallback((args: typeof searchArgs, nextOffset: number) => {
+    searchDb(args.table, args.q, { ...args, offset: nextOffset })
       .then((response) => {
-        setResults(response.results);
+        // offset 0 replaces the list; a "Load more" (offset > 0) appends.
+        setResults((prev) => (nextOffset > 0 ? [...prev, ...response.results] : response.results));
         setTotal(response.total);
-        setShown(response.shown);
         setListError("");
       })
       .catch((err: Error) => setListError(err.message));
   }, []);
 
+  // Facet values for the filters; only contracts & sub-contracts carry them.
+  useEffect(() => {
+    if (table === "person") {
+      setFacets(null);
+      return;
+    }
+    loadDbFacets(table).then(setFacets).catch(() => setFacets(null));
+  }, [table]);
+
   useEffect(() => {
     window.clearTimeout(debounce.current);
-    debounce.current = window.setTimeout(() => runSearch(table, search, showHidden), 220);
+    debounce.current = window.setTimeout(() => runSearch(searchArgs, 0), 220);
     return () => window.clearTimeout(debounce.current);
-  }, [table, search, showHidden, runSearch]);
+  }, [searchArgs, runSearch]);
 
   // Hide/restore flow through the governed, audited op-log.
   const setHidden = useCallback(
@@ -157,12 +191,12 @@ export default function Database() {
         setReason("");
         setActionMessage(hidden ? "Record hidden." : "Record restored.");
         refreshRecord();
-        runSearch(table, search, showHidden);
+        runSearch(searchArgs, 0);
       } catch (err) {
         setActionError((err as Error).message);
       }
     },
-    [record, reviewer, reason, refreshRecord, runSearch, table, search, showHidden],
+    [record, reviewer, reason, refreshRecord, runSearch, searchArgs],
   );
 
   useEffect(() => {
@@ -196,6 +230,11 @@ export default function Database() {
   const changeTable = useCallback(
     (nextTable: DbBrowseTable) => {
       setSearch("");
+      setSort(""); // sort keys are tab-specific (date vs name); fall back to the default
+      // Facets differ per table (registers, types), so the filters reset on switch.
+      setRegister("");
+      setYearRange(null);
+      setSubType("");
       navigate(`/database/${nextTable}`);   // (drops ?review)
     },
     [navigate],
@@ -237,6 +276,41 @@ export default function Database() {
     [navigate],
   );
 
+  // "Load more" appends the next page (the list grows; scroll position is kept).
+  const loadMore = useCallback(
+    () => runSearch(searchArgs, results.length),
+    [runSearch, searchArgs, results.length],
+  );
+
+  // Sort options are tab-specific: contracts/sub-contracts sort by date or id;
+  // people (no date column) by name or id. Folio is omitted — its raw strings
+  // ("154r-v", "97r [ORIG. 96r]") do not sort meaningfully.
+  const sortOptions: { value: string; label: string }[] =
+    table === "person"
+      ? [
+          { value: "", label: "Name (A–Z)" },
+          { value: "id_asc", label: "Id ↑" },
+          { value: "id_desc", label: "Id ↓" },
+        ]
+      : [
+          { value: "", label: "Date (oldest)" },
+          { value: "date_desc", label: "Date (newest)" },
+          { value: "id_asc", label: "Id ↑" },
+          { value: "id_desc", label: "Id ↓" },
+        ];
+  const searchPlaceholder =
+    table === "person" ? "Search name, nickname, or id…" : "Search firm, folio, or id…";
+
+  // Filters live on the contract & sub-contract tabs (people carry no date/register).
+  const showFilters = table !== "person" && facets !== null && facets.registers.length > 0;
+  const registerLabel = facets?.registers.find((r) => r.folder === register)?.label ?? register;
+  const activeFilterCount = (register ? 1 : 0) + (yearRange ? 1 : 0) + (subType ? 1 : 0);
+  const clearFilters = () => {
+    setRegister("");
+    setYearRange(null);
+    setSubType("");
+  };
+
   return (
     <div className="db-browser">
       <aside className="db-rail">
@@ -273,7 +347,7 @@ export default function Database() {
               <input
                 className="db-search"
                 type="search"
-                placeholder="Search firm, folio, name, or id…"
+                placeholder={searchPlaceholder}
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
@@ -286,13 +360,77 @@ export default function Database() {
                   + New contract
                 </button>
               )}
-              <label className="db-show-hidden">
-                <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
-                Show hidden
-              </label>
+              <div className="db-controls">
+                <label className="db-sort">
+                  <span className="db-sort-label">Sort</span>
+                  <select value={sort} onChange={(event) => setSort(event.target.value)}>
+                    {sortOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="db-show-hidden">
+                  <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
+                  Show hidden
+                </label>
+              </div>
               <p className="db-count muted">
-                {listError ? listError : `Showing ${shown} of ${total.toLocaleString()}`}
+                {listError
+                  ? listError
+                  : total === 0
+                    ? "No records"
+                    : `Showing 1–${results.length.toLocaleString()} of ${total.toLocaleString()}`}
               </p>
+              {showFilters && (
+                <div className="db-filter-bar">
+                  <button
+                    type="button"
+                    className="db-filter-toggle"
+                    onClick={() => setFiltersOpen((open) => !open)}
+                    aria-expanded={filtersOpen}
+                  >
+                    Filters{activeFilterCount ? ` (${activeFilterCount})` : ""} {filtersOpen ? "▴" : "▾"}
+                  </button>
+                  {activeFilterCount > 0 && (
+                    <button type="button" className="db-filter-clear" onClick={clearFilters}>
+                      Clear all
+                    </button>
+                  )}
+                </div>
+              )}
+              {activeFilterCount > 0 && (
+                <div className="db-active-chips">
+                  {register && (
+                    <button type="button" className="db-chip" onClick={() => setRegister("")}>
+                      {registerLabel} <span aria-hidden>✕</span>
+                    </button>
+                  )}
+                  {yearRange && (
+                    <button type="button" className="db-chip" onClick={() => setYearRange(null)}>
+                      {yearRange[0]}–{yearRange[1]} <span aria-hidden>✕</span>
+                    </button>
+                  )}
+                  {subType && (
+                    <button type="button" className="db-chip" onClick={() => setSubType("")}>
+                      {subType} <span aria-hidden>✕</span>
+                    </button>
+                  )}
+                </div>
+              )}
+              {showFilters && filtersOpen && facets && (
+                <DbFilters
+                  facets={facets}
+                  register={register}
+                  onRegister={setRegister}
+                  yearRange={yearRange}
+                  onYearRange={setYearRange}
+                  subType={subType}
+                  onSubType={setSubType}
+                  showTypes={table === "sub_contract"}
+                />
+              )}
             </>
           )}
         </div>
@@ -344,6 +482,13 @@ export default function Database() {
           ))}
           {results.length === 0 && !listError && (
             <li className="db-empty muted">No records match.</li>
+          )}
+          {results.length > 0 && results.length < total && (
+            <li className="db-load-more">
+              <button type="button" className="db-load-more-btn" onClick={loadMore}>
+                Load more <span className="db-load-more-count">({(total - results.length).toLocaleString()} more)</span>
+              </button>
+            </li>
           )}
         </ul>
         )}

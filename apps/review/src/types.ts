@@ -164,7 +164,16 @@ export type DbSearchResponse = {
   table: DbBrowseTable;
   total: number;
   shown: number;
+  offset: number;
   results: DbSearchResult[];
+};
+
+export type DbFacets = {
+  registers: { folder: string; label: string; count: number }[];
+  year_histogram: { decade: number; count: number }[];
+  year_min: number | null;
+  year_max: number | null;
+  sub_types: { value: string; count: number }[];
 };
 
 export type DbFieldCorrection = {

@@ -2096,38 +2096,100 @@ def search_meta(date: Any, folio: Any, folder: Any, sub_type: Any = None) -> str
     return " · ".join(part for part in parts if part)
 
 
+# Whitelisted ORDER BY bodies (after the exact-id-float lead key). No user text is
+# interpolated — the `sort` param only selects a key. Folio is intentionally absent:
+# its values are unparsed strings ("154r-v", "97r [ORIG. 96r]") and sort unreliably.
+_DATE_PLACEHOLDER_LAST = (
+    "CASE WHEN registration_date IS NULL OR registration_date IN ('', '0000-00-00') "
+    "THEN 1 ELSE 0 END"
+)
+SEARCH_SORTS: dict[str, dict[str, str]] = {
+    "contract": {
+        "date_asc": f"{_DATE_PLACEHOLDER_LAST}, registration_date ASC",
+        "date_desc": f"{_DATE_PLACEHOLDER_LAST}, registration_date DESC",
+        "id_asc": "CAST(contract_id AS INTEGER) ASC",
+        "id_desc": "CAST(contract_id AS INTEGER) DESC",
+    },
+    "person": {
+        "name_asc": "CASE WHEN trim(coalesce(last_name, '')) = '' THEN 1 ELSE 0 END, last_name, first_name",
+        "id_asc": "CAST(person_id AS INTEGER) ASC",
+        "id_desc": "CAST(person_id AS INTEGER) DESC",
+    },
+}
+SEARCH_SORT_DEFAULT = {"contract": "date_asc", "sub_contract": "date_asc", "person": "name_asc"}
+
+
+def search_order_by(table: str, sort: str) -> str:
+    """ORDER BY body for the chosen sort, falling back to the table default."""
+    options = SEARCH_SORTS["person" if table == "person" else "contract"]
+    return options.get(sort) or options[SEARCH_SORT_DEFAULT[table]]
+
+
 @app.get("/api/db/search")
 def db_search(
     table: str,
     q: str = "",
     limit: int = Query(default=60, ge=1, le=300),
+    offset: int = Query(default=0, ge=0),
+    sort: str = "",
+    register: str = "",
+    year_from: str = "",
+    year_to: str = "",
+    sub_type: str = "",
     include_hidden: bool = False,
 ) -> dict[str, Any]:
     if table not in DB_BROWSE_TABLES:
         raise HTTPException(status_code=400, detail="Unknown table.")
+    order_body = search_order_by(table, sort)
     term = q.strip()
     like = f"%{term}%"
+
+    # WHERE = a free-text group AND the structured facets. Register matches the
+    # TRIMMED folder so trailing-space duplicates ('10848' / '10848 ') collapse to
+    # one register; year filters compare the ISO date's leading 4 chars.
+    conditions: list[str] = []
+    params: list[Any] = []
+    if term:
+        if table == "contract":
+            conditions.append("(firm_name LIKE ? OR folio LIKE ? OR CAST(contract_id AS TEXT) LIKE ?)")
+            params += [like, like, like]
+        elif table == "sub_contract":
+            conditions.append("(sub_firm_name LIKE ? OR folio LIKE ? OR CAST(contract_id AS TEXT) LIKE ?)")
+            params += [like, like, like]
+        else:
+            conditions.append(
+                "(first_name LIKE ? OR last_name LIKE ? OR nickname LIKE ? OR CAST(person_id AS TEXT) LIKE ?)"
+            )
+            params += [like, like, like, like]
+    if table in ("contract", "sub_contract"):
+        if register:
+            conditions.append("TRIM(folder) = ?")
+            params.append(register)
+        if year_from:
+            conditions.append("substr(registration_date, 1, 4) >= ?")
+            params.append(year_from)
+        if year_to:
+            conditions.append("substr(registration_date, 1, 4) <= ?")
+            params.append(year_to)
+    if table == "sub_contract" and sub_type:
+        conditions.append("sub_type = ?")
+        params.append(sub_type)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    where = hidden_clause(where, include_hidden)
+
     connection = open_db()
     try:
         if table == "contract":
-            where = (
-                "WHERE firm_name LIKE ? OR folio LIKE ? OR CAST(contract_id AS TEXT) LIKE ?"
-                if term
-                else ""
-            )
-            params = [like, like, like] if term else []
-            where = hidden_clause(where, include_hidden)
             total = connection.execute(
                 f"SELECT COUNT(*) AS c FROM contract {where}", params
             ).fetchone()["c"]
             rows = connection.execute(
                 f"SELECT contract_id, registration_date, folio, firm_name, folder FROM contract {where} "
-                # Placeholder dates sort LAST (they used to flood the default
-                # list); a purely numeric query floats the exact id to the top.
-                "ORDER BY CASE WHEN CAST(contract_id AS TEXT) = ? THEN 0 ELSE 1 END, "
-                "CASE WHEN registration_date IS NULL OR registration_date IN ('', '0000-00-00') THEN 1 ELSE 0 END, "
-                "registration_date LIMIT ?",
-                (*params, term, limit),
+                # A purely numeric query floats the exact id to the top; the chosen
+                # sort (placeholder dates last) follows.
+                f"ORDER BY CASE WHEN CAST(contract_id AS TEXT) = ? THEN 0 ELSE 1 END, {order_body} "
+                "LIMIT ? OFFSET ?",
+                (*params, term, limit, offset),
             ).fetchall()
             results = [
                 {
@@ -2141,22 +2203,14 @@ def db_search(
                 for r in rows
             ]
         elif table == "sub_contract":
-            where = (
-                "WHERE sub_firm_name LIKE ? OR folio LIKE ? OR CAST(contract_id AS TEXT) LIKE ?"
-                if term
-                else ""
-            )
-            params = [like, like, like] if term else []
-            where = hidden_clause(where, include_hidden)
             total = connection.execute(
                 f"SELECT COUNT(*) AS c FROM sub_contract {where}", params
             ).fetchone()["c"]
             rows = connection.execute(
                 f"SELECT contract_id, registration_date, folio, sub_firm_name, sub_type, folder FROM sub_contract {where} "
-                "ORDER BY CASE WHEN CAST(contract_id AS TEXT) = ? THEN 0 ELSE 1 END, "
-                "CASE WHEN registration_date IS NULL OR registration_date IN ('', '0000-00-00') THEN 1 ELSE 0 END, "
-                "registration_date LIMIT ?",
-                (*params, term, limit),
+                f"ORDER BY CASE WHEN CAST(contract_id AS TEXT) = ? THEN 0 ELSE 1 END, {order_body} "
+                "LIMIT ? OFFSET ?",
+                (*params, term, limit, offset),
             ).fetchall()
             results = [
                 {
@@ -2170,24 +2224,15 @@ def db_search(
                 for r in rows
             ]
         else:  # person
-            where = (
-                "WHERE first_name LIKE ? OR last_name LIKE ? OR nickname LIKE ? "
-                "OR CAST(person_id AS TEXT) LIKE ?"
-                if term
-                else ""
-            )
-            params = [like, like, like, like] if term else []
-            where = hidden_clause(where, include_hidden)
             total = connection.execute(
                 f"SELECT COUNT(*) AS c FROM person {where}", params
             ).fetchone()["c"]
             rows = connection.execute(
                 f"SELECT person_id, first_name, last_name, nickname FROM person {where} "
-                # Mononyms (blank surname, 536 rows) sort last, not first.
-                "ORDER BY CASE WHEN CAST(person_id AS TEXT) = ? THEN 0 ELSE 1 END, "
-                "CASE WHEN trim(coalesce(last_name, '')) = '' THEN 1 ELSE 0 END, "
-                "last_name, first_name LIMIT ?",
-                (*params, term, limit),
+                # Mononyms (blank surname) sort last, not first (the default name sort).
+                f"ORDER BY CASE WHEN CAST(person_id AS TEXT) = ? THEN 0 ELSE 1 END, {order_body} "
+                "LIMIT ? OFFSET ?",
+                (*params, term, limit, offset),
             ).fetchall()
             results = [
                 {
@@ -2200,7 +2245,90 @@ def db_search(
                 }
                 for r in rows
             ]
-        return {"table": table, "total": total, "shown": len(results), "results": results}
+        return {
+            "table": table,
+            "total": total,
+            "shown": len(results),
+            "offset": offset,
+            "results": results,
+        }
+    finally:
+        connection.close()
+
+
+def register_label(series: str | None, folder: str | None) -> str:
+    """Human register label from the (case-varying) series + (trimmed) folder.
+
+    The corpus stores the series two ways for the Camera di Commercio register and
+    leaves trailing spaces on some folders; this collapses both to one clean label
+    at read time (no data writes — the stored values stay verbatim)."""
+    folder = (folder or "").strip()
+    series_lc = (series or "").lower()
+    if not folder:
+        return "(no register)"
+    if "mercanzia" in series_lc:
+        return f"Mercanzia {folder}"
+    if "commercio" in series_lc or "camera" in series_lc:
+        return f"Camera di Commercio {folder}"
+    return folder
+
+
+@app.get("/api/db/facets")
+def db_facets(table: str) -> dict[str, Any]:
+    """Facet values for the browse filters: registers (trimmed folder + count),
+    a by-decade year histogram, the actual year span, and sub-types. Registers /
+    dates apply only to contracts & sub-contracts; people carry neither."""
+    if table not in DB_BROWSE_TABLES:
+        raise HTTPException(status_code=400, detail="Unknown table.")
+    empty = {"registers": [], "year_histogram": [], "year_min": None, "year_max": None, "sub_types": []}
+    if table == "person":
+        return empty
+    dated = (
+        "is_deleted = 0 AND registration_date IS NOT NULL "
+        "AND registration_date NOT IN ('', '0000-00-00')"
+    )
+    connection = open_db()
+    try:
+        registers = [
+            {
+                "folder": (r["folder"] or "").strip(),
+                "label": register_label(r["series"], r["folder"]),
+                "count": r["c"],
+            }
+            for r in connection.execute(
+                f"SELECT TRIM(folder) AS folder, MIN(series) AS series, COUNT(*) AS c "
+                f"FROM {table} WHERE is_deleted = 0 GROUP BY TRIM(folder) ORDER BY c DESC"
+            ).fetchall()
+        ]
+        histogram = [
+            {"decade": int(r["decade"]), "count": r["c"]}
+            for r in connection.execute(
+                f"SELECT substr(registration_date, 1, 3) || '0' AS decade, COUNT(*) AS c "
+                f"FROM {table} WHERE {dated} GROUP BY decade ORDER BY decade"
+            ).fetchall()
+            if str(r["decade"]).isdigit()
+        ]
+        span = connection.execute(
+            f"SELECT MIN(substr(registration_date, 1, 4)) AS lo, "
+            f"MAX(substr(registration_date, 1, 4)) AS hi FROM {table} WHERE {dated}"
+        ).fetchone()
+        sub_types = []
+        if table == "sub_contract":
+            sub_types = [
+                {"value": r["sub_type"], "count": r["c"]}
+                for r in connection.execute(
+                    "SELECT sub_type, COUNT(*) AS c FROM sub_contract "
+                    "WHERE is_deleted = 0 AND sub_type IS NOT NULL AND sub_type <> '' "
+                    "GROUP BY sub_type ORDER BY c DESC"
+                ).fetchall()
+            ]
+        return {
+            "registers": registers,
+            "year_histogram": histogram,
+            "year_min": int(span["lo"]) if span and span["lo"] else None,
+            "year_max": int(span["hi"]) if span and span["hi"] else None,
+            "sub_types": sub_types,
+        }
     finally:
         connection.close()
 

@@ -1927,6 +1927,264 @@ progress {
   margin: 8px 0 0;
 }
 
+.db-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.db-controls .db-show-hidden {
+  margin: 0;
+}
+
+.db-sort {
+  align-items: center;
+  color: #7a6f62;
+  display: flex;
+  font-size: 0.82rem;
+  gap: 6px;
+}
+
+.db-sort select {
+  background: #211a14;
+  border: 1px solid #3a2f25;
+  border-radius: 8px;
+  color: #f0e8db;
+  font-size: 0.8rem;
+  padding: 4px 8px;
+}
+
+.db-load-more {
+  list-style: none;
+  padding: 6px 4px 12px;
+}
+
+.db-load-more-btn {
+  background: transparent;
+  border: 1px dashed #4a3d2f;
+  border-radius: 10px;
+  color: #d8c7ac;
+  cursor: pointer;
+  font-size: 0.84rem;
+  padding: 9px 12px;
+  width: 100%;
+}
+
+.db-load-more-btn:hover {
+  background: #221b15;
+  border-color: #6a5742;
+}
+
+.db-load-more-count {
+  color: #9a8a78;
+}
+
+/* ---- Browse filters ---- */
+.db-filter-bar {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.db-filter-toggle {
+  background: transparent;
+  border: 1px solid #3a2f25;
+  border-radius: 8px;
+  color: #d8c7ac;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 4px 10px;
+}
+
+.db-filter-toggle:hover {
+  border-color: #6a5742;
+}
+
+.db-filter-clear {
+  background: transparent;
+  border: none;
+  color: #9a8a78;
+  cursor: pointer;
+  font-size: 0.78rem;
+  text-decoration: underline;
+}
+
+.db-active-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.db-chip {
+  align-items: center;
+  background: #d6aa7d;
+  border: none;
+  border-radius: 999px;
+  color: #1c150f;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.74rem;
+  gap: 5px;
+  padding: 3px 9px;
+}
+
+.db-chip:hover {
+  background: #e2bb92;
+}
+
+.db-filters {
+  background: #1c1610;
+  border: 1px solid #2f261d;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 8px;
+  padding: 12px;
+}
+
+.db-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.db-filter-label {
+  color: #9a8a78;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.db-filter-field select {
+  background: #211a14;
+  border: 1px solid #3a2f25;
+  border-radius: 8px;
+  color: #f0e8db;
+  font-size: 0.82rem;
+  padding: 6px 8px;
+}
+
+.db-type-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.db-type-pill {
+  background: #211a14;
+  border: 1px solid #3a2f25;
+  border-radius: 999px;
+  color: #cdbfa9;
+  cursor: pointer;
+  font-size: 0.74rem;
+  padding: 4px 9px;
+}
+
+.db-type-pill.is-active {
+  background: #d6aa7d;
+  border-color: #d6aa7d;
+  color: #1c150f;
+}
+
+.db-type-count {
+  opacity: 0.7;
+}
+
+/* ---- Date histogram + dual-range slider ---- */
+.db-date-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.db-date-head {
+  color: #9a8a78;
+  display: flex;
+  font-size: 0.72rem;
+  justify-content: space-between;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.db-date-range {
+  color: #d8c7ac;
+  font-variant-numeric: tabular-nums;
+}
+
+.db-histogram {
+  align-items: flex-end;
+  display: flex;
+  gap: 1px;
+  height: 38px;
+}
+
+.db-bar {
+  background: #3a2f25;
+  border-radius: 1px;
+  flex: 1;
+  min-height: 2px;
+}
+
+.db-bar.is-in {
+  background: #c79a6b;
+}
+
+.db-range {
+  height: 18px;
+  position: relative;
+}
+
+.db-range input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  height: 18px;
+  margin: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 100%;
+}
+
+.db-range input[type="range"]::-webkit-slider-runnable-track {
+  background: #2f261d;
+  border-radius: 2px;
+  height: 3px;
+}
+
+.db-range input[type="range"]::-moz-range-track {
+  background: #2f261d;
+  border-radius: 2px;
+  height: 3px;
+}
+
+.db-range input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: #e2bb92;
+  border: 2px solid #1c150f;
+  border-radius: 50%;
+  cursor: pointer;
+  height: 14px;
+  margin-top: -6px;
+  pointer-events: auto;
+  width: 14px;
+}
+
+.db-range input[type="range"]::-moz-range-thumb {
+  background: #e2bb92;
+  border: 2px solid #1c150f;
+  border-radius: 50%;
+  cursor: pointer;
+  height: 14px;
+  pointer-events: auto;
+  width: 14px;
+}
+
 .db-hidden-badge {
   background: #5f281f;
   border-radius: 999px;
