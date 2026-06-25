@@ -78,6 +78,26 @@ export function loadDbFacets(table: DbBrowseTable): Promise<DbFacets> {
   return request<DbFacets>(`/api/db/facets?table=${encodeURIComponent(table)}`);
 }
 
+export function loadReference(
+  kind: import("./types").ReferenceKind,
+  opts: { q?: string; sort?: string; offset?: number; orphansOnly?: boolean } = {},
+): Promise<import("./types").ReferenceListResponse> {
+  const params = new URLSearchParams();
+  if (opts.q) params.set("q", opts.q);
+  if (opts.sort) params.set("sort", opts.sort);
+  if (opts.offset) params.set("offset", String(opts.offset));
+  if (opts.orphansOnly) params.set("orphans_only", "true");
+  const qs = params.toString();
+  return request(`/api/db/reference/${kind}${qs ? `?${qs}` : ""}`);
+}
+
+export function loadReferenceRecords(
+  kind: import("./types").ReferenceKind,
+  termId: number,
+): Promise<import("./types").ReferenceRecordsResponse> {
+  return request(`/api/db/reference/${kind}/${termId}/records`);
+}
+
 export function loadDbRecord(
   table: DbBrowseTable,
   id: string,

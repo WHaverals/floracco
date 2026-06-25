@@ -572,11 +572,16 @@ textarea {
   font-style: italic;
 }
 
-.hub-header h1 {
+.hub-header h1,
+.explore-header h1 {
   font-family: Georgia, "Times New Roman", serif;
   font-size: clamp(1.8rem, 3vw, 2.6rem);
   font-weight: 500;
   margin: 4px 0 8px;
+}
+
+.explore-header {
+  margin-bottom: 18px;
 }
 
 .hub-header .muted {
@@ -2324,6 +2329,162 @@ progress {
 
 .db-load-more-count {
   color: #9a8a78;
+}
+
+/* ---- Reference tab ---- */
+.ref-tabs {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ref-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ref-chip {
+  background: transparent;
+  border: 1px solid #3a2f25;
+  border-radius: 999px;
+  color: #cdbfa9;
+  cursor: pointer;
+  font-size: 0.74rem;
+  padding: 3px 9px;
+}
+
+.ref-chip:hover {
+  border-color: #6a5742;
+}
+
+.ref-chip.is-active {
+  background: #d6aa7d;
+  border-color: #d6aa7d;
+  color: #1c150f;
+}
+
+.ref-overview,
+.ref-term {
+  margin: 0 auto;
+  max-width: 880px;
+}
+
+.ref-note {
+  margin: 6px 0 24px;
+  max-width: 620px;
+}
+
+.ref-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+/* Fixed label + count columns so every row's track is identical width — bars
+ * stay on one common scale (a wide number must not shrink its own bar). */
+.ref-bar-row {
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 160px 1fr 56px;
+  padding: 4px 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.ref-bar-row:hover {
+  background: #fbf4e9;
+}
+
+.ref-bar-label {
+  font-size: 0.86rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ref-bar-track {
+  background: #efe6d6;
+  border-radius: 3px;
+  height: 14px;
+  overflow: hidden;
+}
+
+.ref-bar-fill {
+  background: #b07a47;
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+
+.ref-bar-count {
+  color: #6a5c4d;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ref-term-value {
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 500;
+  margin: 2px 0 0;
+}
+
+.ref-term-meta {
+  margin: 6px 0 0;
+}
+
+.ref-narrative-line {
+  font-size: 0.9rem;
+  margin: 6px 0 0;
+}
+
+.ref-term-block {
+  margin-top: 24px;
+}
+
+.ref-block-label {
+  color: #9a8a78;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+.ref-decade-chart {
+  max-width: 560px;
+  position: relative;
+}
+
+.ref-unused-note {
+  font-size: 0.8rem;
+  line-height: 1.45;
+  margin: 8px 0 0;
+  max-width: 320px;
+}
+
+.ref-records {
+  list-style: none;
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 0;
+}
+
+/* The records sit on the light detail panel, so the dark rail hover from
+ * .db-result would hide the text — use a light hover here instead. */
+.ref-records .db-result:hover {
+  background: #f0e7d7;
+}
+
+.ref-records .db-result-title {
+  color: #2e2620;
 }
 
 /* ---- Browse filters ---- */

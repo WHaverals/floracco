@@ -1,16 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { loadDbFacets, searchDb, searchGlobal } from "../api";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { loadDbFacets, searchDb } from "../api";
 import DistributionRibbon from "../components/DistributionRibbon";
 import { isToolHidden } from "../features";
-import type { SearchResponse, SearchResult } from "../types";
 
 type Bin = { decade: number; count: number };
 
 /* The home page is the project's front door: a scholarly introduction leads,
- * and the functionality (search + the tool cards) sits in an "Explore" band
- * below the essay. Quick lookups still live in the global nav search; the query
- * here lives in the URL (?q=) so searches stay shareable.
+ * then an "Explore the contracts" band whose search routes to the dedicated
+ * /explore page (results shown there, not buried under the essay).
  */
 
 const TOOLS = [
@@ -34,32 +32,11 @@ const TIMELINE = [
   { year: "1808", note: "Registration abolished" },
 ];
 
-const KIND_ROUTE: Record<SearchResult["kind"], string> = {
-  contract: "contract",
-  sub_contract: "sub_contract",
-  person: "person",
-};
-
-/** Render a snippet with «matched terms» as <mark>. */
-function Snippet({ text }: { text: string }) {
-  const parts = text.split(/[«»]/);
-  return (
-    <span className="search-snippet">
-      {parts.map((part, index) => (index % 2 === 1 ? <mark key={index}>{part}</mark> : part))}
-    </span>
-  );
-}
-
 export default function Hub() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const query = searchParams.get("q") ?? "";
-  const [response, setResponse] = useState<SearchResponse | null>(null);
-  const [expanded, setExpanded] = useState<string>("");
-  const [searching, setSearching] = useState(false);
   const [stats, setStats] = useState<{ contracts: number; acts: number; people: number } | null>(null);
   const [hist, setHist] = useState<{ contract: Bin[]; sub: Bin[] } | null>(null);
-  const debounce = useRef<number | undefined>(undefined);
+  const [query, setQuery] = useState("");
 
   // Live corpus counts for the figure line (cheap COUNT(*) per table).
   useEffect(() => {
@@ -75,28 +52,7 @@ export default function Hub() {
       .catch(() => setHist(null));
   }, []);
 
-  useEffect(() => {
-    window.clearTimeout(debounce.current);
-    if (query.trim().length < 2) {
-      setResponse(null);
-      setExpanded("");
-      return;
-    }
-    setSearching(true);
-    debounce.current = window.setTimeout(() => {
-      searchGlobal(query.trim(), expanded)
-        .then(setResponse)
-        .catch(() => setResponse(null))
-        .finally(() => setSearching(false));
-    }, 250);
-    return () => window.clearTimeout(debounce.current);
-  }, [query, expanded]);
-
-  const hasQuery = query.trim().length >= 2;
-  const nonEmptyGroups = useMemo(
-    () => (response?.groups ?? []).filter((g) => g.total > 0),
-    [response],
-  );
+  const goExplore = () => navigate(`/explore${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`);
 
   return (
     <div className="hub">
@@ -205,118 +161,51 @@ export default function Hub() {
 
           <p>
             This online platform is designed to offer new answers to these fundamental questions.{" "}
-            <a href="#explore">Explore the contracts.</a>
+            <Link to="/explore">Explore the contracts.</Link>
           </p>
         </article>
 
-        <section id="explore" className="home-explore">
+        <section className="home-explore">
           <h2>Explore the contracts</h2>
-          <div className="hub-search">
+          <form
+            className="hub-search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              goExplore();
+            }}
+          >
             <input
               type="search"
               value={query}
-              onChange={(event) => {
-                setExpanded("");
-                setSearchParams(event.target.value ? { q: event.target.value } : {}, { replace: true });
-              }}
+              onChange={(event) => setQuery(event.target.value)}
               placeholder="firm, person, place, activity, narrative text, or an act number…"
               aria-label="Search the corpus"
             />
-          </div>
+          </form>
           <p className="muted hub-search-hint">
-            Words combine with AND · "quotes" for exact phrases · diacritics optional (niccolo finds
-            Niccolò).
+            Press Enter to search the full corpus · words combine with AND · "quotes" for exact
+            phrases.
           </p>
-
-          {hasQuery ? (
-            <div className="search-results" aria-busy={searching}>
-              {response && response.id_jumps.length > 0 && (
-                <div className="search-jumps">
-                  {response.id_jumps.map((jump) => (
-                    <button
-                      type="button"
-                      key={`${jump.kind}-${jump.ref}`}
-                      className="search-jump"
-                      onClick={() => navigate(`/database/${KIND_ROUTE[jump.kind]}/${jump.ref}`)}
-                    >
-                      → {jump.kind === "sub_contract" ? "Act" : jump.kind === "person" ? "Person" : "Contract"}{" "}
-                      <strong>{jump.ref}</strong> · {jump.title}
-                      {jump.meta ? <span className="muted"> · {jump.meta}</span> : null}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {response && response.total === 0 && (
-                <div className="search-empty">
-                  <p>No record matches all of these terms.</p>
-                  {response.term_counts && (
-                    <p className="muted">
-                      Separately:{" "}
-                      {response.term_counts.map((t, i) => (
-                        <span key={t.term}>
-                          {i > 0 ? " · " : ""}
-                          <strong>{t.term}</strong>: {t.count.toLocaleString()}
-                        </span>
-                      ))}{" "}
-                      · together: 0 — these never co-occur in one record; try fewer terms.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {nonEmptyGroups.map((group) => (
-                <section key={group.kind} className="search-group">
-                  <h3>
-                    {group.label} <span className="muted">({group.total.toLocaleString()})</span>
-                  </h3>
-                  <ul>
-                    {group.results.map((result) => (
-                      <li key={`${result.kind}-${result.ref}`}>
-                        <button
-                          type="button"
-                          className="search-result"
-                          onClick={() => navigate(`/database/${KIND_ROUTE[result.kind]}/${result.ref}`)}
-                        >
-                          <span className="search-result-title">
-                            {result.title || `${group.label.slice(0, -1)} ${result.ref}`}
-                          </span>
-                          {result.meta && <span className="search-result-meta muted">{result.meta}</span>}
-                          <Snippet text={result.snippet} />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                  {group.total > group.results.length && (
-                    <button type="button" className="link-like" onClick={() => setExpanded(group.kind)}>
-                      Show all {group.total.toLocaleString()} {group.label.toLowerCase()}
-                    </button>
-                  )}
-                </section>
-              ))}
-            </div>
-          ) : (
-            <div className="hub-grid">
-              {TOOLS.map((tool) =>
-                isToolHidden(tool.key) ? (
-                  <div className="hub-card is-disabled" key={tool.to} aria-disabled="true">
-                    <div className="hub-card-top">
-                      <h2>{tool.title}</h2>
-                      <span className="hub-soon-tag">Coming soon</span>
-                    </div>
-                    <p>{tool.blurb}</p>
+          <div className="hub-grid">
+            {TOOLS.map((tool) =>
+              isToolHidden(tool.key) ? (
+                <div className="hub-card is-disabled" key={tool.to} aria-disabled="true">
+                  <div className="hub-card-top">
+                    <h2>{tool.title}</h2>
+                    <span className="hub-soon-tag">Coming soon</span>
                   </div>
-                ) : (
-                  <Link className="hub-card" key={tool.to} to={tool.to}>
-                    <div className="hub-card-top">
-                      <h2>{tool.title}</h2>
-                    </div>
-                    <p>{tool.blurb}</p>
-                  </Link>
-                ),
-              )}
-            </div>
-          )}
+                  <p>{tool.blurb}</p>
+                </div>
+              ) : (
+                <Link className="hub-card" key={tool.to} to={tool.to}>
+                  <div className="hub-card-top">
+                    <h2>{tool.title}</h2>
+                  </div>
+                  <p>{tool.blurb}</p>
+                </Link>
+              ),
+            )}
+          </div>
         </section>
 
         <footer className="home-colophon">

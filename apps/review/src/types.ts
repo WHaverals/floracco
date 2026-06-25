@@ -168,6 +168,28 @@ export type DbSearchResponse = {
   results: DbSearchResult[];
 };
 
+export type ReferenceKind = "place" | "title" | "currency" | "activity";
+
+export type ReferenceTerm = { id: number; value: string; count: number };
+
+export type ReferenceListResponse = {
+  kind: ReferenceKind;
+  total: number;
+  shown: number;
+  offset: number;
+  terms: ReferenceTerm[];
+  top: { value: string; count: number }[];
+};
+
+export type ReferenceRecordsResponse = {
+  kind: ReferenceKind;
+  value: string;
+  record_total: number;
+  narrative_mentions: number;
+  records: DbSearchResult[];
+  by_decade: { decade: number; count: number }[];
+};
+
 export type DbFacets = {
   registers: { folder: string; label: string; count: number }[];
   year_histogram: { decade: number; count: number }[];
@@ -479,7 +501,7 @@ export type CorrectionStatus =
   | "applied"
   | "reverted";
 
-export type CorrectionChangeType = "correct" | "fill_missing" | "flag_uncertain";
+export type CorrectionChangeType = "correct" | "fill_missing" | "flag_uncertain" | "clear";
 
 export type CorrectionSource = {
   source_entry_id: string | null;

@@ -5,7 +5,9 @@ import { isToolHidden } from "./features";
 import TopNav from "./components/TopNav";
 import ComingSoon from "./pages/ComingSoon";
 import Database from "./pages/Database";
+import Explore from "./pages/Explore";
 import Hub from "./pages/Hub";
+import Reference from "./pages/Reference";
 import Reconcile from "./pages/Reconcile";
 
 const REVIEWER_KEY = "floracco_reviewer";
@@ -52,6 +54,7 @@ export default function App() {
       <main className="route-area">
         <Routes>
           <Route path="/" element={<Hub />} />
+          <Route path="/explore" element={<Explore />} />
           <Route path="/reconcile" element={isToolHidden("reconcile") ? NOT_IN_PILOT : <Reconcile />} />
           <Route
             path="/reconcile/:reviewId"
@@ -62,6 +65,7 @@ export default function App() {
           <Route path="/database" element={<Database />} />
           <Route path="/database/:table" element={<Database />} />
           <Route path="/database/:table/:id" element={<Database />} />
+          <Route path="/reference" element={isToolHidden("reference") ? NOT_IN_PILOT : <Reference />} />
           <Route path="*" element={<ComingSoon title="Page not found" blurb="That route does not exist." />} />
         </Routes>
       </main>

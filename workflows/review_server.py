@@ -154,7 +154,7 @@ CORRECTABLE_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "investment_non_cash": {"label": "Non-cash", "input_type": "text"},
     },
 }
-CHANGE_TYPES = {"correct", "fill_missing", "flag_uncertain"}
+CHANGE_TYPES = {"correct", "fill_missing", "flag_uncertain", "clear"}
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 DECISION_FIELDNAMES = [
@@ -1347,6 +1347,12 @@ def validate_correction(table: str, field: str, change_type: str, proposed_value
     value = (proposed_value or "").strip()
     if change_type == "flag_uncertain":
         return value  # annotation only — never written to the DB
+    if change_type == "clear":
+        # Empty out the field (set NULL) — most fields are legitimately blank for
+        # many contracts. Booleans are exempt: the corpus has no NULL booleans.
+        if meta["input_type"] == "bool":
+            raise HTTPException(status_code=400, detail="A yes/no field can't be cleared.")
+        return ""
     if not value:
         raise HTTPException(status_code=400, detail="A proposed value is required.")
     input_type = meta["input_type"]
@@ -2367,6 +2373,178 @@ def db_facets(table: str) -> dict[str, Any]:
             "year_max": int(span["hi"]) if span and span["hi"] else None,
             "sub_types": sub_types,
             "genders": [],
+        }
+    finally:
+        connection.close()
+
+
+# ---- Reference: the controlled vocabularies (read-only browse) ----
+# The verbatim term is the source. We compute ONLY facts here: usage counts and
+# text matches. No categories, normalized forms, or groupings are stored or
+# returned — only the term as transcribed and how many records reference it.
+REFERENCE_KINDS: dict[str, tuple[str, str, str]] = {
+    "place": ("place", "place_id", "place_name"),
+    "title": ("title", "title_id", "title_name"),
+    "currency": ("currency", "currency_id", "currency"),
+    "activity": ("economic_activity", "ec_activity_id", "activity"),
+}
+
+
+def _reference_counts(connection: sqlite3.Connection, kind: str) -> dict[int, int]:
+    """How many live record-references each term has — pure counting, no judgement."""
+    counts: dict[int, int] = {}
+
+    def add(sql: str) -> None:
+        for row in connection.execute(sql):
+            key = row["k"]
+            if key not in (None, 0, ""):
+                counts[int(key)] = counts.get(int(key), 0) + row["n"]
+
+    if kind == "place":
+        add("SELECT place_id k, COUNT(*) n FROM contract_place WHERE is_deleted = 0 GROUP BY place_id")
+        add("SELECT place_of_residence k, COUNT(*) n FROM investor WHERE is_deleted = 0 GROUP BY place_of_residence")
+        add("SELECT place_of_origin k, COUNT(*) n FROM investor WHERE is_deleted = 0 GROUP BY place_of_origin")
+    elif kind == "title":
+        for col in ("title", "title_husband", "title_grandfather", "title_father_mother"):
+            add(f"SELECT {col} k, COUNT(*) n FROM investor WHERE is_deleted = 0 GROUP BY {col}")
+    elif kind == "currency":
+        add("SELECT currency_id k, COUNT(*) n FROM contract WHERE is_deleted = 0 GROUP BY currency_id")
+    elif kind == "activity":
+        add("SELECT economic_sector k, COUNT(*) n FROM contract WHERE is_deleted = 0 GROUP BY economic_sector")
+    return counts
+
+
+@app.get("/api/db/reference/{kind}")
+def db_reference(
+    kind: str,
+    q: str = "",
+    sort: str = "usage",
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=60, ge=1, le=300),
+    orphans_only: bool = False,
+) -> dict[str, Any]:
+    if kind not in REFERENCE_KINDS:
+        raise HTTPException(status_code=400, detail="Unknown vocabulary.")
+    table, id_col, name_col = REFERENCE_KINDS[kind]
+    connection = open_db()
+    try:
+        counts = _reference_counts(connection, kind)
+        items = [
+            {"id": int(r["id"]), "value": r["value"], "count": counts.get(int(r["id"]), 0)}
+            for r in connection.execute(f"SELECT {id_col} AS id, {name_col} AS value FROM {table}")
+            if (r["value"] or "").strip()
+        ]
+        # Top-by-usage for the overview chart — global, before any filtering. Facts only.
+        top = [
+            {"value": it["value"], "count": it["count"]}
+            for it in sorted(items, key=lambda x: -x["count"])[:12]
+            if it["count"] > 0
+        ]
+        term = q.strip()
+        if term:
+            needle = _lookup_norm(term)
+            items = [it for it in items if needle in _lookup_norm(it["value"])]
+        # Default view = the vocabulary as actually used (≥1 structured reference).
+        # The unused terms are old-site lookup rows never linked to a record; they
+        # stay reachable as a curation worklist via orphans_only, never deleted.
+        items = [it for it in items if (it["count"] == 0) == orphans_only]
+        if sort == "name":
+            items.sort(key=lambda x: _lookup_norm(x["value"]))
+        else:
+            items.sort(key=lambda x: (-x["count"], _lookup_norm(x["value"])))
+        total = len(items)
+        page = items[offset : offset + limit]
+        return {"kind": kind, "total": total, "shown": len(page), "offset": offset, "terms": page, "top": top}
+    finally:
+        connection.close()
+
+
+@app.get("/api/db/reference/{kind}/{term_id}/records")
+def db_reference_records(
+    kind: str, term_id: int, limit: int = Query(default=120, ge=1, le=500)
+) -> dict[str, Any]:
+    """The contracts that reference a term — the live index + a by-decade histogram
+    (when the term is attested). All derived by following foreign keys; no inference."""
+    if kind not in REFERENCE_KINDS:
+        raise HTTPException(status_code=400, detail="Unknown vocabulary.")
+    table, id_col, name_col = REFERENCE_KINDS[kind]
+    connection = open_db()
+    try:
+        row = connection.execute(f"SELECT {name_col} AS v FROM {table} WHERE {id_col} = ?", (term_id,)).fetchone()
+        value = row["v"] if row else ""
+        cids: set[int] = set()
+        if kind == "place":
+            for r in connection.execute(
+                "SELECT DISTINCT contract_id c FROM contract_place WHERE is_deleted = 0 AND place_id = ?", (term_id,)
+            ):
+                cids.add(r["c"])
+            for r in connection.execute(
+                "SELECT DISTINCT contract_id c FROM investor WHERE is_deleted = 0 "
+                "AND (place_of_residence = ? OR place_of_origin = ?)",
+                (term_id, term_id),
+            ):
+                cids.add(r["c"])
+        elif kind == "title":
+            for r in connection.execute(
+                "SELECT DISTINCT contract_id c FROM investor WHERE is_deleted = 0 "
+                "AND (title = ? OR title_husband = ? OR title_grandfather = ? OR title_father_mother = ?)",
+                (term_id, term_id, term_id, term_id),
+            ):
+                cids.add(r["c"])
+        elif kind == "currency":
+            for r in connection.execute(
+                "SELECT contract_id c FROM contract WHERE is_deleted = 0 AND currency_id = ?", (term_id,)
+            ):
+                cids.add(r["c"])
+        elif kind == "activity":
+            for r in connection.execute(
+                "SELECT contract_id c FROM contract WHERE is_deleted = 0 AND economic_sector = ?", (term_id,)
+            ):
+                cids.add(r["c"])
+        cids.discard(None)
+        records: list[dict[str, Any]] = []
+        decade: dict[int, int] = {}
+        if cids:
+            marks = ",".join("?" * len(cids))
+            for r in connection.execute(
+                f"SELECT contract_id, firm_name, registration_date, folio, folder FROM contract "
+                f"WHERE contract_id IN ({marks}) AND is_deleted = 0 "
+                "ORDER BY CASE WHEN registration_date IS NULL OR registration_date IN ('', '0000-00-00') "
+                "THEN 1 ELSE 0 END, registration_date",
+                tuple(cids),
+            ):
+                records.append(
+                    {
+                        "id": str(r["contract_id"]),
+                        "row_id": f"contract:{r['contract_id']}",
+                        "title": (r["firm_name"] or "").strip() or f"Contract {r['contract_id']}",
+                        "meta": search_meta(r["registration_date"], r["folio"], r["folder"]),
+                    }
+                )
+                d = str(r["registration_date"] or "")
+                if len(d) >= 4 and d[:4].isdigit() and d not in ("0000-00-00",):
+                    dec = int(d[:3] + "0")
+                    decade[dec] = decade.get(dec, 0) + 1
+        # How often the term's text appears in the free narrative — a different,
+        # honest signal from the structured links above. For an unused term this
+        # shows whether it is a genuine missing-link candidate (in the text) or a
+        # stray spelling (absent). Case-insensitive substring; a rough but useful count.
+        narrative_mentions = 0
+        if (value or "").strip():
+            like = f"%{value}%"
+            narrative_mentions = connection.execute(
+                "SELECT COUNT(*) FROM contract WHERE is_deleted = 0 AND document LIKE ? COLLATE NOCASE", (like,)
+            ).fetchone()[0]
+            narrative_mentions += connection.execute(
+                "SELECT COUNT(*) FROM sub_contract WHERE is_deleted = 0 AND document LIKE ? COLLATE NOCASE", (like,)
+            ).fetchone()[0]
+        return {
+            "kind": kind,
+            "value": value,
+            "record_total": len(cids),
+            "narrative_mentions": narrative_mentions,
+            "records": records[:limit],
+            "by_decade": [{"decade": k, "count": v} for k, v in sorted(decade.items())],
         }
     finally:
         connection.close()
@@ -4123,7 +4301,9 @@ def apply_correction(proposal_id: str, action: CorrectionAction) -> dict[str, An
                 ),
             )
         new_value: Any = proposal["proposed_value"]
-        if meta["input_type"] in ("number", "bool"):
+        if proposal.get("change_type") == "clear":
+            new_value = None  # set the column to SQL NULL (renders as "—")
+        elif meta["input_type"] in ("number", "bool"):
             new_value = int(proposal["proposed_value"])
         with connection:  # transaction: commit on success, rollback on error
             connection.execute(

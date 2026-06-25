@@ -5,6 +5,7 @@ import { isToolHidden } from "../features";
 const LINKS = [
   { to: "/reconcile", label: "Reconcile", key: "reconcile" },
   { to: "/database", label: "Database", key: "database" },
+  { to: "/reference", label: "Reference", key: "reference" },
 ];
 
 /* Global search lives on the home page; every other page carries this compact
@@ -46,7 +47,7 @@ export default function TopNav({ identityEmail }: { identityEmail?: string | nul
           onSubmit={(event) => {
             event.preventDefault();
             if (query.trim()) {
-              navigate(`/?q=${encodeURIComponent(query.trim())}`);
+              navigate(`/explore?q=${encodeURIComponent(query.trim())}`);
               setQuery("");
             }
           }}

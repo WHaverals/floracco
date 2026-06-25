@@ -48,14 +48,14 @@ export default function InlineFieldEditor({
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel]);
 
+  // Clearing a non-empty field to blank is a legitimate edit — most fields are
+  // empty for many contracts (a stray "NULL" should become a true blank).
+  const isClear = value.trim() === "" && currentValue.trim() !== "";
+
   const save = async () => {
     setError("");
     if (!reviewer.trim()) {
       setError("Initials needed.");
-      return;
-    }
-    if (!value.trim()) {
-      setError("Enter a value.");
       return;
     }
     if (value.trim() === currentValue.trim()) {
@@ -69,9 +69,9 @@ export default function InlineFieldEditor({
         reviewer: reviewer.trim(),
         db_row_id: dbRowId,
         field: column,
-        change_type: currentValue.trim() ? "correct" : "fill_missing",
+        change_type: isClear ? "clear" : currentValue.trim() ? "correct" : "fill_missing",
         proposed_value: value.trim(),
-        rationale: note.trim() || "Edited directly on the record page.",
+        rationale: note.trim() || (isClear ? "Cleared on the record page." : "Edited directly on the record page."),
         origin: "manual",
         source_entry_id: "",
         source_entry_key: "",
@@ -153,7 +153,7 @@ export default function InlineFieldEditor({
           Cancel
         </button>
         <button type="button" className="pill-button is-active" onClick={save} disabled={saving}>
-          {saving ? "Saving…" : "Save"}
+          {saving ? "Saving…" : isClear ? "Clear field" : "Save"}
         </button>
       </div>
       {error && <p className="error-text">{error}</p>}
