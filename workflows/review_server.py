@@ -1852,9 +1852,13 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         record_field("Firm name", "contract", "firm_name", data.get("firm_name"), display_text(data.get("firm_name")), corrections),
         record_field("Registration date", "contract", "registration_date", data.get("registration_date"), display_text(data.get("registration_date")), corrections),
         record_field("Start date", "contract", "start_date", data.get("start_date"), display_text(data.get("start_date")), corrections),
+        # Capital amount + its currency unit are one concept ("1000" + "fiorini
+        # d'oro"); kept consecutive (and a row-start pair at the usual width) so
+        # they read and edit together, not 10 fields apart.
+        record_field("Total capital", "contract", "total", data.get("total"), display_text(total_text), corrections),
+        relink_field(connection, "Currency", "contract", raw_id, "currency_id", "currency", data.get("currency_id")),
         record_field("Folio", "contract", "folio", data.get("folio"), display_text(data.get("folio")), corrections),
         record_field("Archive / series / folder", "contract", None, None, display_text(archive_ref), corrections),
-        record_field("Total capital", "contract", "total", data.get("total"), display_text(total_text), corrections),
         record_field("Duration (months)", "contract", "duration_months", data.get("duration_months"), display_text(data.get("duration_months")), corrections),
         record_field("Automatic renewal", "contract", "automatic_renewal", data.get("automatic_renewal"), yes_no(data.get("automatic_renewal")), corrections),
         record_field("Renewal period (months)", "contract", "automatic_renewal_months", data.get("automatic_renewal_months"), display_text(data.get("automatic_renewal_months")), corrections),
@@ -1864,7 +1868,6 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         record_field("Administrators named", "contract", "administrators", data.get("administrators"), yes_no(data.get("administrators")), corrections),
         record_field("Additional documents", "contract", "additional_docs", data.get("additional_docs"), yes_no(data.get("additional_docs")), corrections),
         relink_field(connection, "Economic sector", "contract", raw_id, "economic_sector", "economic_activity", data.get("economic_sector")),
-        relink_field(connection, "Currency", "contract", raw_id, "currency_id", "currency", data.get("currency_id")),
     ]
     _attach_word_check(connection, fields, f"contract:{raw_id}")
 
