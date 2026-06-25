@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 import unicodedata
 import uuid
 from collections import Counter
@@ -2551,6 +2552,198 @@ def db_reference_records(
         }
     finally:
         connection.close()
+
+
+# ---- Analysis: read-only query execution (builder / library / console) ----
+# Everything analytical runs through ONE executor: SELECT-only, on a read-only
+# connection (mode=ro), single statement, row-capped and time-limited. It cannot
+# modify the corpus, and a runaway query cannot hang the server.
+_ANALYSIS_FORBIDDEN = re.compile(
+    r"\b(insert|update|delete|drop|alter|create|replace|attach|detach|pragma|"
+    r"vacuum|reindex|trigger|grant|revoke|truncate)\b",
+    re.IGNORECASE,
+)
+ANALYSIS_ROW_CAP = 5000
+ANALYSIS_TIMEOUT_S = 6.0
+
+
+def run_readonly_sql(sql: str) -> dict[str, Any]:
+    statement = sql.strip().rstrip(";").strip()
+    if not statement:
+        raise HTTPException(status_code=400, detail="Empty query.")
+    if ";" in statement:
+        raise HTTPException(status_code=400, detail="Only a single SELECT statement is allowed.")
+    head = statement.lstrip("(").lower()
+    if not (head.startswith("select") or head.startswith("with")):
+        raise HTTPException(status_code=400, detail="Only SELECT / WITH queries are allowed.")
+    if _ANALYSIS_FORBIDDEN.search(statement):
+        raise HTTPException(status_code=400, detail="Only read-only SELECT queries are allowed.")
+    connection = sqlite3.connect(f"file:{db_path()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    deadline = time.monotonic() + ANALYSIS_TIMEOUT_S
+    connection.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 100_000)
+    try:
+        cursor = connection.execute(statement)
+        columns = [d[0] for d in cursor.description] if cursor.description else []
+        rows: list[list[Any]] = []
+        truncated = False
+        for index, row in enumerate(cursor):
+            if index >= ANALYSIS_ROW_CAP:
+                truncated = True
+                break
+            rows.append([row[c] for c in columns])
+        return {"columns": columns, "rows": rows, "row_count": len(rows), "truncated": truncated}
+    except sqlite3.OperationalError as exc:
+        message = str(exc)
+        if "interrupt" in message.lower():
+            raise HTTPException(status_code=400, detail="Query timed out — narrow it and try again.")
+        raise HTTPException(status_code=400, detail=f"SQL error: {message}")
+    except sqlite3.Error as exc:
+        raise HTTPException(status_code=400, detail=f"SQL error: {exc}")
+    finally:
+        connection.close()
+
+
+# Named queries, re-authored from `SQL formulas/` for SQLite. chart ∈ none|bar|line.
+ANALYSIS_LIBRARY: list[dict[str, str]] = [
+    {
+        "id": "corpus_totals",
+        "group": "Overview",
+        "title": "Corpus totals",
+        "description": "How many contracts, later acts, people, places and currencies the database holds.",
+        "chart": "none",
+        "sql": "SELECT 'contracts' AS item, COUNT(*) AS n FROM contract WHERE is_deleted = 0\n"
+        "UNION ALL SELECT 'later acts', COUNT(*) FROM sub_contract WHERE is_deleted = 0\n"
+        "UNION ALL SELECT 'people', COUNT(*) FROM person WHERE is_deleted = 0\n"
+        "UNION ALL SELECT 'places', COUNT(*) FROM place\n"
+        "UNION ALL SELECT 'currencies', COUNT(*) FROM currency",
+    },
+    {
+        "id": "contracts_per_year",
+        "group": "Time",
+        "title": "Contracts per registration year",
+        "description": "Number of accomandite registered each year.",
+        "chart": "line",
+        "sql": "SELECT CAST(substr(registration_date, 1, 4) AS INTEGER) AS year, COUNT(*) AS contracts\n"
+        "FROM contract\n"
+        "WHERE is_deleted = 0 AND registration_date NOT IN ('', '0000-00-00', 'NULL') AND registration_date IS NOT NULL\n"
+        "GROUP BY year ORDER BY year",
+    },
+    {
+        "id": "currency_frequency",
+        "group": "Capital & currency",
+        "title": "Most-used currencies",
+        "description": "How many contracts are denominated in each currency.",
+        "chart": "bar",
+        "sql": "SELECT cu.currency, COUNT(*) AS contracts\n"
+        "FROM contract c JOIN currency cu ON cu.currency_id = c.currency_id\n"
+        "WHERE c.is_deleted = 0 GROUP BY cu.currency_id ORDER BY contracts DESC",
+    },
+    {
+        "id": "currency_totals",
+        "group": "Capital & currency",
+        "title": "Total capital by currency",
+        "description": "Sum of stated capital per currency. Amounts are historical text, so sums are approximate.",
+        "chart": "bar",
+        "sql": "SELECT cu.currency, COUNT(*) AS contracts, ROUND(SUM(CAST(c.total AS REAL))) AS total_capital\n"
+        "FROM contract c JOIN currency cu ON cu.currency_id = c.currency_id\n"
+        "WHERE c.is_deleted = 0 AND c.total GLOB '[0-9]*'\n"
+        "GROUP BY cu.currency_id ORDER BY total_capital DESC",
+    },
+    {
+        "id": "location_frequency",
+        "group": "Geography",
+        "title": "Most-frequent places of activity",
+        "description": "How often each place is recorded as a firm's place of activity.",
+        "chart": "bar",
+        "sql": "SELECT p.place_name, COUNT(*) AS contracts\n"
+        "FROM contract_place cp JOIN place p ON p.place_id = cp.place_id\n"
+        "WHERE cp.is_deleted = 0 GROUP BY cp.place_id ORDER BY contracts DESC",
+    },
+    {
+        "id": "investors_per_contract",
+        "group": "Structure",
+        "title": "Contracts ranked by number of investors",
+        "description": "Each contract with its count of investors, most first.",
+        "chart": "none",
+        "sql": "SELECT contract_id, COUNT(*) AS investors FROM investor\n"
+        "WHERE is_deleted = 0 GROUP BY contract_id ORDER BY investors DESC",
+    },
+    {
+        "id": "acts_per_contract",
+        "group": "Structure",
+        "title": "Contracts ranked by number of later acts",
+        "description": "Each contract with its count of later acts (terminations, variations, …).",
+        "chart": "none",
+        "sql": "SELECT main_contract_id AS contract_id, COUNT(*) AS later_acts FROM sub_contract\n"
+        "WHERE is_deleted = 0 GROUP BY main_contract_id ORDER BY later_acts DESC",
+    },
+    {
+        "id": "investments_by_role",
+        "group": "Structure",
+        "title": "Investments by role (general vs limited)",
+        "description": "Count of investments held as general partner (gp) vs limited partner (lp).",
+        "chart": "bar",
+        "sql": "SELECT type AS role, COUNT(*) AS investments FROM investment\n"
+        "WHERE is_deleted = 0 AND type IN ('gp', 'lp') GROUP BY type",
+    },
+    {
+        "id": "women_investors",
+        "group": "People & gender",
+        "title": "Women investors",
+        "description": "Every contract with a woman recorded among its investors.",
+        "chart": "none",
+        "sql": "SELECT DISTINCT c.contract_id, CAST(substr(c.registration_date, 1, 4) AS INTEGER) AS year,\n"
+        "       pe.first_name, pe.last_name\n"
+        "FROM person pe JOIN investor i ON i.person_id = pe.person_id\n"
+        "JOIN contract c ON c.contract_id = i.contract_id\n"
+        "WHERE pe.is_woman = 1 AND i.is_deleted = 0 AND c.is_deleted = 0\n"
+        "ORDER BY pe.last_name, pe.first_name",
+    },
+    {
+        "id": "ec_discretion_yes",
+        "group": "Structure",
+        "title": "Economic activity 'at discretion'",
+        "description": "Contracts where the economic activity was left to the partners' discretion.",
+        "chart": "none",
+        "sql": "SELECT contract_id, registration_date, firm_name FROM contract\n"
+        "WHERE is_deleted = 0 AND ec_discretion = 1 ORDER BY contract_id",
+    },
+    {
+        "id": "no_place",
+        "group": "Data quality",
+        "title": "Contracts with no place of activity",
+        "description": "Contracts that have no place linked at all.",
+        "chart": "none",
+        "sql": "SELECT c.contract_id, c.registration_date, c.firm_name\n"
+        "FROM contract c LEFT JOIN contract_place cp ON cp.contract_id = c.contract_id AND cp.is_deleted = 0\n"
+        "WHERE c.is_deleted = 0 AND cp.place_id IS NULL ORDER BY c.contract_id",
+    },
+    {
+        "id": "no_investors",
+        "group": "Data quality",
+        "title": "Contracts with no investors",
+        "description": "Contracts that have no investors recorded.",
+        "chart": "none",
+        "sql": "SELECT c.contract_id, c.registration_date, c.firm_name\n"
+        "FROM contract c LEFT JOIN investor i ON i.contract_id = c.contract_id AND i.is_deleted = 0\n"
+        "WHERE c.is_deleted = 0 AND i.investor_id IS NULL ORDER BY c.contract_id",
+    },
+]
+
+
+@app.get("/api/analysis/library")
+def analysis_library() -> dict[str, Any]:
+    return {"queries": ANALYSIS_LIBRARY}
+
+
+class AnalysisRun(BaseModel):
+    sql: str = ""
+
+
+@app.post("/api/analysis/run")
+def analysis_run(payload: AnalysisRun) -> dict[str, Any]:
+    return run_readonly_sql(payload.sql)
 
 
 @app.get("/api/db/record/{table}/{record_id}")
