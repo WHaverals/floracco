@@ -14,6 +14,17 @@ import Reconcile from "./pages/Reconcile";
 
 const REVIEWER_KEY = "floracco_reviewer";
 
+// One-time migration (runs at import, before any component reads the key): fold the
+// legacy "floracco.reviewer" (dot, once used only by the Reconcile DecisionBar) into
+// the shared underscore key so a reviewer's initials are the same everywhere.
+if (typeof localStorage !== "undefined") {
+  const legacy = localStorage.getItem("floracco.reviewer");
+  if (legacy) {
+    if (!localStorage.getItem(REVIEWER_KEY)) localStorage.setItem(REVIEWER_KEY, legacy);
+    localStorage.removeItem("floracco.reviewer");
+  }
+}
+
 // A tool hidden from the pilot renders this placeholder on its route, so it's
 // unreachable even by direct URL (the nav link is greyed out separately).
 const NOT_IN_PILOT = (

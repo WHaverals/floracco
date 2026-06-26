@@ -161,7 +161,6 @@ export default function Hub() {
 
           <p>
             This online platform is designed to offer new answers to these fundamental questions.{" "}
-            <Link to="/explore">Explore the contracts.</Link>
           </p>
         </article>
 

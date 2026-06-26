@@ -1,7 +1,15 @@
 import { useState } from "react";
 import type { DecisionPayload, ReviewCase } from "../types";
 
-const REVIEWER_KEY = "floracco.reviewer";
+// Shared across the whole app (Database, Reference, edit components). Migrate the
+// legacy "floracco.reviewer" (dot) once so initials set here in Reconcile carry over.
+const REVIEWER_KEY = "floracco_reviewer";
+const LEGACY_REVIEWER_KEY = "floracco.reviewer";
+
+function readReviewer(): string {
+  if (typeof localStorage === "undefined") return "";
+  return localStorage.getItem(REVIEWER_KEY) ?? localStorage.getItem(LEGACY_REVIEWER_KEY) ?? "";
+}
 
 function value(row: ReviewCase["row"], key: string): string {
   return String(row[key] ?? "");
@@ -19,9 +27,7 @@ export default function DecisionBar({
   onSave: (decision: DecisionPayload) => Promise<void>;
 }) {
   const row = reviewCase.row;
-  const [reviewer, setReviewer] = useState(
-    typeof localStorage !== "undefined" ? localStorage.getItem(REVIEWER_KEY) ?? "" : "",
-  );
+  const [reviewer, setReviewer] = useState(readReviewer);
   const [note, setNote] = useState("");
   const [showNote, setShowNote] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -32,6 +38,7 @@ export default function DecisionBar({
     if (!reviewer.trim()) return;
     if (typeof localStorage !== "undefined") {
       localStorage.setItem(REVIEWER_KEY, reviewer.trim());
+      localStorage.removeItem(LEGACY_REVIEWER_KEY);   // finish the migration
     }
     const selected = verdict === "confirm" ? selectedDbRows : [];
     // Three decision states, keyed on the matcher's own link_role: unticked

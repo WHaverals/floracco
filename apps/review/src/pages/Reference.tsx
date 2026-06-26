@@ -159,7 +159,7 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
 
   const act = async (fn: () => Promise<unknown>) => {
     if (!reviewer.trim()) {
-      setError("Enter your reviewer email before linking.");
+      setError("Enter your initials before linking.");
       return;
     }
     localStorage.setItem("floracco_reviewer", reviewer.trim());
@@ -280,8 +280,8 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
       <label className="ref-reviewer">
         <span className="db-sort-label">Reviewer</span>
         <input
-          type="email"
-          placeholder="you@example.edu"
+          type="text"
+          placeholder="initials"
           value={reviewer}
           onChange={(e) => setReviewer(e.target.value)}
         />
