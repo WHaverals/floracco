@@ -529,11 +529,12 @@ textarea {
   margin: 0;
 }
 
-/* Four compact destination cards in a row (2×2 on narrow), lighter than the
-   two big legacy cards so the band reads as "ways in", not heavy CTAs. */
-.home-explore-grid {
+/* Four compact destination cards as a balanced 2×2 (1 column on mobile), lighter
+   than the two big legacy cards so the band reads as "ways in", not heavy CTAs.
+   Double class to beat the later, broader .hub-grid rule. */
+.hub-grid.home-explore-grid {
   gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   margin: 22px 0 0;
 }
 
