@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { geoMercator, geoPath } from "d3-geo";
 import { feature } from "topojson-client";
 import type { FeatureCollection } from "geojson";
-import topo from "../data/countries-50m.json";
+import topo from "../geo/countries-50m.json";
 import { loadPlaceMap } from "../api";
 import type { PlaceMapPoint } from "../types";
 
