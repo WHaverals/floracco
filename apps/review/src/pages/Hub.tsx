@@ -15,8 +15,20 @@ const TOOLS = [
   {
     to: "/database",
     key: "database",
-    title: "Browse & edit the database",
-    blurb: "Browse and edit database records alongside their Word summaries, and manuscript pages.",
+    title: "Browse & edit",
+    blurb: "Records beside their Word summaries and manuscript pages.",
+  },
+  {
+    to: "/reference",
+    key: "reference",
+    title: "Reference",
+    blurb: "Places, titles, currencies, activities — and the map.",
+  },
+  {
+    to: "/analysis",
+    key: "analysis",
+    title: "Analysis",
+    blurb: "Guided queries, a saved library, CSV, and charts.",
   },
   {
     to: "/reconcile",
@@ -111,6 +123,48 @@ export default function Hub() {
           </section>
         )}
 
+        <section className="home-explore">
+          <h2>Explore the contracts</h2>
+          <form
+            className="hub-search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              goExplore();
+            }}
+          >
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="firm, person, place, activity, narrative text, or an act number…"
+              aria-label="Search the corpus"
+            />
+          </form>
+          <p className="muted hub-search-hint">
+            Press Enter to search the full corpus · words combine with AND · "quotes" for exact phrases.
+          </p>
+          <div className="hub-grid home-explore-grid">
+            {TOOLS.map((tool) =>
+              isToolHidden(tool.key) ? (
+                <div className="hub-card is-disabled" key={tool.to} aria-disabled="true">
+                  <div className="hub-card-top">
+                    <h2>{tool.title}</h2>
+                    <span className="hub-soon-tag">Coming soon</span>
+                  </div>
+                  <p>{tool.blurb}</p>
+                </div>
+              ) : (
+                <Link className="hub-card" key={tool.to} to={tool.to}>
+                  <div className="hub-card-top">
+                    <h2>{tool.title}</h2>
+                  </div>
+                  <p>{tool.blurb}</p>
+                </Link>
+              ),
+            )}
+          </div>
+        </section>
+
         <article className="home-essay">
           <p>A limited partnership involves two sets of partners:</p>
 
@@ -163,49 +217,6 @@ export default function Hub() {
             This online platform is designed to offer new answers to these fundamental questions.{" "}
           </p>
         </article>
-
-        <section className="home-explore">
-          <h2>Explore the contracts</h2>
-          <form
-            className="hub-search"
-            onSubmit={(event) => {
-              event.preventDefault();
-              goExplore();
-            }}
-          >
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="firm, person, place, activity, narrative text, or an act number…"
-              aria-label="Search the corpus"
-            />
-          </form>
-          <p className="muted hub-search-hint">
-            Press Enter to search the full corpus · words combine with AND · "quotes" for exact
-            phrases.
-          </p>
-          <div className="hub-grid">
-            {TOOLS.map((tool) =>
-              isToolHidden(tool.key) ? (
-                <div className="hub-card is-disabled" key={tool.to} aria-disabled="true">
-                  <div className="hub-card-top">
-                    <h2>{tool.title}</h2>
-                    <span className="hub-soon-tag">Coming soon</span>
-                  </div>
-                  <p>{tool.blurb}</p>
-                </div>
-              ) : (
-                <Link className="hub-card" key={tool.to} to={tool.to}>
-                  <div className="hub-card-top">
-                    <h2>{tool.title}</h2>
-                  </div>
-                  <p>{tool.blurb}</p>
-                </Link>
-              ),
-            )}
-          </div>
-        </section>
 
         <footer className="home-colophon">
           <p className="home-colophon-name">Francesca Trivellato</p>
