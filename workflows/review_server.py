@@ -33,7 +33,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from workflows import corrections_db, data_quality, search_index, word_cross_check
+from workflows import corrections_db, data_quality, place_cache, reference_match, search_index, word_cross_check
 from workflows.word_pipeline import act_components_for_review, folio_sort_key, parse_db_folio
 
 
@@ -2542,6 +2542,14 @@ def db_reference_records(
             narrative_mentions += connection.execute(
                 "SELECT COUNT(*) FROM sub_contract WHERE is_deleted = 0 AND document LIKE ? COLLATE NOCASE", (like,)
             ).fetchone()[0]
+        # Machine resolution + coordinate (place only, if the batch has run).
+        resolution = None
+        if kind == "place" and place_cache.exists():
+            pcache = place_cache.connect()
+            try:
+                resolution = place_cache.resolution_for(pcache, term_id)
+            finally:
+                pcache.close()
         return {
             "kind": kind,
             "value": value,
@@ -2549,8 +2557,225 @@ def db_reference_records(
             "narrative_mentions": narrative_mentions,
             "records": records[:limit],
             "by_decade": [{"decade": k, "count": v} for k, v in sorted(decade.items())],
+            "resolution": resolution,
         }
     finally:
+        connection.close()
+
+
+# ---- Reference: duplicate finder + interpretive links (human curation) ----
+# A matcher proposes same-as candidates; it never acts. A human links (additive,
+# attributed, reversible) or marks distinct. Links live in corrections.db and
+# never alter the verbatim term in main.db.
+
+def _link_lookup(connection: sqlite3.Connection, kind: str) -> tuple[str, str, str]:
+    table, id_col, name_col = REFERENCE_KINDS[kind]
+    return table, id_col, name_col
+
+
+# Confidence at/above which a machine suggestion joins the main "likely the same"
+# lane; below it goes to the separate "needs your eye" lane.
+LLM_CONFIDENT_THRESHOLD = 0.8
+
+
+def _llm_suggestion_families(
+    kind: str, name_by_id: dict[int, str], counts: dict[int, int], undecided
+) -> list[dict[str, Any]]:
+    """Cached machine (LLM) same-as suggestions as worklist families. Place only,
+    and only if the resolution batch has been run (place_cache.db present).
+    Returns ALL suggestion families (the caller splits by confidence); each is
+    flagged source="llm" with the model's rationale, and passes the same
+    undecided() filter so acted-on groups disappear."""
+    if kind != "place" or not place_cache.exists():
+        return []
+    cache = place_cache.connect()
+    try:
+        out: list[dict[str, Any]] = []
+        for grp in place_cache.suggestion_families(cache):
+            terms = [
+                {"id": pid, "value": name_by_id[pid], "count": counts.get(pid, 0)}
+                for pid in grp["place_ids"] if pid in name_by_id
+            ]
+            if len(terms) < 2 or not undecided(terms):
+                continue
+            terms.sort(key=lambda t: -t["count"])
+            out.append({
+                "signature": grp["group_key"],
+                "source": "llm",
+                "rationale": grp["rationale"],
+                "confidence": grp["confidence"],
+                "terms": terms,
+            })
+        out.sort(key=lambda f: (-f["confidence"], -sum(t["count"] for t in f["terms"])))
+        return out
+    finally:
+        cache.close()
+
+
+@app.get("/api/db/reference/{kind}/duplicates")
+def db_reference_duplicates(kind: str) -> dict[str, Any]:
+    """Same-as candidates for a vocabulary, with already-decided pairs removed.
+
+    Returns ``{available, families, cautions, links}``. ``available`` is False
+    for vocabularies whose matcher isn't built yet (place/title/activity)."""
+    if kind not in REFERENCE_KINDS:
+        raise HTTPException(status_code=400, detail="Unknown vocabulary.")
+    matcher = reference_match.MATCHERS.get(kind)
+    if matcher is None:
+        return {"kind": kind, "available": False, "families": [], "uncertain": [],
+                "cautions": [], "links": []}
+    table, id_col, name_col = _link_lookup(connection := open_db(), kind)
+    clog = open_corrections()
+    try:
+        counts = _reference_counts(connection, kind)
+        terms = [
+            {"id": int(r["id"]), "value": r["value"], "count": counts.get(int(r["id"]), 0)}
+            for r in connection.execute(f"SELECT {id_col} AS id, {name_col} AS value FROM {table}")
+            if (r["value"] or "").strip() and counts.get(int(r["id"]), 0) > 0
+        ]
+        result = matcher(terms)
+        links = corrections_db.active_reference_links(clog, kind)
+        # A family is resolved once its members are all transitively connected by
+        # same-as links, or each remaining pair is marked distinct. (Linking three
+        # variants to one canonical makes the two variants same *transitively* — we
+        # must not keep re-suggesting them.)
+        same_pairs = [
+            (int(ln["from_id"]), int(ln["to_id"]))
+            for ln in links if ln["rel"] in ("same_as", "variant_of")
+        ]
+        distinct_set = {
+            frozenset((int(ln["from_id"]), int(ln["to_id"])))
+            for ln in links if ln["rel"] == "distinct"
+        }
+
+        def undecided(group: list[dict]) -> bool:
+            ids = [t["id"] for t in group]
+            id_set = set(ids)
+            parent = {i: i for i in ids}
+
+            def find(x: int) -> int:
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]
+                    x = parent[x]
+                return x
+
+            for a, b in same_pairs:
+                if a in id_set and b in id_set:
+                    parent[find(a)] = find(b)
+            return any(
+                find(ids[i]) != find(ids[j]) and frozenset((ids[i], ids[j])) not in distinct_set
+                for i in range(len(ids))
+                for j in range(i + 1, len(ids))
+            )
+
+        families = [f for f in result["families"] if undecided(f["terms"])]
+        cautions = result.get("cautions", [])
+        # decorate links with the current verbatim values for display
+        name_by_id = {int(r["id"]): r["value"] for r in connection.execute(
+            f"SELECT {id_col} AS id, {name_col} AS value FROM {table}")}
+        for ln in links:
+            ln["from_value"] = name_by_id.get(int(ln["from_id"]), "")
+            ln["to_value"] = name_by_id.get(int(ln["to_id"]), "")
+
+        # Machine (LLM) suggestions — currently place only. Confident ones join the
+        # main lane (flagged source="llm"); low-confidence ones go to a separate
+        # "needs your eye" lane. Same undecided() filter so acted-on pairs vanish.
+        uncertain = _llm_suggestion_families(kind, name_by_id, counts, undecided)
+        confident = [f for f in uncertain if f["confidence"] >= LLM_CONFIDENT_THRESHOLD]
+        families = families + confident
+        uncertain = [f for f in uncertain if f["confidence"] < LLM_CONFIDENT_THRESHOLD]
+        return {
+            "kind": kind,
+            "available": True,
+            "families": families,
+            "uncertain": uncertain,
+            "cautions": cautions,
+            "links": links,
+            "note": result.get("note", ""),
+        }
+    finally:
+        clog.close()
+        connection.close()
+
+
+class ReferenceLink(BaseModel):
+    reviewer: str = Field(min_length=1)
+    rel: str = "same_as"        # same_as | variant_of | distinct
+    from_id: int
+    to_id: int
+    reason: str = ""
+
+
+@app.post("/api/db/reference/{kind}/link")
+def db_reference_link(kind: str, action: ReferenceLink) -> dict[str, Any]:
+    """Record a reviewed link between two terms — additive, attributed,
+    reversible. Never mutates either verbatim term."""
+    if kind not in REFERENCE_KINDS:
+        raise HTTPException(status_code=400, detail="Unknown vocabulary.")
+    if action.rel not in ("same_as", "variant_of", "distinct"):
+        raise HTTPException(status_code=400, detail="Unknown relation.")
+    if action.from_id == action.to_id:
+        raise HTTPException(status_code=400, detail="Cannot link a term to itself.")
+    clog = open_corrections()
+    try:
+        # guard against duplicating an existing active link on the same pair
+        for ln in corrections_db.active_reference_links(clog, kind):
+            if frozenset((int(ln["from_id"]), int(ln["to_id"]))) == frozenset((action.from_id, action.to_id)):
+                raise HTTPException(status_code=409, detail="These two terms are already linked.")
+        link_id = corrections_db.add_reference_link(
+            clog, kind=kind, rel=action.rel, from_id=action.from_id, to_id=action.to_id,
+            by=action.reviewer, reason=action.reason.strip() or None,
+        )
+        return {"ok": True, "link_id": link_id}
+    finally:
+        clog.close()
+
+
+class ReviewerOnly(BaseModel):
+    reviewer: str = Field(min_length=1)
+    reason: str = ""
+
+
+@app.post("/api/db/reference/link/{link_id}/revoke")
+def db_reference_link_revoke(link_id: str, action: ReviewerOnly) -> dict[str, Any]:
+    clog = open_corrections()
+    try:
+        ok = corrections_db.revoke_reference_link(clog, link_id, by=action.reviewer)
+        if not ok:
+            raise HTTPException(status_code=404, detail="No active link with that id.")
+        return {"ok": True}
+    finally:
+        clog.close()
+
+
+@app.get("/api/db/reference/place/map")
+def db_reference_place_map() -> dict[str, Any]:
+    """Geocoded places for the map: verbatim · usage · lat/lon · type · approx.
+    Empty until the resolution batch (place_resolve.py) has run."""
+    if not place_cache.exists():
+        return {"available": False, "points": []}
+    connection = open_db()
+    cache = place_cache.connect()
+    try:
+        counts = _reference_counts(connection, "place")
+        names = {int(r["place_id"]): r["place_name"] for r in connection.execute(
+            "SELECT place_id, place_name FROM place")}
+        points = []
+        for g in place_cache.all_geo(cache):
+            pid = g["place_id"]
+            if pid not in names:
+                continue
+            points.append({
+                "id": pid,
+                "value": names[pid],
+                "count": counts.get(pid, 0),
+                "lat": g["lat"], "lon": g["lon"],
+                "type": g["type"], "approx": g["approx"],
+                "modern_name": g["modern_name"],
+            })
+        return {"available": True, "points": points}
+    finally:
+        cache.close()
         connection.close()
 
 
@@ -2567,7 +2792,7 @@ ANALYSIS_ROW_CAP = 5000
 ANALYSIS_TIMEOUT_S = 6.0
 
 
-def run_readonly_sql(sql: str) -> dict[str, Any]:
+def run_readonly_sql(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
     statement = sql.strip().rstrip(";").strip()
     if not statement:
         raise HTTPException(status_code=400, detail="Empty query.")
@@ -2583,7 +2808,7 @@ def run_readonly_sql(sql: str) -> dict[str, Any]:
     deadline = time.monotonic() + ANALYSIS_TIMEOUT_S
     connection.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 100_000)
     try:
-        cursor = connection.execute(statement)
+        cursor = connection.execute(statement, params)
         columns = [d[0] for d in cursor.description] if cursor.description else []
         rows: list[list[Any]] = []
         truncated = False
@@ -2729,6 +2954,80 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "FROM contract c LEFT JOIN investor i ON i.contract_id = c.contract_id AND i.is_deleted = 0\n"
         "WHERE c.is_deleted = 0 AND i.investor_id IS NULL ORDER BY c.contract_id",
     },
+    {
+        "id": "no_economic_activity",
+        "group": "Data quality",
+        "title": "Contracts with no economic activity",
+        "description": "Contracts whose economic activity was never recorded.",
+        "chart": "none",
+        "sql": "SELECT contract_id, registration_date, firm_name FROM contract\n"
+        "WHERE is_deleted = 0 AND (economic_sector = 0 OR economic_sector IS NULL) ORDER BY contract_id",
+    },
+    # ---- queries beyond the visual builder, kept here as named saved SQL ----
+    {
+        "id": "jewish_all",
+        "group": "People & gender",
+        "title": "Contracts where all investors are Jewish",
+        "description": "Has at least one Jewish investor and no non-Jewish investor.",
+        "chart": "none",
+        "sql": "SELECT CAST(substr(c.registration_date,1,4) AS INTEGER) AS year, c.contract_id, c.firm_name\n"
+        "FROM contract c\n"
+        "WHERE c.is_deleted = 0\n"
+        "  AND c.contract_id IN (SELECT contract_id FROM investor WHERE is_deleted = 0 AND (is_jewish = 1 OR jewish_db = 1))\n"
+        "  AND c.contract_id NOT IN (SELECT contract_id FROM investor WHERE is_deleted = 0 AND is_jewish = 0 AND jewish_db = 0)\n"
+        "ORDER BY year",
+    },
+    {
+        "id": "jewish_mixed",
+        "group": "People & gender",
+        "title": "Contracts with mixed Jewish & non-Jewish investors",
+        "description": "Has at least one Jewish and at least one non-Jewish investor.",
+        "chart": "none",
+        "sql": "SELECT CAST(substr(c.registration_date,1,4) AS INTEGER) AS year, c.contract_id, c.firm_name\n"
+        "FROM contract c\n"
+        "WHERE c.is_deleted = 0\n"
+        "  AND c.contract_id IN (SELECT contract_id FROM investor WHERE is_deleted = 0 AND (is_jewish = 1 OR jewish_db = 1))\n"
+        "  AND c.contract_id IN (SELECT contract_id FROM investor WHERE is_deleted = 0 AND is_jewish = 0 AND jewish_db = 0)\n"
+        "ORDER BY year",
+    },
+    {
+        "id": "gp_lp_per_contract",
+        "group": "Structure",
+        "title": "General/limited partners per contract (min · avg · max)",
+        "description": "How many general (gp) and limited (lp) partners a contract has, summarised.",
+        "chart": "none",
+        "sql": "SELECT 'gp' AS role, MIN(n) AS min, ROUND(AVG(n), 2) AS avg, MAX(n) AS max\n"
+        "FROM (SELECT contract_id, COUNT(*) AS n FROM investment WHERE is_deleted = 0 AND type = 'gp' GROUP BY contract_id)\n"
+        "UNION ALL\n"
+        "SELECT 'lp', MIN(n), ROUND(AVG(n), 2), MAX(n)\n"
+        "FROM (SELECT contract_id, COUNT(*) AS n FROM investment WHERE is_deleted = 0 AND type = 'lp' GROUP BY contract_id)",
+    },
+    {
+        "id": "relatives_in_contract",
+        "group": "People & gender",
+        "title": "Possible relatives in the same contract",
+        "description": "Investors in one contract who share a last name, father's name, or grandfather's name.",
+        "chart": "none",
+        "sql": "SELECT DISTINCT i1.contract_id, p1.last_name, p1.father_mother, p1.grandfather, p1.first_name\n"
+        "FROM investor i1 JOIN person p1 ON p1.person_id = i1.person_id\n"
+        "JOIN investor i2 ON i2.contract_id = i1.contract_id AND i2.investor_id <> i1.investor_id\n"
+        "JOIN person p2 ON p2.person_id = i2.person_id\n"
+        "WHERE i1.is_deleted = 0 AND i2.is_deleted = 0\n"
+        "  AND ((p1.last_name <> '' AND p1.last_name = p2.last_name)\n"
+        "    OR (p1.father_mother <> '' AND p1.father_mother = p2.father_mother)\n"
+        "    OR (p1.grandfather <> '' AND p1.grandfather = p2.grandfather))\n"
+        "ORDER BY i1.contract_id, p1.last_name",
+    },
+    {
+        "id": "pct_via_proxy",
+        "group": "People & gender",
+        "title": "Share of investors acting via proxy",
+        "description": "Percentage of investor appearances recorded as acting through a proxy.",
+        "chart": "none",
+        "sql": "SELECT ROUND(100.0 * SUM(CASE WHEN via_proxy = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_via_proxy,\n"
+        "       COUNT(*) AS total_investors\n"
+        "FROM investor WHERE is_deleted = 0",
+    },
 ]
 
 
@@ -2744,6 +3043,182 @@ class AnalysisRun(BaseModel):
 @app.post("/api/analysis/run")
 def analysis_run(payload: AnalysisRun) -> dict[str, Any]:
     return run_readonly_sql(payload.sql)
+
+
+# ---- Guided builder: a structured spec → whitelisted, parameterised SQL ----
+# The frontend never sends SQL here — only enum keys. Every fragment is from these
+# whitelists; filter VALUES are bound as parameters. So the builder is injection-proof
+# and still runs through the same read-only executor.
+ANALYSIS_SUBJECTS: dict[str, dict[str, Any]] = {
+    "contracts": {
+        "from": "contract c",
+        "where": ["c.is_deleted = 0"],
+        "list_select": "c.contract_id, c.registration_date AS date, c.firm_name",
+        "list_order": "c.contract_id",
+    },
+    "investors": {
+        "from": (
+            "investor i JOIN person pe ON pe.person_id = i.person_id "
+            "JOIN contract c ON c.contract_id = i.contract_id"
+        ),
+        "where": ["i.is_deleted = 0", "c.is_deleted = 0"],
+        "list_select": "c.contract_id, CAST(substr(c.registration_date,1,4) AS INTEGER) AS year, pe.first_name, pe.last_name",
+        "list_order": "pe.last_name, pe.first_name",
+    },
+}
+
+# key -> (subjects, where-fragment, takes_value, value_kind)
+ANALYSIS_FILTERS: dict[str, tuple[set[str], str, bool, str | None]] = {
+    "reg_year_from": ({"contracts", "investors"}, "substr(c.registration_date,1,4) >= ?", True, None),
+    "reg_year_to": ({"contracts", "investors"}, "substr(c.registration_date,1,4) <= ?", True, None),
+    "place_is": (
+        {"contracts"},
+        "EXISTS (SELECT 1 FROM contract_place cp JOIN place p ON p.place_id=cp.place_id "
+        "WHERE cp.contract_id=c.contract_id AND cp.is_deleted=0 AND p.place_name = ?)",
+        True,
+        None,
+    ),
+    "activity_contains": (
+        {"contracts"},
+        "EXISTS (SELECT 1 FROM economic_activity ea WHERE ea.ec_activity_id=c.economic_sector AND ea.activity LIKE ?)",
+        True,
+        "like",
+    ),
+    "currency_is": (
+        {"contracts"},
+        "EXISTS (SELECT 1 FROM currency cu WHERE cu.currency_id=c.currency_id AND cu.currency = ?)",
+        True,
+        None,
+    ),
+    "register_is": ({"contracts"}, "TRIM(c.folder) = ?", True, None),
+    "ec_discretion_yes": ({"contracts"}, "c.ec_discretion = 1", False, None),
+    "no_place": (
+        {"contracts"},
+        "NOT EXISTS (SELECT 1 FROM contract_place cp WHERE cp.contract_id=c.contract_id AND cp.is_deleted=0)",
+        False,
+        None,
+    ),
+    "no_investors": (
+        {"contracts"},
+        "NOT EXISTS (SELECT 1 FROM investor iv WHERE iv.contract_id=c.contract_id AND iv.is_deleted=0)",
+        False,
+        None,
+    ),
+    "gender_women": ({"investors"}, "pe.is_woman = 1", False, None),
+    "gender_men": ({"investors"}, "pe.is_woman = 0", False, None),
+    "role_gp": (
+        {"investors"},
+        "EXISTS (SELECT 1 FROM investor_group ig JOIN investment inv ON inv.investment_id=ig.investment_id "
+        "WHERE ig.investor_id=i.investor_id AND inv.is_deleted=0 AND inv.type='gp')",
+        False,
+        None,
+    ),
+    "role_lp": (
+        {"investors"},
+        "EXISTS (SELECT 1 FROM investor_group ig JOIN investment inv ON inv.investment_id=ig.investment_id "
+        "WHERE ig.investor_id=i.investor_id AND inv.is_deleted=0 AND inv.type='lp')",
+        False,
+        None,
+    ),
+    "via_proxy": ({"investors"}, "i.via_proxy = 1", False, None),
+    "jewish": ({"investors"}, "(i.is_jewish = 1 OR i.jewish_db = 1)", False, None),
+    "title_contains": (
+        {"investors"},
+        "EXISTS (SELECT 1 FROM title t WHERE t.title_id=i.title AND t.title_name LIKE ?)",
+        True,
+        "like",
+    ),
+}
+
+# key -> (subjects, expr, label, extra_join, chart, dimension_order)
+ANALYSIS_GROUPS: dict[str, tuple[set[str], str, str, str, str, bool]] = {
+    "reg_year": ({"contracts", "investors"}, "CAST(substr(c.registration_date,1,4) AS INTEGER)", "year", "", "line", True),
+    "decade": ({"contracts", "investors"}, "CAST(substr(c.registration_date,1,3)||'0' AS INTEGER)", "decade", "", "bar", True),
+    "currency": ({"contracts"}, "cu.currency", "currency", "JOIN currency cu ON cu.currency_id=c.currency_id", "bar", False),
+    "register": ({"contracts"}, "TRIM(c.folder)", "register", "", "bar", False),
+    "gender": ({"investors"}, "CASE WHEN pe.is_woman=1 THEN 'women' ELSE 'men' END", "gender", "", "bar", False),
+}
+
+
+def build_analysis_sql(spec: dict[str, Any]) -> tuple[str, list[Any], str]:
+    subject = spec.get("subject")
+    if subject not in ANALYSIS_SUBJECTS:
+        raise HTTPException(status_code=400, detail="Unknown subject.")
+    sub = ANALYSIS_SUBJECTS[subject]
+    measure = spec.get("measure") or "count"
+    group = spec.get("group_by") or ""
+    from_parts = [sub["from"]]
+    where = list(sub["where"])
+    params: list[Any] = []
+
+    for entry in spec.get("filters") or []:
+        key = entry.get("field")
+        if key not in ANALYSIS_FILTERS:
+            raise HTTPException(status_code=400, detail=f"Unknown filter '{key}'.")
+        subjects, fragment, takes_value, kind = ANALYSIS_FILTERS[key]
+        if subject not in subjects:
+            raise HTTPException(status_code=400, detail=f"Filter '{key}' is not valid for {subject}.")
+        where.append(fragment)
+        if takes_value:
+            value = str(entry.get("value") or "").strip()
+            if not value:
+                raise HTTPException(status_code=400, detail=f"Filter '{key}' needs a value.")
+            params.append(f"%{value}%" if kind == "like" else value)
+
+    group_expr = group_label = None
+    chart = "none"
+    dimension_order = False
+    if group:
+        if group not in ANALYSIS_GROUPS:
+            raise HTTPException(status_code=400, detail="Unknown grouping.")
+        g_subjects, group_expr, group_label, g_join, chart, dimension_order = ANALYSIS_GROUPS[group]
+        if subject not in g_subjects:
+            raise HTTPException(status_code=400, detail=f"Grouping '{group}' is not valid for {subject}.")
+        if g_join:
+            from_parts.append(g_join)
+        if group in ("reg_year", "decade"):
+            where.append("c.registration_date NOT IN ('', '0000-00-00', 'NULL') AND c.registration_date IS NOT NULL")
+
+    if measure in ("sum_total", "avg_total"):
+        if subject != "contracts":
+            raise HTTPException(status_code=400, detail="Capital measures apply to contracts only.")
+        where.append("c.total GLOB '[0-9]*'")
+
+    from_clause = " ".join(from_parts)
+    where_clause = " AND ".join(f"({w})" for w in where)
+
+    if measure == "list":
+        sql = f"SELECT {sub['list_select']} FROM {from_clause} WHERE {where_clause} ORDER BY {sub['list_order']} LIMIT 5000"
+        return sql, params, "none"
+
+    if measure in ("sum_total", "avg_total"):
+        agg = "SUM" if measure == "sum_total" else "AVG"
+        m_expr = f"ROUND({agg}(CAST(c.total AS REAL)))"
+        if group:
+            order = f"{group_label} ASC" if dimension_order else "total_capital DESC"
+            sql = (
+                f"SELECT {group_expr} AS {group_label}, COUNT(*) AS contracts, {m_expr} AS total_capital "
+                f"FROM {from_clause} WHERE {where_clause} GROUP BY {group_expr} ORDER BY {order}"
+            )
+            return sql, params, chart
+        return f"SELECT {m_expr} AS total_capital, COUNT(*) AS contracts FROM {from_clause} WHERE {where_clause}", params, "none"
+
+    # count
+    if group:
+        order = f"{group_label} ASC" if dimension_order else "n DESC"
+        sql = (
+            f"SELECT {group_expr} AS {group_label}, COUNT(*) AS n "
+            f"FROM {from_clause} WHERE {where_clause} GROUP BY {group_expr} ORDER BY {order}"
+        )
+        return sql, params, chart
+    return f"SELECT COUNT(*) AS count FROM {from_clause} WHERE {where_clause}", params, "none"
+
+
+@app.post("/api/analysis/build")
+def analysis_build(payload: dict[str, Any]) -> dict[str, Any]:
+    sql, params, chart = build_analysis_sql(payload)
+    result = run_readonly_sql(sql, tuple(params))
+    return {**result, "sql": sql, "chart": chart}
 
 
 @app.get("/api/db/record/{table}/{record_id}")

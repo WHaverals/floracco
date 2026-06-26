@@ -3,7 +3,9 @@ import { Route, Routes } from "react-router-dom";
 import { loadMe } from "./api";
 import { isToolHidden } from "./features";
 import TopNav from "./components/TopNav";
+import ErrorBoundary from "./components/ErrorBoundary";
 import ComingSoon from "./pages/ComingSoon";
+import Analysis from "./pages/Analysis";
 import Database from "./pages/Database";
 import Explore from "./pages/Explore";
 import Hub from "./pages/Hub";
@@ -52,6 +54,7 @@ export default function App() {
     <div className="app-root">
       <TopNav identityEmail={identity.authenticated ? identity.email : null} />
       <main className="route-area">
+        <ErrorBoundary>
         <Routes>
           <Route path="/" element={<Hub />} />
           <Route path="/explore" element={<Explore />} />
@@ -66,8 +69,10 @@ export default function App() {
           <Route path="/database/:table" element={<Database />} />
           <Route path="/database/:table/:id" element={<Database />} />
           <Route path="/reference" element={isToolHidden("reference") ? NOT_IN_PILOT : <Reference />} />
+          <Route path="/analysis" element={isToolHidden("analysis") ? NOT_IN_PILOT : <Analysis />} />
           <Route path="*" element={<ComingSoon title="Page not found" blurb="That route does not exist." />} />
         </Routes>
+        </ErrorBoundary>
       </main>
     </div>
   );

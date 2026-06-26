@@ -19,7 +19,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
   });
   if (!response.ok) {
-    throw new Error(await response.text());
+    const text = await response.text();
+    let message = text;
+    try {
+      const body = JSON.parse(text);
+      if (body && typeof body.detail === "string") message = body.detail;
+    } catch {
+      /* not JSON — use the raw text */
+    }
+    throw new Error(message);
   }
   return response.json() as Promise<T>;
 }
@@ -78,6 +86,23 @@ export function loadDbFacets(table: DbBrowseTable): Promise<DbFacets> {
   return request<DbFacets>(`/api/db/facets?table=${encodeURIComponent(table)}`);
 }
 
+export function loadAnalysisLibrary(): Promise<{ queries: import("./types").AnalysisQuery[] }> {
+  return request("/api/analysis/library");
+}
+
+export function runAnalysisLibrary(sql: string): Promise<import("./types").AnalysisResult> {
+  return request("/api/analysis/run", { method: "POST", body: JSON.stringify({ sql }) });
+}
+
+export function runAnalysisBuild(spec: {
+  subject: string;
+  measure: string;
+  filters: { field: string; value?: string }[];
+  group_by: string;
+}): Promise<import("./types").AnalysisResult & { sql: string; chart: import("./types").AnalysisChart }> {
+  return request("/api/analysis/build", { method: "POST", body: JSON.stringify(spec) });
+}
+
 export function loadReference(
   kind: import("./types").ReferenceKind,
   opts: { q?: string; sort?: string; offset?: number; orphansOnly?: boolean } = {},
@@ -89,6 +114,33 @@ export function loadReference(
   if (opts.orphansOnly) params.set("orphans_only", "true");
   const qs = params.toString();
   return request(`/api/db/reference/${kind}${qs ? `?${qs}` : ""}`);
+}
+
+export function loadReferenceDuplicates(
+  kind: import("./types").ReferenceKind,
+): Promise<import("./types").ReferenceDuplicatesResponse> {
+  return request(`/api/db/reference/${kind}/duplicates`);
+}
+
+export function createReferenceLink(
+  kind: import("./types").ReferenceKind,
+  body: { reviewer: string; rel: "same_as" | "variant_of" | "distinct"; from_id: number; to_id: number; reason?: string },
+): Promise<{ ok: boolean; link_id: string }> {
+  return request(`/api/db/reference/${kind}/link`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function revokeReferenceLink(
+  linkId: string,
+  body: { reviewer: string },
+): Promise<{ ok: boolean }> {
+  return request(`/api/db/reference/link/${encodeURIComponent(linkId)}/revoke`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function loadPlaceMap(): Promise<import("./types").PlaceMapResponse> {
+  return request("/api/db/reference/place/map");
 }
 
 export function loadReferenceRecords(

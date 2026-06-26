@@ -181,6 +181,20 @@ export type ReferenceListResponse = {
   top: { value: string; count: number }[];
 };
 
+export type PlaceResolution = {
+  modern_name: string;
+  country: string;
+  admin_region: string;
+  feature_type: string;
+  is_area: number;
+  confidence: number;
+  note: string;
+  model: string;
+  lat?: number;
+  lon?: number;
+  geo_source?: string;
+};
+
 export type ReferenceRecordsResponse = {
   kind: ReferenceKind;
   value: string;
@@ -188,6 +202,74 @@ export type ReferenceRecordsResponse = {
   narrative_mentions: number;
   records: DbSearchResult[];
   by_decade: { decade: number; count: number }[];
+  resolution?: PlaceResolution | null;
+};
+
+export type ReferenceDuplicateFamily = {
+  signature: string;
+  terms: ReferenceTerm[];
+  source?: "rule" | "llm";
+  rationale?: string;
+  confidence?: number;
+};
+
+export type ReferenceCaution = { terms: ReferenceTerm[] };
+
+export type ReferenceLink = {
+  link_id: string;
+  kind: ReferenceKind;
+  rel: "same_as" | "variant_of" | "distinct";
+  from_id: number;
+  to_id: number;
+  from_value: string;
+  to_value: string;
+  reason: string | null;
+  created_by: string;
+  created_at: string;
+};
+
+export type ReferenceDuplicatesResponse = {
+  kind: ReferenceKind;
+  available: boolean;
+  families: ReferenceDuplicateFamily[];
+  uncertain?: ReferenceDuplicateFamily[];
+  cautions: ReferenceCaution[];
+  links: ReferenceLink[];
+  note?: string;
+};
+
+export type PlaceMapPoint = {
+  id: number;
+  value: string;
+  count: number;
+  lat: number;
+  lon: number;
+  type: string;
+  approx: boolean;
+  modern_name: string;
+};
+
+export type PlaceMapResponse = {
+  available: boolean;
+  points: PlaceMapPoint[];
+};
+
+export type AnalysisChart = "none" | "bar" | "line";
+
+export type AnalysisQuery = {
+  id: string;
+  group: string;
+  title: string;
+  description: string;
+  chart: AnalysisChart;
+  sql: string;
+};
+
+export type AnalysisResult = {
+  columns: string[];
+  rows: (string | number | null)[][];
+  row_count: number;
+  truncated: boolean;
 };
 
 export type DbFacets = {

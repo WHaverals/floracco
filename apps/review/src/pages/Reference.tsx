@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { loadReference, loadReferenceRecords } from "../api";
+import {
+  createReferenceLink,
+  loadReference,
+  loadReferenceDuplicates,
+  loadReferenceRecords,
+  revokeReferenceLink,
+} from "../api";
+import PlaceMap from "../components/PlaceMap";
 import type {
+  ReferenceDuplicatesResponse,
   ReferenceKind,
   ReferenceListResponse,
   ReferenceRecordsResponse,
@@ -123,9 +131,272 @@ function DecadeBars({ data }: { data: { decade: number; count: number }[] }) {
   );
 }
 
+/** Review-duplicates worklist for one vocabulary. The matcher proposes; the human
+ *  decides. Linking is additive + reversible and never alters the verbatim term. */
+function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: string; noun: string }) {
+  const navigate = useNavigate();
+  const [data, setData] = useState<ReferenceDuplicatesResponse | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [canonical, setCanonical] = useState<Record<string, number>>({});
+  const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
+  const [showCautions, setShowCautions] = useState(false);
+
+  const reload = useCallback(() => {
+    loadReferenceDuplicates(kind)
+      .then((res) => {
+        setData(res);
+        setError("");
+      })
+      .catch((e: Error) => setError(e.message));
+  }, [kind]);
+
+  useEffect(() => {
+    setData(null);
+    setCanonical({});
+    reload();
+  }, [reload]);
+
+  const act = async (fn: () => Promise<unknown>) => {
+    if (!reviewer.trim()) {
+      setError("Enter your reviewer email before linking.");
+      return;
+    }
+    localStorage.setItem("floracco_reviewer", reviewer.trim());
+    setBusy(true);
+    try {
+      await fn();
+      reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const linkFamily = (family: ReferenceTerm[], canonId: number, rel: "same_as" | "distinct") =>
+    act(async () => {
+      for (const t of family) {
+        if (t.id === canonId) continue;
+        try {
+          await createReferenceLink(kind, {
+            reviewer: reviewer.trim(),
+            rel,
+            from_id: t.id,
+            to_id: canonId,
+          });
+        } catch (e) {
+          // a pair already decided (e.g. completing a partly-linked family) — skip it
+          if (!String((e as Error).message).includes("already linked")) throw e;
+        }
+      }
+    });
+
+  const renderFamily = (fam: import("../types").ReferenceDuplicateFamily) => {
+    const canonId = canonical[fam.signature] ?? fam.terms[0].id;
+    return (
+      <li key={fam.signature} className="ref-fam">
+        {fam.source === "llm" && (
+          <p className="ref-fam-llm">
+            <span className="ref-fam-llm-tag">machine-suggested</span>
+            {typeof fam.confidence === "number" && (
+              <span className="ref-fam-conf">{Math.round(fam.confidence * 100)}% confident</span>
+            )}
+            {fam.rationale}
+          </p>
+        )}
+        <div className="ref-fam-terms">
+          {fam.terms.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={t.id === canonId ? "ref-fam-term is-canon" : "ref-fam-term"}
+              title={t.id === canonId ? "Canonical (keep)" : "Click to keep this spelling as canonical"}
+              onClick={() => setCanonical((c) => ({ ...c, [fam.signature]: t.id }))}
+            >
+              <span className="ref-fam-value">{t.value}</span>
+              <span className="ref-fam-count muted">
+                {t.count > 0 ? `${t.count.toLocaleString()}×` : "unused"}
+              </span>
+              {t.id === canonId && <span className="ref-fam-badge">canonical</span>}
+            </button>
+          ))}
+        </div>
+        <div className="ref-fam-actions">
+          <button
+            type="button"
+            className="pill-button is-primary"
+            disabled={busy}
+            onClick={() => linkFamily(fam.terms, canonId, "same_as")}
+          >
+            Link as same
+          </button>
+          <button
+            type="button"
+            className="pill-button"
+            disabled={busy}
+            onClick={() => linkFamily(fam.terms, canonId, "distinct")}
+            title="Record that these are NOT the same — stops resurfacing them"
+          >
+            Not the same
+          </button>
+        </div>
+      </li>
+    );
+  };
+
+  if (data && !data.available) {
+    return (
+      <div className="ref-overview">
+        <p className="eyebrow">Review duplicates</p>
+        <h2>{label}</h2>
+        <p className="muted ref-note">
+          The duplicate matcher for {label.toLowerCase()} isn’t built yet. Currency is the first one —
+          its grammar (coin + rate + place) is mechanical, so matching is safe. Places (with a
+          gazetteer) and the others come next.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ref-dupes">
+      <p className="eyebrow">Review duplicates</p>
+      <h2>{label} — same-as candidates</h2>
+      <p className="muted ref-note">
+        {kind === "place"
+          ? "Exact matches plus reviewed machine suggestions for historic/variant spellings — never a different place or administrative scope (città ≠ contado)."
+          : `The matcher folds only spelling (apostrophes, di/a/e, word order) — never ${
+              kind === "currency"
+                ? "a different number, coin, or place"
+                : kind === "title"
+                  ? "a different rank, gender, or status"
+                  : "a different word, trade, or commodity"
+            }.`}{" "}
+        Each pair below is a <strong>suggestion</strong>: linking records a reviewed{" "}
+        <em>“same as”</em> beside both terms — it never edits or deletes either, and it’s reversible.
+      </p>
+
+      <label className="ref-reviewer">
+        <span className="db-sort-label">Reviewer</span>
+        <input
+          type="email"
+          placeholder="you@example.edu"
+          value={reviewer}
+          onChange={(e) => setReviewer(e.target.value)}
+        />
+      </label>
+      {error && <p className="error-text">{error}</p>}
+
+      {!data ? (
+        <p className="muted">Loading…</p>
+      ) : (
+        <>
+          {data.note && <p className="muted ref-note ref-dupe-note">{data.note}</p>}
+          <p className="ref-block-label">
+            Likely the same{data.families.length ? ` (${data.families.length})` : ""}
+          </p>
+          {data.families.length === 0 ? (
+            <p className="muted ref-note">
+              {data.note
+                ? "No exact matches. Knowledge-based suggestions will appear here once the historic-name pass has run."
+                : "No unresolved same-as candidates. 🎉"}
+            </p>
+          ) : (
+            <ul className="ref-fam-list">{data.families.map(renderFamily)}</ul>
+          )}
+
+          {data.uncertain && data.uncertain.length > 0 && (
+            <>
+              <p className="ref-block-label">Needs your eye ({data.uncertain.length})</p>
+              <p className="muted ref-note ref-uncertain-note">
+                Lower-confidence machine suggestions — look before linking.
+              </p>
+              <ul className="ref-fam-list">{data.uncertain.map(renderFamily)}</ul>
+            </>
+          )}
+
+          {data.links.length > 0 && (
+            <>
+              <p className="ref-block-label">Already linked ({data.links.length})</p>
+              <ul className="ref-link-list">
+                {data.links.map((ln) => (
+                  <li key={ln.link_id} className="ref-link">
+                    <span className="ref-link-text">
+                      {ln.rel === "distinct" ? (
+                        <>
+                          <span className="ref-fam-value">{ln.from_value}</span>
+                          <span className="ref-link-rel">≠</span>
+                          <span className="ref-fam-value">{ln.to_value}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="ref-fam-value">{ln.from_value}</span>
+                          <span className="ref-link-rel">→</span>
+                          <span className="ref-fam-value">{ln.to_value}</span>
+                        </>
+                      )}
+                      <span className="muted ref-link-by">{ln.created_by}</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="link-like"
+                      disabled={busy}
+                      onClick={() => act(() => revokeReferenceLink(ln.link_id, { reviewer: reviewer.trim() }))}
+                    >
+                      Undo
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {data.cautions.length > 0 && (
+            <div className="ref-cautions">
+              <button type="button" className="link-like" onClick={() => setShowCautions((s) => !s)}>
+                {showCautions ? "Hide" : "Show"} look-alikes the matcher kept separate ({data.cautions.length})
+              </button>
+              {showCautions && (
+                <>
+                  <p className="muted ref-note">
+                    These look similar but differ by a <strong>number</strong> (a different exchange rate) — a
+                    real distinction. The matcher deliberately does <em>not</em> propose merging them.
+                  </p>
+                  <ul className="ref-caution-list">
+                    {data.cautions.map((c, i) => (
+                      <li key={i} className="ref-caution">
+                        <span className="ref-caution-warn">⚠</span>
+                        {c.terms.map((t, j) => (
+                          <span key={t.id}>
+                            <button
+                              type="button"
+                              className="link-like"
+                              onClick={() => navigate(`/explore?q=${encodeURIComponent(t.value)}`)}
+                            >
+                              {t.value}
+                            </button>
+                            {j < c.terms.length - 1 && <span className="ref-link-rel"> vs </span>}
+                          </span>
+                        ))}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+      <p className="muted ref-note ref-noun-foot">Curating the {noun} vocabulary.</p>
+    </div>
+  );
+}
+
 export default function Reference() {
   const navigate = useNavigate();
   const [kind, setKind] = useState<ReferenceKind>("place");
+  const [mode, setMode] = useState<"browse" | "dupes" | "map">("browse");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("usage");
   const [orphansOnly, setOrphansOnly] = useState(false);
@@ -172,6 +443,7 @@ export default function Reference() {
     setSearch("");
     setOrphansOnly(false);
     setSelected(null);
+    if (k !== "place" && mode === "map") setMode("browse");  // map is place-only
   };
 
   return (
@@ -192,6 +464,33 @@ export default function Reference() {
             ))}
           </div>
 
+          <div className="db-tabs ref-mode">
+            <button
+              type="button"
+              className={mode === "browse" ? "db-tab is-active" : "db-tab"}
+              onClick={() => setMode("browse")}
+            >
+              Browse
+            </button>
+            <button
+              type="button"
+              className={mode === "dupes" ? "db-tab is-active" : "db-tab"}
+              onClick={() => setMode("dupes")}
+            >
+              Review duplicates
+            </button>
+            {kind === "place" && (
+              <button
+                type="button"
+                className={mode === "map" ? "db-tab is-active" : "db-tab"}
+                onClick={() => setMode("map")}
+              >
+                Map
+              </button>
+            )}
+          </div>
+
+          {mode === "browse" && (
           <input
             className="db-search"
             type="search"
@@ -199,7 +498,10 @@ export default function Reference() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
+          )}
 
+          {mode === "browse" && (
+          <>
           <div className="ref-quick">
             {vocab.quick.map((term) => (
               <button
@@ -247,8 +549,11 @@ export default function Reference() {
               see.
             </p>
           )}
+          </>
+          )}
         </div>
 
+        {mode === "browse" && (
         <ul className="db-results">
           {terms.map((t) => (
             <li key={t.id}>
@@ -277,10 +582,20 @@ export default function Reference() {
             </li>
           )}
         </ul>
+        )}
       </aside>
 
       <section className="db-detail">
-        {!selected ? (
+        {mode === "map" ? (
+          <PlaceMap
+            onPick={(p) => {
+              setSelected({ id: p.id, value: p.value, count: p.count });
+              setMode("browse");
+            }}
+          />
+        ) : mode === "dupes" ? (
+          <DuplicatesView kind={kind} label={vocab.label} noun={vocab.noun} />
+        ) : !selected ? (
           <div className="ref-overview">
             <p className="eyebrow">Most-referenced</p>
             <h2>{vocab.label} by usage</h2>
@@ -320,6 +635,44 @@ export default function Reference() {
                   "The word does not appear in any narrative text."
                 )}
               </p>
+            )}
+
+            {detail?.resolution && (
+              <div className="ref-resolution">
+                <p className="ref-block-label">
+                  Resolved <span className="ref-fam-llm-tag">machine</span>
+                </p>
+                <p className="ref-resolution-main">
+                  {detail.resolution.modern_name}
+                  <span className="ref-resolution-type">
+                    {detail.resolution.feature_type}
+                    {detail.resolution.country ? ` · ${detail.resolution.country}` : ""}
+                  </span>
+                  <span className="ref-fam-conf">
+                    {Math.round(detail.resolution.confidence * 100)}% confident
+                  </span>
+                </p>
+                {detail.resolution.note && (
+                  <p className="muted ref-resolution-note">{detail.resolution.note}</p>
+                )}
+                {typeof detail.resolution.lat === "number" && typeof detail.resolution.lon === "number" && (
+                  <p className="muted ref-resolution-coords">
+                    📍 {detail.resolution.lat.toFixed(3)}, {detail.resolution.lon.toFixed(3)}
+                    {detail.resolution.geo_source === "country-centroid" ? " (approx.)" : ""}{" "}
+                    <a
+                      className="link-like"
+                      href={`https://www.openstreetmap.org/?mlat=${detail.resolution.lat}&mlon=${detail.resolution.lon}#map=8/${detail.resolution.lat}/${detail.resolution.lon}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      map →
+                    </a>
+                  </p>
+                )}
+                <p className="muted ref-resolution-foot">
+                  Machine-suggested from the verbatim string — not authoritative; the original term stands.
+                </p>
+              </div>
             )}
 
             {detail && detail.by_decade.length > 0 && (

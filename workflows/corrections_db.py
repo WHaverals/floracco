@@ -91,6 +91,25 @@ CREATE TABLE IF NOT EXISTS change_event (
 
 CREATE INDEX IF NOT EXISTS ix_request_target ON change_request(db_table, pk);
 CREATE INDEX IF NOT EXISTS ix_event_request  ON change_event(request_id);
+
+-- Interpretive vocabulary links (Reference tab). A reviewed judgement that two
+-- lookup terms are the same money/place/etc., or explicitly NOT the same. This
+-- is ADDITIVE annotation: it never mutates or deletes either term in main.db,
+-- so it lives only here and survives a reseed. Reversible via status='revoked'.
+CREATE TABLE IF NOT EXISTS reference_link (
+  link_id     TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL,        -- place | title | currency | economic_activity
+  rel         TEXT NOT NULL CHECK (rel IN ('same_as','variant_of','distinct')),
+  from_id     INTEGER NOT NULL,     -- the variant term
+  to_id       INTEGER NOT NULL,     -- the canonical term (for 'distinct', the other term)
+  status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+  reason      TEXT,
+  created_by  TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  revoked_by  TEXT,
+  revoked_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_reflink_kind ON reference_link(kind, status);
 """
 
 
@@ -270,6 +289,64 @@ def applied_operations(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         item["pk"] = json.loads(item["pk"])
         result.append(item)
     return result
+
+
+# --- Reference links (interpretive vocabulary curation) ---------------------
+
+def add_reference_link(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    rel: str,
+    from_id: int,
+    to_id: int,
+    by: str,
+    reason: str | None = None,
+) -> str:
+    """Record one active link (same_as / variant_of / distinct). Returns link_id.
+
+    A pair is ordered so (a,b) and (b,a) collapse, except for same_as/variant_of
+    where direction (variant -> canonical) is meaningful and preserved as given.
+    """
+    link_id = str(uuid.uuid4())
+    with conn:
+        conn.execute(
+            """INSERT INTO reference_link
+               (link_id, kind, rel, from_id, to_id, status, reason, created_by, created_at)
+               VALUES (?,?,?,?,?, 'active', ?,?,?)""",
+            (link_id, kind, rel, int(from_id), int(to_id), reason, by, now_iso()),
+        )
+    return link_id
+
+
+def revoke_reference_link(conn: sqlite3.Connection, link_id: str, by: str) -> bool:
+    with conn:
+        cur = conn.execute(
+            "UPDATE reference_link SET status='revoked', revoked_by=?, revoked_at=? "
+            "WHERE link_id=? AND status='active'",
+            (by, now_iso(), link_id),
+        )
+    return cur.rowcount > 0
+
+
+def active_reference_links(conn: sqlite3.Connection, kind: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM reference_link WHERE kind=? AND status='active' ORDER BY created_at DESC",
+        (kind,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def decided_pairs(conn: sqlite3.Connection, kind: str) -> set[frozenset[int]]:
+    """Unordered term-id pairs that already carry an active link (any rel), so
+    the duplicate finder can stop resurfacing them."""
+    out: set[frozenset[int]] = set()
+    for r in conn.execute(
+        "SELECT from_id, to_id FROM reference_link WHERE kind=? AND status='active'",
+        (kind,),
+    ):
+        out.add(frozenset((int(r["from_id"]), int(r["to_id"]))))
+    return out
 
 
 def _enc(value: Any) -> str | None:
