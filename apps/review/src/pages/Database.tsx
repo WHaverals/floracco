@@ -102,14 +102,20 @@ export default function Database() {
   const reviewMode = searchParams.get("review") === "1";
   const [flagGroups, setFlagGroups] = useState<DbFlagGroup[]>([]);
   const [flagTotal, setFlagTotal] = useState(0);
+  // True until the first flags response lands (and again during a refresh) so we
+  // never show "All clear" while the check is still running — only once it has
+  // genuinely come back with nothing.
+  const [flagsLoading, setFlagsLoading] = useState(true);
 
   const loadFlagsNow = useCallback(() => {
+    setFlagsLoading(true);
     loadFlags()
       .then((r) => {
         setFlagGroups(r.groups);
         setFlagTotal(r.total);
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setFlagsLoading(false));
   }, []);
 
   const refreshRecord = useCallback(() => {
@@ -346,7 +352,9 @@ export default function Database() {
           </div>
           {reviewMode ? (
             <p className="db-count muted">
-              {flagTotal === 0
+              {flagsLoading && flagTotal === 0
+                ? "Checking records…"
+                : flagTotal === 0
                 ? "All clear — no records flagged."
                 : `${flagTotal} record${flagTotal === 1 ? "" : "s"} flagged. Suggestions only — you decide; nothing changes until you edit.`}
             </p>
@@ -451,7 +459,12 @@ export default function Database() {
         </div>
         {reviewMode ? (
           <div className="db-worklist">
-            {flagGroups.length === 0 && <p className="db-empty muted">All clear.</p>}
+            {flagGroups.length === 0 &&
+              (flagsLoading ? (
+                <p className="db-empty muted">Checking records for anything that needs review…</p>
+              ) : (
+                <p className="db-empty muted">All clear.</p>
+              ))}
             {flagGroups.map((group) => (
               <section key={group.group} className={`worklist-group sev-${group.severity}`}>
                 <header className="worklist-group-head">
