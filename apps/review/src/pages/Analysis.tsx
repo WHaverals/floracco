@@ -108,7 +108,7 @@ function LineChart({ result }: { result: AnalysisResult }) {
   if (pts.length < 2) return null;
   const W = 720;
   const H = 200;
-  const padL = 4;
+  const padL = 18;
   const padTop = 10;
   const plotH = 150;
   const axisY = padTop + plotH;
@@ -143,7 +143,15 @@ function LineChart({ result }: { result: AnalysisResult }) {
           />
         ))}
         {ticks.map((t) => (
-          <text key={t} x={px(t)} y={H - 4} fontSize="10" fill="#9a8a78" textAnchor="middle" fontFamily="Georgia, serif">
+          <text
+            key={t}
+            x={px(t)}
+            y={H - 4}
+            fontSize="10"
+            fill="#9a8a78"
+            textAnchor={t === xMin ? "start" : t === xMax ? "end" : "middle"}
+            fontFamily="Georgia, serif"
+          >
             {t}
           </text>
         ))}

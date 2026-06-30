@@ -234,7 +234,7 @@ export default function Hub() {
             <span className="home-colophon-cite-label">How to cite</span>
             Francesca Trivellato,{" "}
             <cite>Florence Accomandite: a database of Tuscan limited partnerships, 1445–1808</cite>.
-            Institute for Advanced Study, [year]. [stable URL], accessed [date].
+            Institute for Advanced Study, 2026. [placeholder DOI], accessed [placeholder date].
           </p>
         </footer>
       </div>

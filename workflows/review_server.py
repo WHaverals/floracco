@@ -3028,6 +3028,86 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "       COUNT(*) AS total_investors\n"
         "FROM investor WHERE is_deleted = 0",
     },
+    {
+        "id": "via_proxy_over_time",
+        "group": "Trends over time",
+        "title": "Investing via proxy, by decade",
+        "description": "Share of investor appearances acting through a proxy, by decade "
+        "(decades with ≥30 investors).",
+        "chart": "line",
+        "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
+        "       COUNT(*) AS investors,\n"
+        "       ROUND(100.0 * SUM(CASE WHEN i.via_proxy = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_via_proxy\n"
+        "FROM investor i JOIN contract c ON c.contract_id = i.contract_id\n"
+        "WHERE i.is_deleted = 0 AND c.is_deleted = 0 AND c.registration_date NOT IN ('', '0000-00-00')\n"
+        "GROUP BY decade HAVING COUNT(*) >= 30 ORDER BY decade",
+    },
+    {
+        "id": "jewish_over_time",
+        "group": "Trends over time",
+        "title": "Jewish investors, by decade",
+        "description": "Share of investor appearances flagged as Jewish (is_jewish OR jewish_db), by decade "
+        "(decades with ≥30 investors).",
+        "chart": "line",
+        "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
+        "       COUNT(*) AS investors,\n"
+        "       ROUND(100.0 * SUM(CASE WHEN i.is_jewish = 1 OR i.jewish_db = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_jewish\n"
+        "FROM investor i JOIN contract c ON c.contract_id = i.contract_id\n"
+        "WHERE i.is_deleted = 0 AND c.is_deleted = 0 AND c.registration_date NOT IN ('', '0000-00-00')\n"
+        "GROUP BY decade HAVING COUNT(*) >= 30 ORDER BY decade",
+    },
+    {
+        "id": "joint_over_time",
+        "group": "Trends over time",
+        "title": "Joint (co-held) investments, by decade",
+        "description": "Share of investor appearances recorded as joint (co-held), by decade "
+        "(decades with ≥30 investors).",
+        "chart": "line",
+        "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
+        "       COUNT(*) AS investors,\n"
+        "       ROUND(100.0 * SUM(CASE WHEN i.is_joint = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_joint\n"
+        "FROM investor i JOIN contract c ON c.contract_id = i.contract_id\n"
+        "WHERE i.is_deleted = 0 AND c.is_deleted = 0 AND c.registration_date NOT IN ('', '0000-00-00')\n"
+        "GROUP BY decade HAVING COUNT(*) >= 30 ORDER BY decade",
+    },
+    {
+        "id": "funding_composition",
+        "group": "Capital & currency",
+        "title": "Cash vs in-kind capital",
+        "description": "Contracts by capital type: all cash, all non-cash (labour/goods), or mixed. "
+        "A within-contract ratio, so currency-independent.",
+        "chart": "bar",
+        "sql": "SELECT CASE WHEN cash >= total THEN 'all cash'\n"
+        "            WHEN cash = 0 THEN 'all non-cash (labour/goods)'\n"
+        "            ELSE 'mixed cash + non-cash' END AS funding,\n"
+        "       COUNT(*) AS contracts\n"
+        "FROM (SELECT c.contract_id, c.total, COALESCE(SUM(iv.investment_cash), 0) AS cash\n"
+        "      FROM contract c JOIN investment iv ON iv.contract_id = c.contract_id AND iv.is_deleted = 0\n"
+        "      WHERE c.is_deleted = 0 AND c.total > 0 GROUP BY c.contract_id)\n"
+        "GROUP BY funding ORDER BY contracts DESC",
+    },
+    {
+        "id": "initial_term",
+        "group": "Structure",
+        "title": "Stated initial term (months)",
+        "description": "Distribution of the stated initial term in months — the contracted term, not realised "
+        "duration (80% of these contracts carry an automatic-renewal clause).",
+        "chart": "bar",
+        "sql": "SELECT duration_months AS initial_term_months, COUNT(*) AS contracts\n"
+        "FROM contract WHERE is_deleted = 0 AND duration_months > 0\n"
+        "GROUP BY duration_months ORDER BY contracts DESC LIMIT 15",
+    },
+    {
+        "id": "later_acts_by_type",
+        "group": "Structure",
+        "title": "Later acts by type",
+        "description": "Registered later acts by kind. Event counts (a contract may have several or none), "
+        "not a share of contracts.",
+        "chart": "bar",
+        "sql": "SELECT sub_type AS act_type, COUNT(*) AS acts\n"
+        "FROM sub_contract WHERE is_deleted = 0 AND sub_type NOT IN ('', '0') AND sub_type IS NOT NULL\n"
+        "GROUP BY sub_type ORDER BY acts DESC",
+    },
 ]
 
 
