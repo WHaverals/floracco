@@ -5618,3 +5618,43 @@ progress {
 .hub-card.is-disabled {
   cursor: default;
 }
+
+/* --- Record view: claims-then-evidence layout ------------------------------
+   The record page reads top-down as: structured claims (fields, partners,
+   places, later acts), then a quiet divider, then the sources that ground
+   them (narrative, Word summary, manuscript). The jump chips let either
+   reading mode skip the other. */
+.db-jumpnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+.db-jumpnav button {
+  background: transparent;
+  border: 1px solid #d8c7ac;
+  border-radius: 999px;
+  color: #9d7355;
+  cursor: pointer;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+}
+.db-jumpnav button:hover {
+  background: #f0e6d8;
+  color: #7c5a3f;
+}
+.db-evidence-divider {
+  border-top: 1px solid #e3d5bf;
+  color: #9d7355;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  margin: 30px 0 2px;
+  padding-top: 16px;
+  text-transform: uppercase;
+}
+.db-record [id^="rec-"] {
+  scroll-margin-top: 14px;
+}

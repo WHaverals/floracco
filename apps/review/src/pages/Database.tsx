@@ -1585,6 +1585,32 @@ function RecordDetail({
     onRefresh();
   };
 
+  // In-page jump chips, built from what this record actually renders, in
+  // on-page order (structured claims first, then the evidence below the
+  // divider). Buttons scroll rather than #hash anchors so the router URL —
+  // which carries ?review/?fix state — is never touched.
+  const relatedSection = record.sections[0] ?? null;
+  const jumpChips: { id: string; label: string }[] = [
+    { id: "rec-details", label: "Details" },
+    ...(record.table === "contract" && record.partners
+      ? [{ id: "rec-partners", label: `Partners (${record.partners.count})` }]
+      : []),
+    ...(record.table === "contract" && record.places
+      ? [{ id: "rec-places", label: `Places (${record.places.count})` }]
+      : []),
+    ...(record.table === "contract" && (hasSubSection || !record.is_deleted)
+      ? [{ id: "rec-related", label: `Later acts (${relatedSection ? relatedSection.rows.length : 0})` }]
+      : []),
+    ...(record.table !== "contract" && relatedSection
+      ? [{ id: "rec-related", label: relatedSection.title }]
+      : []),
+    ...(record.document != null ? [{ id: "rec-narrative", label: "Narrative" }] : []),
+    ...(record.table === "person" && (record.word_sources.length > 0 || record.word_sources_note)
+      ? [{ id: "rec-wordctx", label: "Word & manuscript" }]
+      : []),
+    ...(manuscriptImages.length > 0 ? [{ id: "rec-manuscript", label: "Manuscript" }] : []),
+  ];
+
   return (
     <article className={`db-record${record.is_deleted ? " is-hidden-record" : ""}`}>
       <header className="db-record-head">
@@ -1657,7 +1683,23 @@ function RecordDetail({
         </div>
       )}
 
-      <dl className="db-fields">
+      {jumpChips.length > 2 && (
+        <nav className="db-jumpnav" aria-label="Jump to a section of this record">
+          {jumpChips.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() =>
+                document.getElementById(chip.id)?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
+            >
+              {chip.label}
+            </button>
+          ))}
+        </nav>
+      )}
+
+      <dl className="db-fields" id="rec-details">
         {record.fields.map((field) => (
           <div key={field.label} className="db-field">
             <dt>
@@ -1714,8 +1756,128 @@ function RecordDetail({
         ))}
       </dl>
 
+      {record.table === "contract" && (
+        <div id="rec-partners">
+          <PartnersBlock
+            partners={record.partners}
+            contractId={record.id}
+            hidden={Boolean(record.is_deleted)}
+            autoExpandInvestor={autoFixInv || null}
+            onOpen={onOpen}
+            onCorrectName={onCorrectName}
+            onAddInvestor={() => setAddingInvestor((v) => !v)}
+            onRefresh={closeAndRefresh}
+          />
+        </div>
+      )}
+
+      {investorMessage && <div className="notice success">{investorMessage}</div>}
+      {addingInvestor && record.table === "contract" && !record.is_deleted && (
+        <AddInvestorPanel
+          contractId={record.id}
+          contractTitle={record.title}
+          onSaved={(message) => {
+            setInvestorMessage(message);
+            onRefresh();
+          }}
+          onClose={() => {
+            setAddingInvestor(false);
+            setInvestorMessage("");
+          }}
+        />
+      )}
+
+      {record.table === "contract" && (
+        <div id="rec-places">
+          <PlacesBlock
+            places={record.places}
+            contractId={record.id}
+            hidden={Boolean(record.is_deleted)}
+            onRefresh={closeAndRefresh}
+          />
+        </div>
+      )}
+
+      {/* Each table serves at most one related-records section (sub-contracts /
+          parent contract / appears-in), and the empty-subs block below never
+          renders alongside it — so a single jump-anchor id is unambiguous. */}
+      {record.sections.map((section) => (
+        <section key={section.title} className="db-block" id="rec-related">
+          <div className="db-block-head">
+            <h3>{section.title}</h3>
+            {record.table === "contract" && section.title.startsWith("Sub-contracts") && !record.is_deleted && (
+              <button
+                type="button"
+                className="field-fix"
+                onClick={() => onOpenCreateAct(record.id)}
+                title="Add a later act (disdetta, bilancio, …) on this contract"
+              >
+                + Add act
+              </button>
+            )}
+          </div>
+          <table className="db-table">
+            <thead>
+              <tr>
+                {section.columns.map((col) => (
+                  <th key={col}>{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {section.rows.map((row, rowIndex) => {
+                const clickable = Boolean(section.link_table && row.id);
+                return (
+                  <tr
+                    key={`${section.title}-${row.id || rowIndex}`}
+                    className={clickable ? "db-row-link" : undefined}
+                    onClick={
+                      clickable && section.link_table
+                        ? () => onOpen(section.link_table as DbBrowseTable, row.id)
+                        : undefined
+                    }
+                  >
+                    {row.cells.map((cell, cellIndex) => (
+                      <td key={cellIndex}>{cell}</td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      ))}
+
+      {record.table === "contract" && !hasSubSection && !record.is_deleted && (
+        <section className="db-block" id="rec-related">
+          <div className="db-block-head">
+            <h3>Sub-contracts (0)</h3>
+            <button
+              type="button"
+              className="field-fix"
+              onClick={() => onOpenCreateAct(record.id)}
+              title="Add a later act (disdetta, bilancio, …) on this contract"
+            >
+              + Add act
+            </button>
+          </div>
+          <p className="muted">No later acts are recorded on this contract yet.</p>
+        </section>
+      )}
+
+      {/* ── Sources & evidence ─────────────────────────────────────────────
+          The record's structured claims (fields, partners, places, acts) read
+          first; the texts and images that ground them follow below this line. */}
+      {(record.document != null ||
+        manuscriptImages.length > 0 ||
+        (record.table === "person" && (record.word_sources.length > 0 || record.word_sources_note))) && (
+        <h2 className="db-evidence-divider" id="rec-evidence">
+          Sources &amp; evidence
+        </h2>
+      )}
+
       {record.document != null && (
-        <section className="db-block db-narrative-block">
+        <section className="db-block db-narrative-block" id="rec-narrative">
           <div className="db-block-head">
             <h3>Narrative</h3>
             <span className="db-block-sub muted">the database’s own text</span>
@@ -1779,7 +1941,7 @@ function RecordDetail({
       )}
 
       {record.table === "person" && (record.word_sources.length > 0 || record.word_sources_note) && (
-        <section className="db-block">
+        <section className="db-block" id="rec-wordctx">
           <div className="db-block-head">
             <h3>Word & manuscript context</h3>
           </div>
@@ -1818,7 +1980,7 @@ function RecordDetail({
       )}
 
       {manuscriptImages.length > 0 && (
-        <section className="db-block">
+        <section className="db-block" id="rec-manuscript">
           <div className="db-block-head">
             <h3>Manuscript page</h3>
             <span className="db-block-sub muted">
@@ -1842,108 +2004,6 @@ function RecordDetail({
               </figure>
             ))}
           </div>
-        </section>
-      )}
-
-      {record.table === "contract" && (
-        <PartnersBlock
-          partners={record.partners}
-          contractId={record.id}
-          hidden={Boolean(record.is_deleted)}
-          autoExpandInvestor={autoFixInv || null}
-          onOpen={onOpen}
-          onCorrectName={onCorrectName}
-          onAddInvestor={() => setAddingInvestor((v) => !v)}
-          onRefresh={closeAndRefresh}
-        />
-      )}
-
-      {record.table === "contract" && (
-        <PlacesBlock
-          places={record.places}
-          contractId={record.id}
-          hidden={Boolean(record.is_deleted)}
-          onRefresh={closeAndRefresh}
-        />
-      )}
-
-      {record.sections.map((section) => (
-        <section key={section.title} className="db-block">
-          <div className="db-block-head">
-            <h3>{section.title}</h3>
-            {record.table === "contract" && section.title.startsWith("Sub-contracts") && !record.is_deleted && (
-              <button
-                type="button"
-                className="field-fix"
-                onClick={() => onOpenCreateAct(record.id)}
-                title="Add a later act (disdetta, bilancio, …) on this contract"
-              >
-                + Add act
-              </button>
-            )}
-          </div>
-          <table className="db-table">
-            <thead>
-              <tr>
-                {section.columns.map((col) => (
-                  <th key={col}>{col}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {section.rows.map((row, rowIndex) => {
-                const clickable = Boolean(section.link_table && row.id);
-                return (
-                  <tr
-                    key={`${section.title}-${row.id || rowIndex}`}
-                    className={clickable ? "db-row-link" : undefined}
-                    onClick={
-                      clickable && section.link_table
-                        ? () => onOpen(section.link_table as DbBrowseTable, row.id)
-                        : undefined
-                    }
-                  >
-                    {row.cells.map((cell, cellIndex) => (
-                      <td key={cellIndex}>{cell}</td>
-                    ))}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
-      ))}
-
-      {investorMessage && <div className="notice success">{investorMessage}</div>}
-      {addingInvestor && record.table === "contract" && !record.is_deleted && (
-        <AddInvestorPanel
-          contractId={record.id}
-          contractTitle={record.title}
-          onSaved={(message) => {
-            setInvestorMessage(message);
-            onRefresh();
-          }}
-          onClose={() => {
-            setAddingInvestor(false);
-            setInvestorMessage("");
-          }}
-        />
-      )}
-
-      {record.table === "contract" && !hasSubSection && !record.is_deleted && (
-        <section className="db-block">
-          <div className="db-block-head">
-            <h3>Sub-contracts (0)</h3>
-            <button
-              type="button"
-              className="field-fix"
-              onClick={() => onOpenCreateAct(record.id)}
-              title="Add a later act (disdetta, bilancio, …) on this contract"
-            >
-              + Add act
-            </button>
-          </div>
-          <p className="muted">No later acts are recorded on this contract yet.</p>
         </section>
       )}
 
