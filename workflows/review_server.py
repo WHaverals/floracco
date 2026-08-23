@@ -3940,20 +3940,39 @@ def add_place(cid: str, payload: PlaceAdd) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail="A place is required.")
         addr = payload.address.strip() or None
         existing = connection.execute(
-            "SELECT is_deleted FROM contract_place WHERE contract_id = ? AND place_id = ?", (cid, place_id)
+            "SELECT is_deleted, address FROM contract_place WHERE contract_id = ? AND place_id = ?", (cid, place_id)
         ).fetchone()
         if existing and not existing["is_deleted"]:
             raise HTTPException(status_code=409, detail="That place is already on this contract.")
-        if existing:  # a soft-deleted link → restore it (+ refresh address) rather than duplicate the PK
+        if existing:  # a soft-deleted link → restore it rather than duplicate the PK
+            # A blank address on re-add means "restore the link as it was" — it never
+            # clears the stored address (that's the audited Edit-address control's job).
+            # A typed address that differs is a real field change: it must carry its own
+            # update op (before/after), or it would be invisible in the history and
+            # silently revert on the next seed+replay rebuild.
+            old_addr = existing["address"]
+            new_addr = addr if addr is not None and normalize_value(addr) != normalize_value(old_addr) else None
             with connection:
-                connection.execute(
-                    "UPDATE contract_place SET is_deleted = 0, address = ? WHERE contract_id = ? AND place_id = ?",
-                    (addr, cid, place_id),
-                )
+                if new_addr is not None:
+                    connection.execute(
+                        "UPDATE contract_place SET is_deleted = 0, address = ? WHERE contract_id = ? AND place_id = ?",
+                        (new_addr, cid, place_id),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE contract_place SET is_deleted = 0 WHERE contract_id = ? AND place_id = ?",
+                        (cid, place_id),
+                    )
             corrections_db.record_operation(
                 clog, op="restore", db_table="contract_place",
                 pk={"place_id": int(place_id), "contract_id": int(cid)}, by=payload.reviewer, reason=reason,
             )
+            if new_addr is not None:
+                corrections_db.record_operation(
+                    clog, op="update", db_table="contract_place",
+                    pk={"place_id": int(place_id), "contract_id": int(cid)}, field="address",
+                    before_value=old_addr, after_value=new_addr, by=payload.reviewer, reason=reason,
+                )
         else:
             _insert_and_log(
                 connection, table="contract_place",
