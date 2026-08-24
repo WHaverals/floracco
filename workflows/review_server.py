@@ -3122,18 +3122,39 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "funding_composition",
         "group": "Capital & currency",
-        "title": "Cash vs in-kind capital",
-        "description": "Contracts by capital type: all cash, all non-cash (labour/goods), or mixed. "
-        "A within-contract ratio, so currency-independent.",
+        "title": "How capital was itemized (cash vs non-cash)",
+        "description": "Adds up each contract's cash contributions and compares them with its stated "
+        "capital. The buckets also say whether the record mentions a non-cash contribution — goods, "
+        "a shop, receivables — sometimes valued inside the cash sum itself. A shortfall of cash can "
+        "mean several things: a contribution in goods, capital supplied as credit, the rounding of "
+        "old fractional money, or a share the clerk never itemized — only the act says which. Every "
+        "comparison stays inside one contract, so currencies never mix.",
         "chart": "bar",
-        "sql": "SELECT CASE WHEN cash >= total THEN 'all cash'\n"
-        "            WHEN cash = 0 THEN 'all non-cash (labour/goods)'\n"
-        "            ELSE 'mixed cash + non-cash' END AS funding,\n"
+        # The buckets are ARITHMETIC (cash vs stated total) crossed with whether the
+        # source records a non-cash component (investment_non_cash text; '' and the
+        # literal '0' are no-value sentinels). A shortfall is never, by itself,
+        # labeled as goods/labour — that was code-review finding B3.
+        "sql": "SELECT CASE bucket\n"
+        "         WHEN 1 THEN 'cash covers the stated total'\n"
+        "         WHEN 2 THEN 'cash covers the total — non-cash component noted'\n"
+        "         WHEN 3 THEN 'cash short of the total — non-cash recorded'\n"
+        "         WHEN 4 THEN 'cash short of the total — remainder unitemized'\n"
+        "         WHEN 5 THEN 'no cash recorded — non-cash recorded'\n"
+        "         ELSE 'no cash recorded — nothing itemized'\n"
+        "       END AS itemization,\n"
         "       COUNT(*) AS contracts\n"
-        "FROM (SELECT c.contract_id, c.total, COALESCE(SUM(iv.investment_cash), 0) AS cash\n"
-        "      FROM contract c JOIN investment iv ON iv.contract_id = c.contract_id AND iv.is_deleted = 0\n"
-        "      WHERE c.is_deleted = 0 AND c.total > 0 GROUP BY c.contract_id)\n"
-        "GROUP BY funding ORDER BY contracts DESC",
+        "FROM (SELECT CASE\n"
+        "               WHEN cash >= total AND nc = 0 THEN 1\n"
+        "               WHEN cash >= total THEN 2\n"
+        "               WHEN cash > 0 AND nc > 0 THEN 3\n"
+        "               WHEN cash > 0 THEN 4\n"
+        "               WHEN nc > 0 THEN 5\n"
+        "               ELSE 6 END AS bucket\n"
+        "      FROM (SELECT c.total, COALESCE(SUM(iv.investment_cash), 0) AS cash,\n"
+        "                   SUM(CASE WHEN TRIM(COALESCE(iv.investment_non_cash, '')) NOT IN ('', '0') THEN 1 ELSE 0 END) AS nc\n"
+        "            FROM contract c JOIN investment iv ON iv.contract_id = c.contract_id AND iv.is_deleted = 0\n"
+        "            WHERE c.is_deleted = 0 AND c.total > 0 GROUP BY c.contract_id))\n"
+        "GROUP BY bucket ORDER BY bucket",
     },
     {
         "id": "initial_term",
