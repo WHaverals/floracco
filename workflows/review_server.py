@@ -33,7 +33,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from workflows import corrections_db, data_quality, place_cache, reference_match, search_index, word_cross_check
+from workflows import corrections_db, data_quality, jewish_review, place_cache, reference_match, search_index, word_cross_check
 from workflows.word_pipeline import act_components_for_review, folio_sort_key, parse_db_folio
 
 
@@ -139,7 +139,7 @@ CORRECTABLE_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "via_proxy": {"label": "Acted via proxy", "input_type": "bool"},
         "is_widow": {"label": "Recorded as widow", "input_type": "bool"},
         "is_guardian": {"label": "Acting as guardian", "input_type": "bool"},
-        "is_jewish": {"label": "Recorded as Jewish", "input_type": "bool"},
+        "is_jewish": {"label": "Jewish — stated in the act", "input_type": "bool"},
         "is_convert": {"label": "Recorded as convert", "input_type": "bool"},
         "heirs": {"label": "Heirs", "input_type": "bool"},
         "heirs_of": {"label": "Heirs of", "input_type": "bool"},
@@ -1601,7 +1601,7 @@ def build_partners(
                i.place_of_origin AS place_of_origin,
                i.is_widow AS is_widow, i.is_guardian AS is_guardian, i.is_joint AS is_joint,
                i.citizen_florence AS citizen_florence, i.via_proxy AS via_proxy,
-               i.is_jewish AS is_jewish, i.is_convert AS is_convert,
+               i.is_jewish AS is_jewish, i.jewish_db AS jewish_db, i.is_convert AS is_convert,
                i.heirs AS heirs, i.heirs_of AS heirs_of, i.and_c AS and_c,
                i.husband_first_name AS husband_first_name, i.husband_last_name AS husband_last_name,
                i.guardian_of AS guardian_of,
@@ -1684,7 +1684,18 @@ def build_partners(
                 boolf("Citizen of Florence", "citizen_florence"),
             ]},
             {"label": "Religion", "fields": [
-                boolf("Recorded as Jewish", "is_jewish"),
+                boolf("Jewish — stated in the act", "is_jewish"),
+                # The legacy editorial layer (2010s data entry) is display-only:
+                # the platform never sets it, and the only sanctioned write is the
+                # audited refute action (jewish_db 1→0) offered on this field.
+                {
+                    "label": "Jewish — editorial attribution",
+                    "value": yes_no(inv["jewish_db"]),
+                    "note": ("Marked as Jewish by the project's data-entry team during the "
+                             "original database entry (2010s), on the basis of name and context."),
+                    "refute": ({"investor_id": str(iid)}
+                               if inv["jewish_db"] in (1, "1", True) else None),
+                },
                 boolf("Recorded as convert", "is_convert"),
             ]},
             {"label": "Capacity — how they participate", "fields": [
@@ -1708,7 +1719,7 @@ def build_partners(
 
         notable = sum(
             1 for col in ("citizen_florence", "via_proxy", "is_widow", "is_guardian",
-                          "is_jewish", "is_convert", "heirs", "heirs_of", "and_c")
+                          "is_jewish", "jewish_db", "is_convert", "heirs", "heirs_of", "and_c")
             if inv[col] in (1, "1", True)
         )
         if (inv["husband_first_name"] or "").strip() or (inv["husband_last_name"] or "").strip():
@@ -2967,8 +2978,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "jewish_all",
         "group": "People & gender",
-        "title": "Contracts where all investors are Jewish",
-        "description": "Has at least one Jewish investor and no non-Jewish investor.",
+        "title": "Contracts where all investors are Jewish (recorded or attributed)",
+        "description": "Every investor is Jewish — either stated in the act (is_jewish) or by the "
+        "data-entry team's editorial attribution (jewish_db).",
         "chart": "none",
         "sql": "SELECT CAST(substr(c.registration_date,1,4) AS INTEGER) AS year, c.contract_id, c.firm_name\n"
         "FROM contract c\n"
@@ -2980,8 +2992,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "jewish_mixed",
         "group": "People & gender",
-        "title": "Contracts with mixed Jewish & non-Jewish investors",
-        "description": "Has at least one Jewish and at least one non-Jewish investor.",
+        "title": "Contracts with mixed Jewish & non-Jewish investors (recorded or attributed)",
+        "description": "At least one Jewish investor (stated in the act or editorially attributed) "
+        "and at least one investor with neither flag.",
         "chart": "none",
         "sql": "SELECT CAST(substr(c.registration_date,1,4) AS INTEGER) AS year, c.contract_id, c.firm_name\n"
         "FROM contract c\n"
@@ -3045,13 +3058,27 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "jewish_over_time",
         "group": "Trends over time",
-        "title": "Jewish investors, by decade",
-        "description": "Share of investor appearances flagged as Jewish (is_jewish OR jewish_db), by decade "
-        "(decades with ≥30 investors).",
+        "title": "Jewish investors (recorded or attributed), by decade",
+        "description": "Share of investor appearances that are Jewish by either provenance — stated in "
+        "the act (is_jewish) or editorially attributed (jewish_db) — by decade (decades with ≥30 investors).",
         "chart": "line",
         "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
         "       COUNT(*) AS investors,\n"
         "       ROUND(100.0 * SUM(CASE WHEN i.is_jewish = 1 OR i.jewish_db = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_jewish\n"
+        "FROM investor i JOIN contract c ON c.contract_id = i.contract_id\n"
+        "WHERE i.is_deleted = 0 AND c.is_deleted = 0 AND c.registration_date NOT IN ('', '0000-00-00')\n"
+        "GROUP BY decade HAVING COUNT(*) >= 30 ORDER BY decade",
+    },
+    {
+        "id": "jewish_provenance_over_time",
+        "group": "Trends over time",
+        "title": "Jewish investors by provenance, by decade",
+        "description": "The same share split by how we know: stated in the act vs. the data-entry "
+        "team's editorial attribution (basis not recorded per entry). Decades with ≥30 investors.",
+        "chart": "multiline",
+        "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
+        "       ROUND(100.0 * SUM(CASE WHEN i.is_jewish = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_stated_in_act,\n"
+        "       ROUND(100.0 * SUM(CASE WHEN i.jewish_db = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_editorial_attribution\n"
         "FROM investor i JOIN contract c ON c.contract_id = i.contract_id\n"
         "WHERE i.is_deleted = 0 AND c.is_deleted = 0 AND c.registration_date NOT IN ('', '0000-00-00')\n"
         "GROUP BY decade HAVING COUNT(*) >= 30 ORDER BY decade",
@@ -3515,6 +3542,42 @@ def remove_partner(cid: str, investor_id: str, action: RecordAction) -> dict[str
 @app.post("/api/db/contract/{cid}/partner/{investor_id}/restore")
 def restore_partner(cid: str, investor_id: str, action: RecordAction) -> dict[str, Any]:
     return _set_partner_removed(cid, investor_id, removed=False, action=action)
+
+
+class AttributionRefute(BaseModel):
+    reviewer: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+@app.post("/api/db/investor/{investor_id}/refute-jewish-attribution")
+def refute_jewish_attribution(investor_id: str, payload: AttributionRefute) -> dict[str, Any]:
+    """The one sanctioned write to the legacy editorial layer: a reviewer judges a
+    2010s Jewish attribution erroneous and clears it (jewish_db 1→0), audited with
+    a required reason. The platform never *sets* jewish_db — new identifications
+    enter only as `is_jewish` (stated in the act) through the normal edit path.
+    The seed dump keeps the original 1 forever; replay applies this correction.
+    See docs/data_quality/jewish_db.md."""
+    connection = open_db()
+    clog = open_corrections()
+    try:
+        row = connection.execute(
+            "SELECT jewish_db, is_deleted FROM investor WHERE investor_id = ?", (investor_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Investor not found.")
+        if row["jewish_db"] not in (1, "1"):
+            raise HTTPException(status_code=409, detail="No editorial attribution is set on this investor.")
+        with connection:
+            connection.execute("UPDATE investor SET jewish_db = 0 WHERE investor_id = ?", (investor_id,))
+        corrections_db.record_operation(
+            clog, op="update", db_table="investor", pk={"investor_id": int(investor_id)},
+            field="jewish_db", before_value=1, after_value=0,
+            by=payload.reviewer, reason=payload.reason.strip(),
+        )
+    finally:
+        clog.close()
+        connection.close()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -4113,12 +4176,12 @@ def _word_date_flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
 def db_flags() -> dict[str, Any]:
     connection = open_db()
     try:
-        items = data_quality.flags(connection) + _word_date_flags(connection)
+        items = data_quality.flags(connection) + _word_date_flags(connection) + jewish_review.flags(connection)
     finally:
         connection.close()
     dismissed = dismissed_flag_keys()
     items = [f for f in items if f["key"] not in dismissed]
-    meta_lookup = {**data_quality.GROUP_META, "word_date_differs": WORD_DATE_GROUP_META}
+    meta_lookup = {**data_quality.GROUP_META, **jewish_review.GROUP_META, "word_date_differs": WORD_DATE_GROUP_META}
     groups: dict[str, dict[str, Any]] = {}
     for f in items:
         meta = meta_lookup[f["group"]]

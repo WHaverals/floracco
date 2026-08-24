@@ -254,7 +254,7 @@ export type PlaceMapResponse = {
   points: PlaceMapPoint[];
 };
 
-export type AnalysisChart = "none" | "bar" | "line";
+export type AnalysisChart = "none" | "bar" | "line" | "multiline";
 
 export type AnalysisQuery = {
   id: string;
@@ -383,6 +383,11 @@ export type DbPartnerAttrField = {
   value?: string;
   locked?: boolean;
   relink?: DbRelink;
+  /** Provenance note shown on hover (e.g. the editorial-attribution explainer). */
+  note?: string | null;
+  /** Present on "Jewish — editorial attribution" when set: enables the audited
+   * refute action (jewish_db 1→0) — the one sanctioned write to that layer. */
+  refute?: { investor_id: string } | null;
 };
 
 /** One place a contract's firm operated in. The place itself is re-pointed by

@@ -194,6 +194,16 @@ export function addPlace(
   });
 }
 
+export function refuteJewishAttribution(
+  investorId: string,
+  body: { reviewer: string; reason: string },
+): Promise<{ ok: boolean }> {
+  return request(`/api/db/investor/${encodeURIComponent(investorId)}/refute-jewish-attribution`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function setPlaceRemoved(
   contractId: string,
   placeId: string,

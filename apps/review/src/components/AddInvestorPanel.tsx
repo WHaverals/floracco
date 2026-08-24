@@ -202,7 +202,7 @@ export default function AddInvestorPanel({
     ["citizen_florence", "citizen of Florence"],
     ["is_widow", "widow (vedova)"],
     ["is_guardian", "guardian / tutor"],
-    ["is_jewish", "Jewish (as stated)"],
+    ["is_jewish", "Jewish — stated in the act"],
     ["is_convert", "convert"],
     ["heirs", "& heirs (ed eredi)"],
     ["heirs_of", "heirs of (eredi di)"],

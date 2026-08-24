@@ -5658,3 +5658,51 @@ progress {
 .db-record [id^="rec-"] {
   scroll-margin-top: 14px;
 }
+
+/* --- Jewish-attribution provenance ----------------------------------------
+   The Religion panel distinguishes "stated in the act" (editable) from the
+   2010s "editorial attribution" (display-only; hover note carries provenance;
+   the only write is the audited refute action). */
+.partner-attr dt.has-note {
+  border-bottom: 1px dashed #d8c7ac;
+  cursor: help;
+  width: fit-content;
+}
+.refute-inline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-left: 8px;
+}
+.refute-inline input {
+  border: 1px solid #d8c7ac;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  padding: 3px 6px;
+  width: 200px;
+}
+.refute-inline input.refute-initials {
+  width: 64px;
+}
+.refute-inline .error-text {
+  font-size: 0.72rem;
+}
+.an-line-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 0.72rem;
+  color: #6d6257;
+  margin: 0 0 4px;
+}
+.an-line-legend .legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.an-legend-swatch {
+  border-radius: 2px;
+  display: inline-block;
+  height: 3px;
+  width: 14px;
+}

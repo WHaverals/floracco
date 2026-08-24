@@ -48,7 +48,7 @@ const FILTER_DEFS: Record<Subject, FilterDef[]> = {
     { key: "role_gp", label: "General partner (gp)", value: null },
     { key: "role_lp", label: "Limited partner (lp)", value: null },
     { key: "via_proxy", label: "Via proxy", value: null },
-    { key: "jewish", label: "Recorded as Jewish", value: null },
+    { key: "jewish", label: "Jewish (recorded or attributed)", value: null },
     { key: "title_contains", label: "Title contains", value: "text" },
     { key: "reg_year_from", label: "Registration year ≥", value: "number" },
     { key: "reg_year_to", label: "Registration year ≤", value: "number" },
@@ -98,44 +98,76 @@ function BarChart({ result }: { result: AnalysisResult }) {
   );
 }
 
-function LineChart({ result }: { result: AnalysisResult }) {
-  const valIdx = result.columns.length - 1;
-  const pts = result.rows
-    .map((r) => [num(r[0]), num(r[valIdx])] as [number, number])
-    .filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]))
-    .sort((a, b) => a[0] - b[0]);
+const SERIES_COLORS = ["#b07a47", "#5f7a8e"];
+const SERIES_DOT_COLORS = ["#9d6a38", "#4c6377"];
+
+/** Time-series chart. Default: one series (the LAST column). With `allSeries`,
+ * every column after the first becomes its own line (chart type "multiline") —
+ * used where two measures must stay visually distinct, e.g. the Jewish trend
+ * split by provenance (stated in the act vs editorial attribution). */
+function LineChart({ result, allSeries = false }: { result: AnalysisResult; allSeries?: boolean }) {
+  const seriesIdx = allSeries
+    ? result.columns.slice(1).map((_, i) => i + 1)
+    : [result.columns.length - 1];
+  const rows = result.rows
+    .map((r) => ({ x: num(r[0]), ys: seriesIdx.map((i) => num(r[i])) }))
+    .filter((p) => Number.isFinite(p.x) && p.ys.every((y) => Number.isFinite(y)))
+    .sort((a, b) => a.x - b.x);
   const [hover, setHover] = useState<number | null>(null);
-  if (pts.length < 2) return null;
+  if (rows.length < 2 || seriesIdx.length === 0) return null;
   const W = 720;
   const H = 200;
   const padL = 18;
   const padTop = 10;
   const plotH = 150;
   const axisY = padTop + plotH;
-  const xs = pts.map((p) => p[0]);
+  const xs = rows.map((p) => p.x);
   const xMin = Math.min(...xs);
   const xMax = Math.max(...xs);
-  const yMax = Math.max(1, ...pts.map((p) => p[1]));
+  const yMax = Math.max(1, ...rows.flatMap((p) => p.ys));
   const px = (x: number) => padL + ((x - xMin) / (xMax - xMin || 1)) * (W - padL * 2);
   const py = (y: number) => axisY - (y / yMax) * plotH;
-  const line = pts.map((p, i) => `${i === 0 ? "M" : "L"}${px(p[0]).toFixed(1)},${py(p[1]).toFixed(1)}`).join(" ");
-  const area = `${line} L${px(xMax).toFixed(1)},${axisY} L${px(xMin).toFixed(1)},${axisY} Z`;
+  const paths = seriesIdx.map((_, j) =>
+    rows.map((p, i) => `${i === 0 ? "M" : "L"}${px(p.x).toFixed(1)},${py(p.ys[j]).toFixed(1)}`).join(" "),
+  );
+  const area = `${paths[0]} L${px(xMax).toFixed(1)},${axisY} L${px(xMin).toFixed(1)},${axisY} Z`;
   const ticks = [xMin, ...[1500, 1550, 1600, 1650, 1700, 1750].filter((t) => t > xMin && t < xMax), xMax];
+  const seriesLabel = (j: number) => String(result.columns[seriesIdx[j]] ?? "").replaceAll("_", " ");
   return (
     <div className="an-line-wrap">
+      {seriesIdx.length > 1 && (
+        <div className="an-line-legend">
+          {seriesIdx.map((_, j) => (
+            <span key={j} className="legend-item">
+              <span className="an-legend-swatch" style={{ background: SERIES_COLORS[j % SERIES_COLORS.length] }} />
+              {seriesLabel(j)}
+            </span>
+          ))}
+        </div>
+      )}
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Time series" preserveAspectRatio="xMidYMid meet">
         <line x1={padL} y1={axisY} x2={W - padL} y2={axisY} stroke="#e0d4c0" strokeWidth="1" />
-        <path d={area} fill="#b07a47" opacity="0.12" />
-        <path d={line} fill="none" stroke="#b07a47" strokeWidth="1.6" />
-        {pts.map((p, i) => (
-          <circle key={i} cx={px(p[0])} cy={py(p[1])} r={hover === i ? 3.2 : 0} fill="#9d6a38" />
+        {seriesIdx.length === 1 && <path d={area} fill="#b07a47" opacity="0.12" />}
+        {paths.map((d, j) => (
+          <path key={j} d={d} fill="none" stroke={SERIES_COLORS[j % SERIES_COLORS.length]} strokeWidth="1.6" />
         ))}
-        {pts.map((p, i) => (
+        {rows.map((p, i) =>
+          seriesIdx.map((_, j) => (
+            <circle
+              key={`${i}-${j}`}
+              cx={px(p.x)}
+              cy={py(p.ys[j])}
+              r={hover === i ? 3.2 : 0}
+              fill={SERIES_DOT_COLORS[j % SERIES_DOT_COLORS.length]}
+            />
+          )),
+        )}
+        {rows.map((p, i) => (
           <rect
             key={`h${i}`}
-            x={px(p[0]) - (W / pts.length) / 2}
+            x={px(p.x) - (W / rows.length) / 2}
             y={padTop}
-            width={W / pts.length}
+            width={W / rows.length}
             height={plotH}
             fill="transparent"
             onMouseOver={() => setHover(i)}
@@ -157,9 +189,14 @@ function LineChart({ result }: { result: AnalysisResult }) {
         ))}
       </svg>
       {hover !== null && (
-        <div className="ribbon-tip" style={{ left: `${Math.max(10, Math.min(90, (px(pts[hover][0]) / W) * 100))}%` }}>
-          <span className="ribbon-tip-decade">{pts[hover][0]}</span>
-          <span className="ribbon-tip-row">{pts[hover][1].toLocaleString()}</span>
+        <div className="ribbon-tip" style={{ left: `${Math.max(10, Math.min(90, (px(rows[hover].x) / W) * 100))}%` }}>
+          <span className="ribbon-tip-decade">{rows[hover].x}</span>
+          {seriesIdx.map((_, j) => (
+            <span key={j} className="ribbon-tip-row">
+              {seriesIdx.length > 1 ? `${seriesLabel(j)}: ` : ""}
+              {rows[hover].ys[j].toLocaleString()}
+            </span>
+          ))}
         </div>
       )}
     </div>
@@ -214,6 +251,7 @@ function ResultView({
       {showSql && <pre className="an-sql">{sql}</pre>}
       {chart === "bar" && <BarChart result={result} />}
       {chart === "line" && <LineChart result={result} />}
+      {chart === "multiline" && <LineChart result={result} allSeries />}
       <div className="an-table-wrap">
         <table className="an-table">
           <thead>

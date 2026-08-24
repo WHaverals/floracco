@@ -10,6 +10,7 @@ import {
   loadDbFacets,
   loadDbRecord,
   loadFlags,
+  refuteJewishAttribution,
   relinkField,
   removePartner,
   restorePartner,
@@ -844,6 +845,69 @@ function LookupField({
   );
 }
 
+/** The one sanctioned write to the legacy editorial layer: judge a 2010s Jewish
+ * attribution erroneous (jewish_db 1→0), audited with a required reason. The
+ * platform never SETS that flag — this control only removes it. */
+function RefuteAttribution({ investorId, onDone }: { investorId: string; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="field-fix"
+        onClick={() => setOpen(true)}
+        title="Judge this 2010s attribution erroneous — audited, reversible, reason required"
+      >
+        ✕ Refute
+      </button>
+    );
+  }
+  const save = async () => {
+    if (!reviewer.trim() || !reason.trim()) {
+      setError("Initials and a reason are required.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await refuteJewishAttribution(investorId, { reviewer: reviewer.trim(), reason: reason.trim() });
+      localStorage.setItem("floracco_reviewer", reviewer.trim());
+      onDone();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="refute-inline">
+      <input
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="why is it wrong? (required)"
+        aria-label="Reason for refuting the attribution"
+      />
+      <input
+        className="refute-initials"
+        value={reviewer}
+        onChange={(e) => setReviewer(e.target.value)}
+        placeholder="initials"
+        aria-label="Reviewer initials"
+      />
+      <button type="button" className="pill-button" onClick={() => setOpen(false)} disabled={busy}>
+        Cancel
+      </button>
+      <button type="button" className="pill-button is-danger" onClick={save} disabled={busy}>
+        {busy ? "Saving…" : "Refute"}
+      </button>
+      {error && <span className="error-text">{error}</span>}
+    </span>
+  );
+}
+
 /** The expand panel for one partner: the investor's full per-appearance record,
  * grouped, with set values emphasised and unset/empty ones muted (the ✎ appears
  * on hover). Everything stays visible so a reviewer can add a missing flag.
@@ -876,7 +940,9 @@ function PartnerDetailPanel({
           <dl>
             {group.fields.map((f) => (
               <div className={`partner-attr ${isSet(f) ? "is-set" : "is-unset"}`} key={f.label}>
-                <dt>{f.label}</dt>
+                <dt title={f.note ?? undefined} className={f.note ? "has-note" : undefined}>
+                  {f.label}
+                </dt>
                 <dd>
                   {f.cell ? (
                     renderCell(rowKey, f.cell)
@@ -884,6 +950,9 @@ function PartnerDetailPanel({
                     <LookupField relink={f.relink} value={f.value ?? ""} disabled={hidden} onRefresh={onRefresh} />
                   ) : (
                     <span className="partner-attr-locked">{f.value}</span>
+                  )}
+                  {f.refute && !hidden && (
+                    <RefuteAttribution investorId={f.refute.investor_id} onDone={onRefresh} />
                   )}
                 </dd>
               </div>
