@@ -1858,7 +1858,14 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         str(part) for part in (data.get("archive"), data.get("series"), data.get("folder")) if part
     )
     total = data.get("total")
-    total_text = f"{total} {currency}".strip() if total not in (None, "") else None
+    # currency_id 0 is the "no currency recorded" sentinel: lookup_value returns
+    # None for it, which must never be rendered literally ("4500 None").
+    if total in (None, ""):
+        total_text = None
+    elif currency:
+        total_text = f"{total} {currency}"
+    else:
+        total_text = f"{total} · currency not recorded"
     corrections = proposals_for_row(f"contract:{raw_id}")
     fields = [
         record_field("Firm name", "contract", "firm_name", data.get("firm_name"), display_text(data.get("firm_name")), corrections),
@@ -1922,7 +1929,7 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         "table": "contract",
         "id": str(raw_id),
         "row_id": f"contract:{raw_id}",
-        "title": data.get("firm_name") or f"Contract {raw_id}",
+        "title": (data.get("firm_name") or "").strip() or f"Contract {raw_id}",
         "subtitle": f"Main contract · {raw_id}",
         "fields": fields,
         "partners": partners,
@@ -1988,7 +1995,7 @@ def sub_contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str
         "table": "sub_contract",
         "id": str(raw_id),
         "row_id": f"sub_contract:{raw_id}",
-        "title": data.get("sub_firm_name") or f"Sub-contract {raw_id}",
+        "title": (data.get("sub_firm_name") or "").strip() or f"Sub-contract {raw_id}",
         "subtitle": f"{display_text(data.get('sub_type'))} · {raw_id}",
         "fields": fields,
         "sections": sections,
