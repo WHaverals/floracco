@@ -83,7 +83,8 @@ def build(main_db_path: Path, search_db_path: Path | None = None) -> dict[str, A
         }
         contract_places: dict[int, list[str]] = {}
         for r in src.execute(
-            "SELECT cp.contract_id, p.place_name FROM contract_place cp JOIN place p ON p.place_id = cp.place_id"
+            "SELECT cp.contract_id, p.place_name FROM contract_place cp"
+            " JOIN place p ON p.place_id = cp.place_id WHERE cp.is_deleted = 0"
         ):
             contract_places.setdefault(r["contract_id"], []).append(r["place_name"])
 
