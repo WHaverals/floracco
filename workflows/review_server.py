@@ -3007,13 +3007,28 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "gp_lp_per_contract",
         "group": "Structure",
         "title": "General/limited partners per contract (min · avg · max)",
-        "description": "How many general (gp) and limited (lp) partners a contract has, summarised.",
+        "description": "How many general (gp) and limited (lp) partners a contract has — people, counted "
+        "once each, even when several share one investment or one person holds several.",
         "chart": "none",
-        "sql": "SELECT 'gp' AS role, MIN(n) AS min, ROUND(AVG(n), 2) AS avg, MAX(n) AS max\n"
-        "FROM (SELECT contract_id, COUNT(*) AS n FROM investment WHERE is_deleted = 0 AND type = 'gp' GROUP BY contract_id)\n"
+        # Partners are PEOPLE reached through investor_group, never investment rows:
+        # a joint tranche has N co-holders (counting rows collapsed them to 1), one
+        # person can hold two tranches of a role (rows counted them twice), and an
+        # unattached/orphan investment has no partner at all (rows counted it as 1).
+        "sql": "SELECT 'gp' AS role, MIN(n) AS min, ROUND(AVG(n), 2) AS avg, MAX(n) AS max, COUNT(*) AS contracts\n"
+        "FROM (SELECT v.contract_id, COUNT(DISTINCT i.person_id) AS n\n"
+        "      FROM investment v\n"
+        "      JOIN investor_group ig ON ig.investment_id = v.investment_id AND ig.is_deleted = 0\n"
+        "      JOIN investor i ON i.investor_id = ig.investor_id AND i.is_deleted = 0\n"
+        "      JOIN contract c ON c.contract_id = v.contract_id AND c.is_deleted = 0\n"
+        "      WHERE v.is_deleted = 0 AND v.type = 'gp' GROUP BY v.contract_id)\n"
         "UNION ALL\n"
-        "SELECT 'lp', MIN(n), ROUND(AVG(n), 2), MAX(n)\n"
-        "FROM (SELECT contract_id, COUNT(*) AS n FROM investment WHERE is_deleted = 0 AND type = 'lp' GROUP BY contract_id)",
+        "SELECT 'lp', MIN(n), ROUND(AVG(n), 2), MAX(n), COUNT(*)\n"
+        "FROM (SELECT v.contract_id, COUNT(DISTINCT i.person_id) AS n\n"
+        "      FROM investment v\n"
+        "      JOIN investor_group ig ON ig.investment_id = v.investment_id AND ig.is_deleted = 0\n"
+        "      JOIN investor i ON i.investor_id = ig.investor_id AND i.is_deleted = 0\n"
+        "      JOIN contract c ON c.contract_id = v.contract_id AND c.is_deleted = 0\n"
+        "      WHERE v.is_deleted = 0 AND v.type = 'lp' GROUP BY v.contract_id)",
     },
     {
         "id": "relatives_in_contract",
