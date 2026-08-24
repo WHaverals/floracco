@@ -3290,7 +3290,15 @@ ANALYSIS_GROUPS: dict[str, tuple[set[str], str, str, str, str, bool]] = {
 }
 
 
-def build_analysis_sql(spec: dict[str, Any]) -> tuple[str, list[Any], str]:
+def build_analysis_sql(
+    spec: dict[str, Any],
+    currency_links: tuple[dict[str, str], dict[str, list[str]]] | None = None,
+) -> tuple[str, list[Any], str]:
+    # Human-confirmed currency same_as links (Reference worklist): canon_of maps a
+    # variant phrase to its canonical, family_of maps any member to the full family.
+    # Both empty until links are confirmed — every behavior below then reduces to
+    # the plain per-phrase form.
+    canon_of, family_of = currency_links or ({}, {})
     subject = spec.get("subject")
     if subject not in ANALYSIS_SUBJECTS:
         raise HTTPException(status_code=400, detail="Unknown subject.")
@@ -3300,6 +3308,7 @@ def build_analysis_sql(spec: dict[str, Any]) -> tuple[str, list[Any], str]:
     from_parts = [sub["from"]]
     where = list(sub["where"])
     params: list[Any] = []
+    has_currency_filter = False
 
     for entry in spec.get("filters") or []:
         key = entry.get("field")
@@ -3308,14 +3317,47 @@ def build_analysis_sql(spec: dict[str, Any]) -> tuple[str, list[Any], str]:
         subjects, fragment, takes_value, kind = ANALYSIS_FILTERS[key]
         if subject not in subjects:
             raise HTTPException(status_code=400, detail=f"Filter '{key}' is not valid for {subject}.")
-        where.append(fragment)
         if takes_value:
             value = str(entry.get("value") or "").strip()
             if not value:
                 raise HTTPException(status_code=400, detail=f"Filter '{key}' needs a value.")
+            if key == "currency_is":
+                has_currency_filter = True
+                family = family_of.get(value)
+                if family:
+                    # the typed phrase has confirmed spelling variants — match them all
+                    marks = ", ".join("?" for _ in family)
+                    where.append(
+                        "EXISTS (SELECT 1 FROM currency cu WHERE cu.currency_id = c.currency_id "
+                        f"AND cu.currency IN ({marks}))"
+                    )
+                    params.extend(family)
+                    continue
+            where.append(fragment)
             params.append(f"%{value}%" if kind == "like" else value)
+        else:
+            where.append(fragment)
+
+    # Capital measures must be currency-scoped (code-review finding B2): amounts in
+    # different currencies are never added together. Unscoped with no grouping →
+    # the honest per-currency table; unscoped with any other grouping → refuse in
+    # plain language (the frontend renders this as the builder hint).
+    if (
+        measure in ("sum_total", "avg_total")
+        and subject == "contracts"
+        and not has_currency_filter
+        and group != "currency"
+    ):
+        if group:
+            raise HTTPException(status_code=400, detail=(
+                "Capital amounts are stated in 315 different currency formulations and cannot "
+                "be added together — the total would change with the currency mix, not with "
+                "capital. Add a “Currency is …” filter (e.g. scudi), or group by currency instead."
+            ))
+        group = "currency"
 
     group_expr = group_label = None
+    group_params: list[Any] = []
     chart = "none"
     dimension_order = False
     if group:
@@ -3328,6 +3370,14 @@ def build_analysis_sql(spec: dict[str, Any]) -> tuple[str, list[Any], str]:
             from_parts.append(g_join)
         if group in ("reg_year", "decade"):
             where.append("c.registration_date NOT IN ('', '0000-00-00', 'NULL') AND c.registration_date IS NOT NULL")
+        if group == "currency" and canon_of:
+            # Fold confirmed spelling variants into their canonical phrase. The
+            # phrases are trusted DB/link values but still bound as parameters;
+            # GROUP BY uses the ordinal so the CASE (and its params) appear once.
+            cases = " ".join("WHEN ? THEN ?" for _ in canon_of)
+            group_expr = f"CASE cu.currency {cases} ELSE cu.currency END"
+            for variant in sorted(canon_of):
+                group_params.extend([variant, canon_of[variant]])
 
     if measure in ("sum_total", "avg_total"):
         if subject != "contracts":
@@ -3348,9 +3398,10 @@ def build_analysis_sql(spec: dict[str, Any]) -> tuple[str, list[Any], str]:
             order = f"{group_label} ASC" if dimension_order else "total_capital DESC"
             sql = (
                 f"SELECT {group_expr} AS {group_label}, COUNT(*) AS contracts, {m_expr} AS total_capital "
-                f"FROM {from_clause} WHERE {where_clause} GROUP BY {group_expr} ORDER BY {order}"
+                f"FROM {from_clause} WHERE {where_clause} GROUP BY 1 ORDER BY {order}"
             )
-            return sql, params, chart
+            # the group expression appears (textually) before the WHERE params
+            return sql, group_params + params, chart
         return f"SELECT {m_expr} AS total_capital, COUNT(*) AS contracts FROM {from_clause} WHERE {where_clause}", params, "none"
 
     # count
@@ -3358,15 +3409,60 @@ def build_analysis_sql(spec: dict[str, Any]) -> tuple[str, list[Any], str]:
         order = f"{group_label} ASC" if dimension_order else "n DESC"
         sql = (
             f"SELECT {group_expr} AS {group_label}, COUNT(*) AS n "
-            f"FROM {from_clause} WHERE {where_clause} GROUP BY {group_expr} ORDER BY {order}"
+            f"FROM {from_clause} WHERE {where_clause} GROUP BY 1 ORDER BY {order}"
         )
-        return sql, params, chart
+        return sql, group_params + params, chart
     return f"SELECT COUNT(*) AS count FROM {from_clause} WHERE {where_clause}", params, "none"
+
+
+def currency_link_maps(connection: sqlite3.Connection) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Fold human-confirmed currency same_as links (Reference worklist) into two
+    phrase maps: variant → canonical, and any member → the sorted full family.
+    Links are stand-off and reversible; this derives from them at read time and
+    returns empty maps while no links exist. Chains are followed to their root
+    (cycle-safe); families whose phrases no longer resolve are skipped."""
+    clog = open_corrections()
+    try:
+        links = [l for l in corrections_db.active_reference_links(clog, "currency") if l["rel"] == "same_as"]
+    finally:
+        clog.close()
+    if not links:
+        return {}, {}
+    parent = {int(l["from_id"]): int(l["to_id"]) for l in links}
+
+    def root(i: int) -> int:
+        seen = set()
+        while i in parent and i not in seen:
+            seen.add(i)
+            i = parent[i]
+        return i
+
+    families: dict[int, set[int]] = {}
+    for member in set(parent) | set(parent.values()):
+        families.setdefault(root(member), set()).add(member)
+    names = {r["currency_id"]: r["currency"] for r in connection.execute("SELECT currency_id, currency FROM currency")}
+    canon_of: dict[str, str] = {}
+    family_of: dict[str, list[str]] = {}
+    for canon_id, members in families.items():
+        canon = names.get(canon_id)
+        phrases = sorted(names[m] for m in members | {canon_id} if m in names)
+        if not canon or len(phrases) < 2:
+            continue
+        for phrase in phrases:
+            family_of[phrase] = phrases
+            if phrase != canon:
+                canon_of[phrase] = canon
+    return canon_of, family_of
 
 
 @app.post("/api/analysis/build")
 def analysis_build(payload: dict[str, Any]) -> dict[str, Any]:
-    sql, params, chart = build_analysis_sql(payload)
+    connection = open_db()
+    try:
+        links = currency_link_maps(connection)
+    finally:
+        connection.close()
+    sql, params, chart = build_analysis_sql(payload, currency_links=links)
     result = run_readonly_sql(sql, tuple(params))
     return {**result, "sql": sql, "chart": chart}
 
