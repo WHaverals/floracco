@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useEscapeLayer } from "../utils/escapeLayers";
 
 type Point = { x: number; y: number };
 type Size = { w: number; h: number };
@@ -249,25 +250,15 @@ export default function ManuscriptLightbox({ src, alt, onClose, label, toolbarEx
     return () => stage.removeEventListener("wheel", onWheel);
   }, [zoomAtPointer]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") {
-        return;
-      }
-      event.stopPropagation();
-      if (!naturalRef.current.w) {
-        onClose();
-        return;
-      }
-      if (isNearFit()) {
-        onClose();
-      } else {
-        applyFit();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [applyFit, isNearFit, onClose]);
+  // Top escape layer while mounted: Escape zooms back to fit first, then
+  // closes — and never reaches an inline editor open underneath.
+  useEscapeLayer(true, () => {
+    if (!naturalRef.current.w || isNearFit()) {
+      onClose();
+    } else {
+      applyFit();
+    }
+  });
 
   const onPointerDown = (event: React.PointerEvent) => {
     if (event.button !== 0) {

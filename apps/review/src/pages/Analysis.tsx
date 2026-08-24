@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { loadAnalysisLibrary, runAnalysisBuild, runAnalysisLibrary } from "../api";
+import { useLatest } from "../utils/latest";
 import type { AnalysisChart, AnalysisQuery, AnalysisResult } from "../types";
 
 /* Analysis tab — the named query library + a visual guided builder. Both run on
@@ -302,6 +303,8 @@ export default function Analysis() {
   const [queries, setQueries] = useState<AnalysisQuery[]>([]);
   const [selected, setSelected] = useState<AnalysisQuery | null>(null);
   const [libResult, setLibResult] = useState<AnalysisResult | null>(null);
+  const beginLib = useLatest();
+  const beginBuild = useLatest();
   const [libRunning, setLibRunning] = useState(false);
   const [error, setError] = useState("");
 
@@ -344,11 +347,12 @@ export default function Analysis() {
     setLibRunning(true);
     setError("");
     setLibResult(null);
+    const fresh = beginLib();
     runAnalysisLibrary(selected.sql)
-      .then(setLibResult)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLibRunning(false));
-  }, [selected]);
+      .then((r) => fresh() && setLibResult(r))
+      .catch((e: Error) => fresh() && setError(e.message))
+      .finally(() => fresh() && setLibRunning(false));
+  }, [selected, beginLib]);
 
   const filterDefs = FILTER_DEFS[subject];
   const incomplete = filters.some((f) => {
@@ -361,15 +365,17 @@ export default function Analysis() {
     if (mode !== "builder" || incomplete) return;
     const handle = window.setTimeout(() => {
       setBuildError("");
+      const fresh = beginBuild();
       runAnalysisBuild({ subject, measure, filters, group_by: measure === "list" ? "" : group })
-        .then((r) => setBuildResult({ result: { columns: r.columns, rows: r.rows, row_count: r.row_count, truncated: r.truncated }, chart: r.chart, sql: r.sql }))
+        .then((r) => fresh() && setBuildResult({ result: { columns: r.columns, rows: r.rows, row_count: r.row_count, truncated: r.truncated }, chart: r.chart, sql: r.sql }))
         .catch((e: Error) => {
+          if (!fresh()) return;
           setBuildError(e.message);
           setBuildResult(null);
         });
     }, 350);
     return () => window.clearTimeout(handle);
-  }, [mode, subject, measure, filters, group, incomplete]);
+  }, [mode, subject, measure, filters, group, incomplete, beginBuild]);
 
   const groups = useMemo(() => {
     const map = new Map<string, AnalysisQuery[]>();

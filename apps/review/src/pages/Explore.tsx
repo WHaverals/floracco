@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { searchGlobal } from "../api";
+import { useLatest } from "../utils/latest";
 import { isToolHidden } from "../features";
 import type { SearchResponse, SearchResult } from "../types";
 
@@ -49,6 +50,7 @@ export default function Explore() {
   const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounce = useRef<number | undefined>(undefined);
+  const beginSearch = useLatest();
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -57,19 +59,22 @@ export default function Explore() {
   useEffect(() => {
     window.clearTimeout(debounce.current);
     if (query.trim().length < 2) {
+      beginSearch(); // kill any in-flight response for the cleared query
       setResponse(null);
       setExpanded("");
+      setSearching(false);
       return;
     }
     setSearching(true);
     debounce.current = window.setTimeout(() => {
+      const fresh = beginSearch();
       searchGlobal(query.trim(), expanded)
-        .then(setResponse)
-        .catch(() => setResponse(null))
-        .finally(() => setSearching(false));
+        .then((r) => fresh() && setResponse(r))
+        .catch(() => fresh() && setResponse(null))
+        .finally(() => fresh() && setSearching(false));
     }, 250);
     return () => window.clearTimeout(debounce.current);
-  }, [query, expanded]);
+  }, [query, expanded, beginSearch]);
 
   const hasQuery = query.trim().length >= 2;
   const nonEmptyGroups = useMemo(() => (response?.groups ?? []).filter((g) => g.total > 0), [response]);

@@ -3,7 +3,7 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 /* A render error anywhere below this boundary shows a recoverable message instead
  * of white-screening the whole app. Resetting on the same view re-mounts the
  * subtree (clearing the error) without a full reload. */
-type Props = { children: ReactNode };
+type Props = { children: ReactNode; resetKey?: string };
 type State = { error: Error | null };
 
 export default class ErrorBoundary extends Component<Props, State> {
@@ -11,6 +11,14 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError(error: Error): State {
     return { error };
+  }
+
+  componentDidUpdate(prev: Props) {
+    // Navigating away must escape a dead subtree: one crashed view previously
+    // trapped every nav click behind the error card (finding D3).
+    if (this.state.error && prev.resetKey !== this.props.resetKey) {
+      this.setState({ error: null });
+    }
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {

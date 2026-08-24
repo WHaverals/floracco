@@ -7,6 +7,7 @@ import {
   loadReferenceRecords,
   revokeReferenceLink,
 } from "../api";
+import { useLatest } from "../utils/latest";
 import PlaceMap from "../components/PlaceMap";
 import type {
   ReferenceDuplicatesResponse,
@@ -176,14 +177,20 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
 
   const linkFamily = (family: ReferenceTerm[], canonId: number, rel: "same_as" | "distinct") =>
     act(async () => {
-      for (const t of family) {
-        if (t.id === canonId) continue;
+      // same_as is transitive, so the canonical star suffices; "distinct" is
+      // NOT — the backend requires EVERY pair decided, so a 3+ family linked
+      // only canonical↔member resurfaced forever (finding D5). Write all pairs.
+      const pairs: Array<[number, number]> =
+        rel === "distinct"
+          ? family.flatMap((a, i) => family.slice(i + 1).map((b): [number, number] => [a.id, b.id]))
+          : family.filter((t) => t.id !== canonId).map((t): [number, number] => [t.id, canonId]);
+      for (const [fromId, toId] of pairs) {
         try {
           await createReferenceLink(kind, {
             reviewer: reviewer.trim(),
             rel,
-            from_id: t.id,
-            to_id: canonId,
+            from_id: fromId,
+            to_id: toId,
           });
         } catch (e) {
           // a pair already decided (e.g. completing a partly-linked family) — skip it
@@ -404,6 +411,8 @@ export default function Reference() {
   const [terms, setTerms] = useState<ReferenceTerm[]>([]);
   const [selected, setSelected] = useState<ReferenceTerm | null>(null);
   const [detail, setDetail] = useState<ReferenceRecordsResponse | null>(null);
+  const beginList = useLatest();
+  const beginDetail = useLatest();
   const [error, setError] = useState("");
   const debounce = useRef<number | undefined>(undefined);
 
@@ -411,15 +420,17 @@ export default function Reference() {
 
   const runList = useCallback(
     (k: ReferenceKind, q: string, s: string, orphans: boolean, offset: number) => {
+      const fresh = beginList();
       loadReference(k, { q, sort: s, orphansOnly: orphans, offset })
         .then((res) => {
+          if (!fresh()) return; // a stale places page must not append under Titles
           setList(res);
           setTerms((prev) => (offset > 0 ? [...prev, ...res.terms] : res.terms));
           setError("");
         })
-        .catch((err: Error) => setError(err.message));
+        .catch((err: Error) => fresh() && setError(err.message));
     },
-    [],
+    [beginList],
   );
 
   useEffect(() => {
@@ -430,13 +441,16 @@ export default function Reference() {
 
   useEffect(() => {
     if (!selected) {
+      beginDetail();
       setDetail(null);
       return;
     }
+    setDetail(null); // never render term A's numbers under term B's heading
+    const fresh = beginDetail();
     loadReferenceRecords(kind, selected.id)
-      .then(setDetail)
-      .catch(() => setDetail(null));
-  }, [kind, selected]);
+      .then((d) => fresh() && setDetail(d))
+      .catch(() => fresh() && setDetail(null));
+  }, [kind, selected, beginDetail]);
 
   const switchKind = (k: ReferenceKind) => {
     setKind(k);

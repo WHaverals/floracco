@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { loadCase, loadCases, loadSummary, saveDecision } from "../api";
+import { useLatest } from "../utils/latest";
 import CaseBar from "../components/CaseBar";
 import DatabasePanel from "../components/DatabasePanel";
 import DbSideHint from "../components/DbSideHint";
@@ -35,6 +36,7 @@ export default function Reconcile() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [selectedReviewId, setSelectedReviewId] = useState("");
   const [reviewCase, setReviewCase] = useState<ReviewCase | null>(null);
+  const beginCase = useLatest();
   const [selectedDbRows, setSelectedDbRows] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -80,14 +82,16 @@ export default function Reconcile() {
       return;
     }
     setHandoff(null);
+    const fresh = beginCase();
     loadCase(selectedReviewId)
       .then((response) => {
+        if (!fresh()) return; // a decision must never be saved against a stale case
         setReviewCase(response);
         setSelectedDbRows(defaultSelectedDbRowIds(response));
         setMessage("");
       })
-      .catch((err: Error) => setError(err.message));
-  }, [selectedReviewId]);
+      .catch((err: Error) => fresh() && setError(err.message));
+  }, [selectedReviewId, beginCase]);
 
   const goPrevious = useCallback(() => {
     setHandoff(null);

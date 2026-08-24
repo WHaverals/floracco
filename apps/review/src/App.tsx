@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { loadMe } from "./api";
 import { isToolHidden } from "./features";
 import TopNav from "./components/TopNav";
@@ -35,6 +35,7 @@ const NOT_IN_PILOT = (
 );
 
 export default function App() {
+  const location = useLocation();
   // Resolve the signed-in identity (Cloudflare Access) BEFORE rendering the
   // routes, so the verified email is seeded into the reviewer field that the
   // decision/correction/create components read from localStorage on mount.
@@ -65,7 +66,7 @@ export default function App() {
     <div className="app-root">
       <TopNav identityEmail={identity.authenticated ? identity.email : null} />
       <main className="route-area">
-        <ErrorBoundary>
+        <ErrorBoundary resetKey={location.pathname}>
         <Routes>
           <Route path="/" element={<Hub />} />
           <Route path="/explore" element={<Explore />} />

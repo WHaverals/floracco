@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { loadContractPersons, searchPersons } from "../api";
+import { useEscapeLayer } from "../utils/escapeLayers";
 import type { ContractPerson, DbSearchResult } from "../types";
 
 export type PersonPick = { row_id: string; display_name: string; last_name: string };
@@ -36,11 +37,7 @@ export default function PersonPicker({
       .catch((err: Error) => setError(err.message));
   }, [contractId]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useEscapeLayer(true, onClose);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();

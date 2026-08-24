@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createCorrection, transitionCorrection } from "../api";
+import { useEscapeLayer } from "../utils/escapeLayers";
 import type { DbFieldInputType } from "../types";
 
 /* Lightweight in-place editor for one record field.
@@ -42,11 +43,13 @@ export default function InlineFieldEditor({
     inputRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onCancel();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
+  // Escape cancels ONLY when this editor is the top overlay (an open lightbox
+  // or picker above it takes the key) and ONLY while nothing has been typed —
+  // discarding typed work is Cancel's job, a deliberate click.
+  const dirty = value !== currentValue || note.trim() !== "";
+  useEscapeLayer(true, () => {
+    if (!dirty && !saving) onCancel();
+  });
 
   // Clearing a non-empty field to blank is a legitimate edit — most fields are
   // empty for many contracts (a stray "NULL" should become a true blank).

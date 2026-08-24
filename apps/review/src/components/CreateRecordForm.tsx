@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { checkNumber, createDbRecord, findSimilar, loadDbRecord, loadRegisters } from "../api";
+import { useLatest } from "../utils/latest";
 import type { DbRecord, NumberCheck, RegisterOption, SimilarRow } from "../types";
 import LookupCombobox from "./LookupCombobox";
 
@@ -54,6 +55,9 @@ export default function CreateRecordForm({
   const [source, setSource] = useState("");
   const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
   const [similar, setSimilar] = useState<SimilarRow[]>([]);
+  const [similarFailed, setSimilarFailed] = useState(false);
+  const beginNumber = useLatest();
+  const beginSimilar = useLatest();
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const debounce = useRef<number | undefined>(undefined);
@@ -96,7 +100,10 @@ export default function CreateRecordForm({
     }
     const n = Number(registerNumber.trim());
     const t = window.setTimeout(() => {
-      checkNumber(n).then(setNumberCheck).catch(() => setNumberCheck(null));
+      const fresh = beginNumber();
+      checkNumber(n)
+        .then((r) => fresh() && setNumberCheck(r))
+        .catch(() => fresh() && setNumberCheck(null));
     }, 250);
     return () => window.clearTimeout(t);
   }, [table, registerNumber]);
@@ -105,13 +112,24 @@ export default function CreateRecordForm({
   useEffect(() => {
     window.clearTimeout(debounce.current);
     if (!folder.trim() || (!folio.trim() && !date.trim())) {
+      beginSimilar();
       setSimilar([]);
+      setSimilarFailed(false);
       return;
     }
     debounce.current = window.setTimeout(() => {
+      const fresh = beginSimilar();
       findSimilar(folder.trim(), folio.trim(), date.trim())
-        .then((response) => setSimilar(response.rows))
-        .catch(() => setSimilar([]));
+        .then((response) => {
+          if (!fresh()) return;
+          setSimilar(response.rows);
+          setSimilarFailed(false);
+        })
+        .catch(() => {
+          if (!fresh()) return;
+          setSimilar([]);
+          setSimilarFailed(true); // a failed check must be VISIBLE, not "no duplicates"
+        });
     }, 300);
     return () => window.clearTimeout(debounce.current);
   }, [folder, folio, date]);
@@ -313,6 +331,12 @@ export default function CreateRecordForm({
         </div>
       )}
 
+      {similarFailed && (
+        <p className="error-text">
+          The duplicate check failed — could not verify whether a contract already exists at this
+          register &amp; folio. Check your connection before creating.
+        </p>
+      )}
       {similar.length > 0 && (
         <div className="create-warning">
           <strong>Possible duplicates in this register</strong> — same {similar[0].match} (worth a look

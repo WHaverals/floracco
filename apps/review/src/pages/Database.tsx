@@ -28,6 +28,7 @@ import PersonPicker, { type PersonPick } from "../components/PersonPicker";
 import WordSourceDrawer from "../components/WordSourceDrawer";
 import WordSummaryInline from "../components/WordSummaryInline";
 import { manuscriptImageCaption } from "../utils/manuscriptImages";
+import { useLatest } from "../utils/latest";
 import type {
   ChangeHistoryItem,
   DbBrowseTable,
@@ -102,6 +103,10 @@ export default function Database() {
   // "Needs review" worklist (a query-param mode, orthogonal to the shown record).
   const reviewMode = searchParams.get("review") === "1";
   const [flagGroups, setFlagGroups] = useState<DbFlagGroup[]>([]);
+  // stale-response guards (one per stream — record loads, list searches, flags)
+  const beginRecord = useLatest();
+  const beginList = useLatest();
+  const beginFlags = useLatest();
   const [flagTotal, setFlagTotal] = useState(0);
   // True until the first flags response lands (and again during a refresh) so we
   // never show "All clear" while the check is still running — only once it has
@@ -110,23 +115,26 @@ export default function Database() {
 
   const loadFlagsNow = useCallback(() => {
     setFlagsLoading(true);
+    const fresh = beginFlags();
     loadFlags()
       .then((r) => {
+        if (!fresh()) return; // e.g. a post-dismiss reload overtaken by a newer one
         setFlagGroups(r.groups);
         setFlagTotal(r.total);
       })
       .catch(() => undefined)
-      .finally(() => setFlagsLoading(false));
-  }, []);
+      .finally(() => fresh() && setFlagsLoading(false));
+  }, [beginFlags]);
 
   const refreshRecord = useCallback(() => {
     if (!routeId) return;
+    const fresh = beginRecord();
     // include_hidden so removed partners stay visible (greyed, restorable).
     loadDbRecord(routeTable, routeId, true)
-      .then(setRecord)
-      .catch((err: Error) => setRecordError(err.message));
+      .then((data) => fresh() && setRecord(data))
+      .catch((err: Error) => fresh() && setRecordError(err.message));
     if (reviewMode) loadFlagsNow(); // a fix drops the flag from the live list
-  }, [routeTable, routeId, reviewMode, loadFlagsNow]);
+  }, [routeTable, routeId, reviewMode, loadFlagsNow, beginRecord]);
 
   useEffect(() => {
     setTable(routeTable);
@@ -150,15 +158,17 @@ export default function Database() {
   );
 
   const runSearch = useCallback((args: typeof searchArgs, nextOffset: number) => {
+    const fresh = beginList();
     searchDb(args.table, args.q, { ...args, offset: nextOffset })
       .then((response) => {
+        if (!fresh()) return; // a stale Load-more must not append under a newer query
         // offset 0 replaces the list; a "Load more" (offset > 0) appends.
         setResults((prev) => (nextOffset > 0 ? [...prev, ...response.results] : response.results));
         setTotal(response.total);
         setListError("");
       })
-      .catch((err: Error) => setListError(err.message));
-  }, []);
+      .catch((err: Error) => fresh() && setListError(err.message));
+  }, [beginList]);
 
   // Facet values for the filters: registers/dates/types for contracts & sub-
   // contracts, gender for people.
@@ -213,17 +223,20 @@ export default function Database() {
       return;
     }
     setLoadingRecord(true);
+    const fresh = beginRecord();
     loadDbRecord(routeTable, routeId, true)
       .then((data) => {
+        if (!fresh()) return; // navigated on — person A must never render under B's URL
         setRecord(data);
         setRecordError("");
       })
       .catch((err: Error) => {
+        if (!fresh()) return;
         setRecord(null);
         setRecordError(err.message);
       })
-      .finally(() => setLoadingRecord(false));
-  }, [routeTable, routeId]);
+      .finally(() => fresh() && setLoadingRecord(false));
+  }, [routeTable, routeId, beginRecord]);
 
   const openRecord = useCallback(
     (nextTable: DbBrowseTable, id: string) => {
@@ -1653,6 +1666,10 @@ function RecordDetail({
     setEditingColumn(null);
     onRefresh();
   };
+  // Saving a partner/place/lookup cell reloads the record WITHOUT closing an
+  // unrelated scalar editor that may hold typed text (finding D2); only the
+  // scalar editor's own save (closeAndRefresh) closes it.
+  const refreshRecordOnly = () => onRefresh();
 
   // In-page jump chips, built from what this record actually renders, in
   // on-page order (structured claims first, then the evidence below the
@@ -1790,7 +1807,7 @@ function RecordDetail({
                   relink={field.relink}
                   value={field.value}
                   disabled={Boolean(record.is_deleted)}
-                  onRefresh={closeAndRefresh}
+                  onRefresh={refreshRecordOnly}
                   autoOpen={!autoFixInv && field.relink.field === autoFixField}
                 />
               ) : (
@@ -1835,7 +1852,7 @@ function RecordDetail({
             onOpen={onOpen}
             onCorrectName={onCorrectName}
             onAddInvestor={() => setAddingInvestor((v) => !v)}
-            onRefresh={closeAndRefresh}
+            onRefresh={refreshRecordOnly}
           />
         </div>
       )}
@@ -1862,7 +1879,7 @@ function RecordDetail({
             places={record.places}
             contractId={record.id}
             hidden={Boolean(record.is_deleted)}
-            onRefresh={closeAndRefresh}
+            onRefresh={refreshRecordOnly}
           />
         </div>
       )}

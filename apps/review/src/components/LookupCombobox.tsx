@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { lookupValues } from "../api";
+import { useLatest } from "../utils/latest";
 import type { LookupValue } from "../types";
 
 /* Typeahead over a lookup list (economic activity, place, currency, title).
@@ -30,6 +31,7 @@ export default function LookupCombobox({
   const [exact, setExact] = useState<LookupValue | null>(null);
   const [open, setOpen] = useState(false);
   const debounce = useRef<number | undefined>(undefined);
+  const beginLookup = useLatest();
 
   useEffect(() => {
     window.clearTimeout(debounce.current);
@@ -39,15 +41,21 @@ export default function LookupCombobox({
       return;
     }
     debounce.current = window.setTimeout(() => {
+      const fresh = beginLookup();
       lookupValues(kind, value.trim())
         .then((response) => {
+          if (!fresh()) return; // a stale prefix must not flip the reuse-vs-new badge
           setSuggestions(response.values);
           setExact(response.exact);
         })
-        .catch(() => setSuggestions([]));
+        .catch(() => {
+          if (!fresh()) return;
+          setSuggestions([]);
+          setExact(null);
+        });
     }, 200);
     return () => window.clearTimeout(debounce.current);
-  }, [kind, value]);
+  }, [kind, value, beginLookup]);
 
   const trimmed = value.trim();
   const reusing = exact && exact.value.trim() === trimmed;

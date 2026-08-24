@@ -20,6 +20,7 @@ import type {
   WordEntryRich,
 } from "../types";
 import { normalizedTerms, splitWithHighlights } from "../highlight";
+import { useEscapeLayer } from "../utils/escapeLayers";
 
 const KIND_CLASS: Record<RevisionChangeKind, string> = {
   insertion: "rev-ins",
@@ -84,25 +85,20 @@ export default function TrackedText({
   const [hoverMoveId, setHoverMoveId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  useEscapeLayer(Boolean(activeMarker), () => setActiveMarker(null));
+
   useEffect(() => {
     if (!activeMarker) {
       return;
     }
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setActiveMarker(null);
-      }
-    };
     const onClick = (event: MouseEvent) => {
       const target = event.target as Node;
       if (containerRef.current && !containerRef.current.contains(target)) {
         setActiveMarker(null);
       }
     };
-    document.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onClick);
     return () => {
-      document.removeEventListener("keydown", onKey);
       document.removeEventListener("mousedown", onClick);
     };
   }, [activeMarker]);

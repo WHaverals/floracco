@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createInvestor, loadContractInvestments, sameSurname, searchPersonsRich } from "../api";
+import { useLatest } from "../utils/latest";
 import type { ContractInvestment, PersonHit } from "../types";
 import LookupCombobox from "./LookupCombobox";
 
@@ -70,6 +71,11 @@ export default function AddInvestorPanel({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const debounce = useRef<number | undefined>(undefined);
+  const beginPersons = useLatest();
+  const beginSurname = useLatest();
+  // The same-surname wall must FAIL CLOSED (finding D4): a failed or still-
+  // pending check blocks person creation instead of silently allowing it.
+  const [surnameCheck, setSurnameCheck] = useState<"idle" | "pending" | "ok" | "failed">("idle");
 
   const refreshInvestments = useCallback(() => {
     loadContractInvestments(contractId)
@@ -89,9 +95,10 @@ export default function AddInvestorPanel({
       return;
     }
     debounce.current = window.setTimeout(() => {
+      const fresh = beginPersons();
       searchPersonsRich(personQuery.trim())
-        .then((response) => setPersonHits(response.results))
-        .catch(() => setPersonHits([]));
+        .then((response) => fresh() && setPersonHits(response.results))
+        .catch(() => fresh() && setPersonHits([]));
     }, 220);
     return () => window.clearTimeout(debounce.current);
   }, [personQuery, pickedPerson, creatingPerson]);
@@ -99,20 +106,30 @@ export default function AddInvestorPanel({
   // The same-surname wall while creating a new person.
   useEffect(() => {
     if (!creatingPerson || npLast.trim().length < 2) {
+      beginSurname();
       setSurnameHits([]);
       setConfirmedNew(false);
+      setSurnameCheck("idle");
       return;
     }
+    setSurnameCheck("pending");
     const t = window.setTimeout(() => {
+      const fresh = beginSurname();
       sameSurname(npLast.trim())
         .then((response) => {
+          if (!fresh()) return;
           setSurnameHits(response.results);
           setConfirmedNew(false);
+          setSurnameCheck("ok");
         })
-        .catch(() => setSurnameHits([]));
+        .catch(() => {
+          if (!fresh()) return;
+          setSurnameHits([]);
+          setSurnameCheck("failed");
+        });
     }, 300);
     return () => window.clearTimeout(t);
-  }, [creatingPerson, npLast]);
+  }, [creatingPerson, npLast, beginSurname]);
 
   const resetWho = () => {
     setPersonQuery("");
@@ -132,6 +149,10 @@ export default function AddInvestorPanel({
     if (!reviewer.trim()) return setError("Your initials are needed.");
     if (!pickedPerson && !creatingPerson) return setError("Pick a person (or create one after searching).");
     if (creatingPerson && !(npFirst.trim() || npLast.trim())) return setError("The new person needs a name.");
+    if (creatingPerson && npLast.trim().length >= 2 && surnameCheck === "pending")
+      return setError("Still checking for existing people with this surname — one moment.");
+    if (creatingPerson && npLast.trim().length >= 2 && surnameCheck === "failed")
+      return setError("The existing-person check failed — retype the surname to retry it before creating.");
     if (creatingPerson && surnameHits.length > 0 && !confirmedNew)
       return setError(`Confirm that none of the ${surnameHits.length} existing ${npLast.trim()} is this person.`);
     if (mode === "join" && !joinId) return setError("Pick the tranche this person shares.");

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { imageUrl, loadWordEntry } from "../api";
+import { useEscapeLayer } from "../utils/escapeLayers";
 import type { WordEntryDetail } from "../types";
 import { manuscriptImageCaption, manuscriptImageCountLabel } from "../utils/manuscriptImages";
 import { prettyRegister } from "../utils/reviewLabels";
@@ -30,15 +31,7 @@ export default function WordSourceDrawer({
       .finally(() => setLoading(false));
   }, [sourceEntryId]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !lightboxPath) {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, lightboxPath]);
+  useEscapeLayer(true, onClose);
 
   // entry.folio is already prefixed ("c. 11r") in this payload — unlike the queue's
   // raw word_folio_range — so it is shown as-is; only the register needs humanising.
