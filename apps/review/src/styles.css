@@ -3267,9 +3267,11 @@ progress {
 
 .an-bar-label {
   font-size: 0.84rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  /* Long labels (e.g. the capital-itemization buckets) wrap onto a second line
+     inside the fixed 220px column — every row's bar stays aligned, and no label
+     text is ever clipped. */
+  overflow-wrap: break-word;
 }
 
 .an-bar-track {
