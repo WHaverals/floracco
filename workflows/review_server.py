@@ -1969,7 +1969,7 @@ def sub_contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str
     main_id = data.get("main_contract_id")
     if main_id not in (None, ""):
         main = connection.execute(
-            "SELECT contract_id, firm_name, registration_date, folio FROM contract WHERE contract_id = ?",
+            "SELECT contract_id, firm_name, registration_date, folio FROM contract WHERE contract_id = ? AND is_deleted = 0",
             (main_id,),
         ).fetchone()
         if main:
@@ -2031,6 +2031,7 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
         FROM investor i
         LEFT JOIN contract c ON c.contract_id = i.contract_id
         WHERE i.person_id = ? AND i.is_deleted = 0
+          AND (c.contract_id IS NULL OR c.is_deleted = 0)
         ORDER BY c.registration_date
         """,
         (raw_id,),
@@ -2186,7 +2187,7 @@ def db_search(
             conditions.append(
                 "(firm_name LIKE ? OR folio LIKE ? OR CAST(contract_id AS TEXT) LIKE ? "
                 "OR EXISTS (SELECT 1 FROM investor iv JOIN person p ON p.person_id = iv.person_id "
-                "  WHERE iv.contract_id = contract.contract_id AND iv.is_deleted = 0 "
+                "  WHERE iv.contract_id = contract.contract_id AND iv.is_deleted = 0 AND p.is_deleted = 0 "
                 "  AND (p.first_name LIKE ? OR p.last_name LIKE ? OR p.nickname LIKE ?)) "
                 "OR EXISTS (SELECT 1 FROM economic_activity ea "
                 "  WHERE CAST(ea.ec_activity_id AS TEXT) = CAST(contract.economic_sector AS TEXT) "
@@ -2571,7 +2572,10 @@ def db_reference_records(
         return {
             "kind": kind,
             "value": value,
-            "record_total": len(cids),
+            # count the LIVE records (the same population the list + histogram
+            # show), not the raw id set — which can include hidden contracts and
+            # the phantom-contract links catalogued in the integrity report.
+            "record_total": len(records),
             "narrative_mentions": narrative_mentions,
             "records": records[:limit],
             "by_decade": [{"decade": k, "count": v} for k, v in sorted(decade.items())],
@@ -2901,6 +2905,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "chart": "bar",
         "sql": "SELECT p.place_name, COUNT(*) AS contracts\n"
         "FROM contract_place cp JOIN place p ON p.place_id = cp.place_id\n"
+        "JOIN contract c ON c.contract_id = cp.contract_id AND c.is_deleted = 0\n"
         "WHERE cp.is_deleted = 0 GROUP BY cp.place_id ORDER BY contracts DESC",
     },
     {
@@ -2909,8 +2914,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "title": "Contracts ranked by number of investors",
         "description": "Each contract with its count of investors, most first.",
         "chart": "none",
-        "sql": "SELECT contract_id, COUNT(*) AS investors FROM investor\n"
-        "WHERE is_deleted = 0 GROUP BY contract_id ORDER BY investors DESC",
+        "sql": "SELECT i.contract_id, COUNT(*) AS investors FROM investor i\n"
+        "JOIN contract c ON c.contract_id = i.contract_id AND c.is_deleted = 0\n"
+        "WHERE i.is_deleted = 0 GROUP BY i.contract_id ORDER BY investors DESC",
     },
     {
         "id": "acts_per_contract",
@@ -2918,8 +2924,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "title": "Contracts ranked by number of later acts",
         "description": "Each contract with its count of later acts (terminations, variations, …).",
         "chart": "none",
-        "sql": "SELECT main_contract_id AS contract_id, COUNT(*) AS later_acts FROM sub_contract\n"
-        "WHERE is_deleted = 0 GROUP BY main_contract_id ORDER BY later_acts DESC",
+        "sql": "SELECT s.main_contract_id AS contract_id, COUNT(*) AS later_acts FROM sub_contract s\n"
+        "JOIN contract c ON c.contract_id = s.main_contract_id AND c.is_deleted = 0\n"
+        "WHERE s.is_deleted = 0 GROUP BY s.main_contract_id ORDER BY later_acts DESC",
     },
     {
         "id": "investments_by_role",
@@ -2940,7 +2947,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "       pe.first_name, pe.last_name\n"
         "FROM person pe JOIN investor i ON i.person_id = pe.person_id\n"
         "JOIN contract c ON c.contract_id = i.contract_id\n"
-        "WHERE pe.is_woman = 1 AND i.is_deleted = 0 AND c.is_deleted = 0\n"
+        "WHERE pe.is_woman = 1 AND pe.is_deleted = 0 AND i.is_deleted = 0 AND c.is_deleted = 0\n"
         "ORDER BY pe.last_name, pe.first_name",
     },
     {
@@ -3047,7 +3054,8 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "FROM investor i1 JOIN person p1 ON p1.person_id = i1.person_id\n"
         "JOIN investor i2 ON i2.contract_id = i1.contract_id AND i2.investor_id <> i1.investor_id\n"
         "JOIN person p2 ON p2.person_id = i2.person_id\n"
-        "WHERE i1.is_deleted = 0 AND i2.is_deleted = 0\n"
+        "WHERE i1.is_deleted = 0 AND i2.is_deleted = 0 AND p1.is_deleted = 0 AND p2.is_deleted = 0\n"
+        "  AND EXISTS (SELECT 1 FROM contract c WHERE c.contract_id = i1.contract_id AND c.is_deleted = 0)\n"
         "  AND ((p1.last_name <> '' AND p1.last_name = p2.last_name)\n"
         "    OR (p1.father_mother <> '' AND p1.father_mother = p2.father_mother)\n"
         "    OR (p1.grandfather <> '' AND p1.grandfather = p2.grandfather))\n"
@@ -3059,9 +3067,10 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "title": "Share of investors acting via proxy",
         "description": "Percentage of investor appearances recorded as acting through a proxy.",
         "chart": "none",
-        "sql": "SELECT ROUND(100.0 * SUM(CASE WHEN via_proxy = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_via_proxy,\n"
+        "sql": "SELECT ROUND(100.0 * SUM(CASE WHEN i.via_proxy = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_via_proxy,\n"
         "       COUNT(*) AS total_investors\n"
-        "FROM investor WHERE is_deleted = 0",
+        "FROM investor i JOIN contract c ON c.contract_id = i.contract_id AND c.is_deleted = 0\n"
+        "WHERE i.is_deleted = 0",
     },
     {
         "id": "via_proxy_over_time",
@@ -3211,7 +3220,7 @@ ANALYSIS_SUBJECTS: dict[str, dict[str, Any]] = {
             "investor i JOIN person pe ON pe.person_id = i.person_id "
             "JOIN contract c ON c.contract_id = i.contract_id"
         ),
-        "where": ["i.is_deleted = 0", "c.is_deleted = 0"],
+        "where": ["i.is_deleted = 0", "c.is_deleted = 0", "pe.is_deleted = 0"],
         "list_select": "c.contract_id, CAST(substr(c.registration_date,1,4) AS INTEGER) AS year, pe.first_name, pe.last_name",
         "list_order": "pe.last_name, pe.first_name",
     },
@@ -3259,14 +3268,14 @@ ANALYSIS_FILTERS: dict[str, tuple[set[str], str, bool, str | None]] = {
     "role_gp": (
         {"investors"},
         "EXISTS (SELECT 1 FROM investor_group ig JOIN investment inv ON inv.investment_id=ig.investment_id "
-        "WHERE ig.investor_id=i.investor_id AND inv.is_deleted=0 AND inv.type='gp')",
+        "WHERE ig.investor_id=i.investor_id AND ig.is_deleted=0 AND inv.is_deleted=0 AND inv.type='gp')",
         False,
         None,
     ),
     "role_lp": (
         {"investors"},
         "EXISTS (SELECT 1 FROM investor_group ig JOIN investment inv ON inv.investment_id=ig.investment_id "
-        "WHERE ig.investor_id=i.investor_id AND inv.is_deleted=0 AND inv.type='lp')",
+        "WHERE ig.investor_id=i.investor_id AND ig.is_deleted=0 AND inv.is_deleted=0 AND inv.type='lp')",
         False,
         None,
     ),
@@ -4134,7 +4143,9 @@ def add_place(cid: str, payload: PlaceAdd) -> dict[str, Any]:
     connection = open_db()
     clog = open_corrections()
     try:
-        if not connection.execute("SELECT 1 FROM contract WHERE contract_id = ?", (cid,)).fetchone():
+        if not connection.execute(
+            "SELECT 1 FROM contract WHERE contract_id = ? AND is_deleted = 0", (cid,)
+        ).fetchone():
             raise HTTPException(status_code=404, detail="Contract not found.")
         reason = payload.reason.strip() or "added a place"
         place_id = _resolve_lookup_id(connection, "place", payload.place, reviewer=payload.reviewer, reason=reason)
@@ -4444,7 +4455,8 @@ def create_sub_contract(payload: SubContractCreate) -> dict[str, Any]:
     connection = open_db()
     try:
         parent = connection.execute(
-            "SELECT contract_id FROM contract WHERE contract_id = ?", (payload.main_contract_id,)
+            "SELECT contract_id FROM contract WHERE contract_id = ? AND is_deleted = 0",
+            (payload.main_contract_id,),
         ).fetchone()
         if not parent:
             raise HTTPException(status_code=404, detail="Parent contract not found.")
@@ -4518,7 +4530,8 @@ def person_search(q: str = "", limit: int = Query(default=12, ge=1, le=50)) -> d
                       count(DISTINCT i.contract_id) AS appearances,
                       group_concat(DISTINCT pl.place_name) AS residences
                FROM person p
-               LEFT JOIN investor i ON i.person_id = p.person_id
+               LEFT JOIN investor i ON i.person_id = p.person_id AND i.is_deleted = 0
+                    AND EXISTS (SELECT 1 FROM contract cc WHERE cc.contract_id = i.contract_id AND cc.is_deleted = 0)
                LEFT JOIN place pl ON pl.place_id = i.place_of_residence
                WHERE p.is_deleted = 0 AND (({where}) OR CAST(p.person_id AS TEXT) = ?)
                GROUP BY p.person_id
@@ -4558,7 +4571,8 @@ def same_surname(last_name: str = "") -> dict[str, Any]:
                       count(DISTINCT i.contract_id) AS appearances,
                       group_concat(DISTINCT pl.place_name) AS residences
                FROM person p
-               LEFT JOIN investor i ON i.person_id = p.person_id
+               LEFT JOIN investor i ON i.person_id = p.person_id AND i.is_deleted = 0
+                    AND EXISTS (SELECT 1 FROM contract cc WHERE cc.contract_id = i.contract_id AND cc.is_deleted = 0)
                LEFT JOIN place pl ON pl.place_id = i.place_of_residence
                WHERE p.is_deleted = 0 AND trim(coalesce(p.last_name, '')) <> ''
                GROUP BY p.person_id""",
@@ -4593,7 +4607,7 @@ def contract_investments(contract_id: str) -> dict[str, Any]:
                FROM investment v
                LEFT JOIN investor_group g ON g.investment_id = v.investment_id AND g.is_deleted = 0
                LEFT JOIN investor i ON i.investor_id = g.investor_id AND i.is_deleted = 0
-               LEFT JOIN person p ON p.person_id = i.person_id
+               LEFT JOIN person p ON p.person_id = i.person_id AND p.is_deleted = 0
                WHERE v.contract_id = ? AND v.is_deleted = 0
                GROUP BY v.investment_id
                ORDER BY v.investment_id""",
@@ -4666,7 +4680,7 @@ def create_investor(payload: InvestorCreate) -> dict[str, Any]:
     connection = open_db()
     try:
         contract = connection.execute(
-            "SELECT contract_id FROM contract WHERE contract_id = ?",
+            "SELECT contract_id FROM contract WHERE contract_id = ? AND is_deleted = 0",
             (payload.contract_id,),
         ).fetchone()
         if not contract:

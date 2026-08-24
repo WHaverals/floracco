@@ -225,7 +225,7 @@ def _package(rid: str, link: dict[str, Any], entry: dict[str, Any], images: list
 
 def _live_date(connection: sqlite3.Connection, table: str, raw_id: str) -> str:
     row = connection.execute(
-        f"SELECT registration_date FROM {table} WHERE contract_id = ?", (raw_id,)
+        f"SELECT registration_date FROM {table} WHERE contract_id = ? AND is_deleted = 0", (raw_id,)
     ).fetchone()
     return (row[0] if row else None) or ""
 

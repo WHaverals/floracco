@@ -418,7 +418,7 @@ def build_family3(
         return word_evidence(best_links.get(db_row_id), source_text, folio_lookup)
 
     # contract: missing registration date
-    for r in connection.execute("SELECT contract_id FROM contract WHERE registration_date='0000-00-00'"):
+    for r in connection.execute("SELECT contract_id FROM contract WHERE registration_date='0000-00-00' AND is_deleted=0"):
         rid = f"contract:{r['contract_id']}"
         e = ev(rid)
         out.append(make_candidate(
@@ -429,7 +429,7 @@ def build_family3(
             evidence=e,
         ))
     # sub_contract: missing registration date
-    for r in connection.execute("SELECT contract_id FROM sub_contract WHERE registration_date='0000-00-00'"):
+    for r in connection.execute("SELECT contract_id FROM sub_contract WHERE registration_date='0000-00-00' AND is_deleted=0"):
         rid = f"sub_contract:{r['contract_id']}"
         out.append(make_candidate(
             db_row_id=rid, field="registration_date", reason_code="db_date_missing",
@@ -439,7 +439,7 @@ def build_family3(
             evidence=ev(rid),
         ))
     # contract: numerical discrepancy (low-confidence flag — often the source itself)
-    for r in connection.execute("SELECT contract_id, total FROM contract WHERE numerical_discrepancy=1"):
+    for r in connection.execute("SELECT contract_id, total FROM contract WHERE numerical_discrepancy=1 AND is_deleted=0"):
         rid = f"contract:{r['contract_id']}"
         out.append(make_candidate(
             db_row_id=rid, field="total", reason_code="numerical_discrepancy",
@@ -450,7 +450,7 @@ def build_family3(
             evidence=ev(rid),
         ))
     # contract: missing firm name (low-priority; Word may supply)
-    for r in connection.execute("SELECT contract_id FROM contract WHERE firm_name IS NULL OR TRIM(firm_name)=''"):
+    for r in connection.execute("SELECT contract_id FROM contract WHERE (firm_name IS NULL OR TRIM(firm_name)='') AND is_deleted=0"):
         rid = f"contract:{r['contract_id']}"
         out.append(make_candidate(
             db_row_id=rid, field="firm_name", reason_code="missing_firm_name",
@@ -462,7 +462,7 @@ def build_family3(
     # sub_contract: orphan main contract (flag-only — referential)
     for r in connection.execute(
         "SELECT s.contract_id, s.main_contract_id FROM sub_contract s "
-        "WHERE NOT EXISTS (SELECT 1 FROM contract c WHERE c.contract_id=s.main_contract_id)"
+        "WHERE s.is_deleted=0 AND NOT EXISTS (SELECT 1 FROM contract c WHERE c.contract_id=s.main_contract_id)"
     ):
         rid = f"sub_contract:{r['contract_id']}"
         out.append(make_candidate(
@@ -473,7 +473,7 @@ def build_family3(
             evidence=ev(rid),
         ))
     # sub_contract: blank type
-    for r in connection.execute("SELECT contract_id FROM sub_contract WHERE sub_type IS NULL OR TRIM(sub_type)=''"):
+    for r in connection.execute("SELECT contract_id FROM sub_contract WHERE (sub_type IS NULL OR TRIM(sub_type)='') AND is_deleted=0"):
         rid = f"sub_contract:{r['contract_id']}"
         out.append(make_candidate(
             db_row_id=rid, field="sub_type", reason_code="missing_sub_type",
@@ -484,7 +484,7 @@ def build_family3(
         ))
     # person: no name at all
     for r in connection.execute(
-        "SELECT person_id FROM person WHERE (first_name IS NULL OR TRIM(first_name)='') "
+        "SELECT person_id FROM person WHERE is_deleted=0 AND (first_name IS NULL OR TRIM(first_name)='') "
         "AND (last_name IS NULL OR TRIM(last_name)='')"
     ):
         rid = f"person:{r['person_id']}"
