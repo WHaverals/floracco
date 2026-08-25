@@ -129,7 +129,12 @@ def modern_registration_iso(text: str | None) -> str | None:
     (docs/data_dictionary.md → Date conventions).
 
     - A double-dated form ("19 febbraio 1694/95") states the modern year in its
-      suffix: use it (→ 1695-02-19).
+      suffix — which, in stile fiorentino, can ONLY mean ``year + 1`` (the double
+      form exists precisely because the Florentine year ran 25 Mar – 24 Mar). A
+      suffix that matches the tail of ``year + 1`` in any width ("95", "600",
+      "1700") reads as that year (→ 1695-02-19); a suffix that doesn't (a
+      transcription slip like "1600/61") gets NO machine reading — return None
+      and let the reviewer adjudicate from context, as with ambiguous singles.
     - A single date in the Florentine new-year window (1 Jan – 24 Mar, pre-1750)
       is ambiguous between stile fiorentino and modern: return None and leave the
       pre-fill empty for the reviewer to adjudicate.
@@ -149,8 +154,13 @@ def modern_registration_iso(text: str | None) -> str | None:
     year = int(match.group("year"))
     short_year = match.group("short_year")
     if short_year:
-        modern_year = int(short_year) if len(short_year) == 4 else int(f"{str(year)[:2]}{short_year}")
-        return f"{modern_year}-{month}-{day:02d}"
+        # The old century-splice (str(year)[:2] + suffix) broke at boundaries:
+        # "1699/00" became 1600 and "1599/600" the impossible 15600. The tail
+        # test handles every width, and every crosser, in one rule.
+        expected = year + 1
+        if str(expected).endswith(short_year):
+            return f"{expected}-{month}-{day:02d}"
+        return None
     in_florentine_window = int(month) in (1, 2) or (int(month) == 3 and day <= 24)
     if year < 1750 and in_florentine_window:
         return None
