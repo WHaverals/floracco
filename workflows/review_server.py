@@ -5505,6 +5505,17 @@ def revert_correction(proposal_id: str, action: CorrectionAction) -> dict[str, A
         if field not in table_columns(connection, table):
             raise HTTPException(status_code=400, detail=f"'{field}' is not a column of {table}.")
         current = read_db_value(connection, table, pk_value, field)
+        # Drift guard (finding A4/D4, mirror of apply's): revert may only undo the
+        # value THIS proposal applied. If the field was edited again since, a blind
+        # revert would silently destroy that newer work — refuse instead.
+        if normalize_value(current) != normalize_value(proposal.get("proposed_value")):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This field has been edited since this correction was applied (now "
+                    f"'{normalize_value(current)}') — re-check before reverting."
+                ),
+            )
         restore: Any = proposal["current_value"]
         if meta["input_type"] in ("number", "bool"):
             restore = int(proposal["current_value"]) if proposal["current_value"] != "" else None
