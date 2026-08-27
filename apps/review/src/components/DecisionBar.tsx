@@ -88,6 +88,8 @@ export default function DecisionBar({
       });
       setNote("");
       setShowNote(false);
+    } catch {
+      // the page surfaces the save error; keep the typed note for the retry
     } finally {
       setIsSaving(false);
     }

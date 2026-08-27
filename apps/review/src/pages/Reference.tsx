@@ -193,8 +193,10 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
             to_id: toId,
           });
         } catch (e) {
-          // a pair already decided (e.g. completing a partly-linked family) — skip it
-          if (!String((e as Error).message).includes("already linked")) throw e;
+          // a pair already decided (e.g. completing a partly-linked family) — skip
+          // it. Match the 409 status first; the message text is only a fallback.
+          const status = (e as Error & { status?: number }).status;
+          if (status !== 409 && !String((e as Error).message).includes("already linked")) throw e;
         }
       }
     });

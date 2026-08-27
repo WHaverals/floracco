@@ -36,7 +36,15 @@ PY
 decisions="$DATA_DIR/derived/word-pipeline/08_review_decisions/review_decisions.csv"
 [ -f "$decisions" ] && cp -f "$decisions" "$dest/" || true
 
-echo "backed up corrections.db + decisions to $dest"
+# The JSONL human-work stores are NOT replayable from corrections.db — they are
+# the sole record of proposal statuses/rationales and dismissed-flag judgments.
+corrdir="$DATA_DIR/derived/word-pipeline/10_corrections"
+for f in corrections_proposals.jsonl corrections_events.jsonl \
+         flag_dismissals.jsonl correction_candidate_dismissals.jsonl; do
+  [ -f "$corrdir/$f" ] && cp -f "$corrdir/$f" "$dest/" || true
+done
+
+echo "backed up corrections.db + decisions + correction stores to $dest"
 
 # Retain only the newest $KEEP backups.
 ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | tail -n +"$((KEEP + 1))" | xargs -r rm -rf

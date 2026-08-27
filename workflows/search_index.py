@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -60,10 +61,18 @@ def _clean(text: Any) -> str:
 def build(main_db_path: Path, search_db_path: Path | None = None) -> dict[str, Any]:
     """(Re)build the whole index from main.db. Fast enough to be the only mode."""
     search_db_path = search_db_path or default_path(main_db_path)
+    # Capture the staleness stamp BEFORE reading: a write landing mid-build then
+    # leaves stored != current and the next request rebuilds again (never a
+    # fresh-looking index missing that write).
+    main_mtime = str(os.path.getmtime(main_db_path))
     src = sqlite3.connect(f"file:{main_db_path}?mode=ro", uri=True)
     src.row_factory = sqlite3.Row
     search_db_path.parent.mkdir(parents=True, exist_ok=True)
-    idx = sqlite3.connect(search_db_path)
+    # Build into a temp file and os.replace at the end: live readers never see
+    # a dropped table or an empty index mid-rebuild (§0 Phase A2).
+    tmp_path = search_db_path.with_name(search_db_path.name + ".tmp")
+    tmp_path.unlink(missing_ok=True)
+    idx = sqlite3.connect(tmp_path)
     try:
         idx.executescript(
             """
@@ -173,13 +182,14 @@ def build(main_db_path: Path, search_db_path: Path | None = None) -> dict[str, A
             )
             idx.execute(
                 "INSERT INTO search_meta (key, value) VALUES ('main_mtime', ?)",
-                (str(os.path.getmtime(main_db_path)),),
+                (main_mtime,),
             )
             idx.execute("INSERT INTO search_meta (key, value) VALUES ('rows', ?)", (str(len(rows)),))
-        return {"rows": len(rows), "path": str(search_db_path)}
     finally:
         idx.close()
         src.close()
+    os.replace(tmp_path, search_db_path)
+    return {"rows": len(rows), "path": str(search_db_path)}
 
 
 def is_stale(main_db_path: Path, search_db_path: Path | None = None) -> bool:
@@ -199,10 +209,17 @@ def is_stale(main_db_path: Path, search_db_path: Path | None = None) -> bool:
         return True
 
 
+_REBUILD_LOCK = threading.Lock()
+
+
 def ensure_fresh(main_db_path: Path, search_db_path: Path | None = None) -> Path:
     search_db_path = search_db_path or default_path(main_db_path)
     if is_stale(main_db_path, search_db_path):
-        build(main_db_path, search_db_path)
+        # One rebuilder at a time; the re-check inside means every concurrent
+        # search that queued behind a rebuild reuses it instead of repeating it.
+        with _REBUILD_LOCK:
+            if is_stale(main_db_path, search_db_path):
+                build(main_db_path, search_db_path)
     return search_db_path
 
 

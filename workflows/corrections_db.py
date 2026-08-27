@@ -142,7 +142,7 @@ def pk_json(pk: dict[str, Any]) -> str:
 def connect(path: Path | None = None) -> sqlite3.Connection:
     path = path or default_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=15.0)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     return conn
@@ -172,6 +172,16 @@ def record_operation(
     The caller is responsible for the corresponding write to `main.db`; this only
     records the authoritative log entry.
     """
+    # Structured values are reserved for `create` snapshots. A dict/list on any
+    # other op would be stringified by _enc and JSON-revived by the create-aware
+    # decoder's counterpart — refuse loudly instead of storing an ambiguity
+    # (docs/multi_user_safety.md A5).
+    if op != "create":
+        for name, value in (("before_value", before_value), ("after_value", after_value)):
+            if isinstance(value, (dict, list)):
+                raise ValueError(
+                    f"{name} must be a scalar for op={op!r}; full-row snapshots belong to create ops only"
+                )
     request_id = str(uuid.uuid4())
     at = now_iso()
     with conn:
@@ -235,8 +245,8 @@ def history_for_row(conn: sqlite3.Connection, db_table: str, pk: dict[str, Any])
             (req["request_id"],),
         ).fetchall()
         item = dict(req)
-        item["before_value"] = _dec(item.get("before_value"))
-        item["after_value"] = _dec(item.get("after_value"))
+        item["before_value"] = _dec_for(item["op"], item.get("before_value"))
+        item["after_value"] = _dec_for(item["op"], item.get("after_value"))
         item["events"] = [dict(e) for e in events]
         out.append(item)
     return out
@@ -284,8 +294,8 @@ def applied_operations(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     result = []
     for row in rows:
         item = dict(row)
-        item["before_value"] = _dec(item.get("before_value"))
-        item["after_value"] = _dec(item.get("after_value"))
+        item["before_value"] = _dec_for(item["op"], item.get("before_value"))
+        item["after_value"] = _dec_for(item["op"], item.get("after_value"))
         item["pk"] = json.loads(item["pk"])
         result.append(item)
     return result
@@ -364,3 +374,12 @@ def _dec(value: Any) -> Any:
         except json.JSONDecodeError:
             return value
     return value
+
+
+def _dec_for(op: str, value: Any) -> Any:
+    """Op-aware decoding (docs/multi_user_safety.md A5): only `create` ops carry
+    structured values (full-row snapshots) — update/delete/restore values are
+    reviewer-typed or scalar TEXT and must round-trip verbatim. Without this
+    gate a typed "[2]" (an editorial bracketed folio) revives as a Python list
+    and crashes replay's parameter binding, blocking the whole rebuild."""
+    return _dec(value) if op == "create" else value

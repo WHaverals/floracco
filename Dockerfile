@@ -34,5 +34,8 @@ COPY --from=frontend /app/apps/review/dist ./apps/review/dist
 EXPOSE 8000
 # Bind the port the host assigns (Render sets $PORT; defaults to 8000 locally).
 # `sh -c … exec` lets ${PORT} expand while keeping uvicorn as PID 1 for clean
-# shutdown. One worker keeps SQLite writes serialized (correct + simplest for a pilot).
+# shutdown. NOTE: one worker does NOT serialize writes by itself — every endpoint
+# is sync `def`, so Starlette runs them on a ~40-thread pool; serialization comes
+# from the app-level write lock (workflows/locks.py, docs/multi_user_safety.md §0).
+# Keep --workers 1: the thread lock guards one process; the flock covers the rest.
 CMD ["sh", "-c", "exec .venv/bin/uvicorn workflows.review_server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

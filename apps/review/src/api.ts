@@ -25,9 +25,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       const body = JSON.parse(text);
       if (body && typeof body.detail === "string") message = body.detail;
     } catch {
-      /* not JSON — use the raw text */
+      // not JSON: a proxy/host error page — never show raw HTML to the reviewer
+      if (text.trimStart().startsWith("<")) {
+        message = "The server did not answer properly — nothing was saved. Please try again.";
+      }
     }
-    throw new Error(message);
+    if (/database is locked/i.test(message)) {
+      message = "The server is busy — nothing was lost. Please try again.";
+    }
+    const error = new Error(message) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
   }
   return response.json() as Promise<T>;
 }

@@ -7,6 +7,12 @@
 # On the server (Render) you don't use this file — Render builds the Dockerfile
 # and mounts its persistent disk. There the disk holds working/ + pristine/ and
 # FLORACCO_DATA_DIR points at working/ (see docs/deployment.md, deploy/README.md).
+#
+# WARNING (macOS): the write lock does NOT cross the Docker-VM boundary — a
+# container flock and a host flock on the bind-mounted ./data never see each
+# other (verified; docs/multi_user_safety.md §9). Never run this compose stack
+# and any bare host process (uvicorn, db_import, place_resolve) against ./data
+# at the same time. On a Linux host the same-kernel flock does coordinate.
 services:
   app:
     build: .

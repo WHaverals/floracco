@@ -183,9 +183,10 @@ export default function Database() {
   }, [searchArgs, runSearch]);
 
   // Hide/restore flow through the governed, audited op-log.
+  const [actionBusy, setActionBusy] = useState(false);
   const setHidden = useCallback(
     async (hidden: boolean) => {
-      if (!record) return;
+      if (!record || actionBusy) return;
       setActionError("");
       setActionMessage("");
       if (!reviewer.trim()) {
@@ -197,6 +198,7 @@ export default function Database() {
         return;
       }
       localStorage.setItem("floracco_reviewer", reviewer.trim());
+      setActionBusy(true);
       try {
         const body = { reviewer: reviewer.trim(), reason: reason.trim() };
         if (hidden) {
@@ -210,9 +212,11 @@ export default function Database() {
         runSearch(searchArgs, 0);
       } catch (err) {
         setActionError((err as Error).message);
+      } finally {
+        setActionBusy(false);
       }
     },
-    [record, reviewer, reason, refreshRecord, runSearch, searchArgs],
+    [record, actionBusy, reviewer, reason, refreshRecord, runSearch, searchArgs],
   );
 
   useEffect(() => {
@@ -272,6 +276,8 @@ export default function Database() {
     return `/database/${flag.table}/${encodeURIComponent(flag.pk)}?review=1&fix=${encodeURIComponent(param)}${inv}`;
   }, []);
 
+  const [flagBusyKey, setFlagBusyKey] = useState<string | null>(null);
+  const [flagActionError, setFlagActionError] = useState("");
   const dismissFlagNow = useCallback(
     (flag: DbFlag) => {
       let who = localStorage.getItem("floracco_reviewer") ?? "";
@@ -280,7 +286,12 @@ export default function Database() {
         if (!who.trim()) return;
         localStorage.setItem("floracco_reviewer", who.trim());
       }
-      dismissFlag(flag.key, { reviewer: who.trim(), reason: "" }).then(loadFlagsNow).catch(() => undefined);
+      setFlagActionError("");
+      setFlagBusyKey(flag.key);
+      dismissFlag(flag.key, { reviewer: who.trim(), reason: "" })
+        .then(loadFlagsNow)
+        .catch((err: Error) => setFlagActionError(`Dismiss failed — the flag stays: ${err.message}`))
+        .finally(() => setFlagBusyKey(null));
     },
     [loadFlagsNow],
   );
@@ -473,6 +484,7 @@ export default function Database() {
         </div>
         {reviewMode ? (
           <div className="db-worklist">
+            {flagActionError && <p className="error-text">{flagActionError}</p>}
             {flagGroups.length === 0 &&
               (flagsLoading ? (
                 <p className="db-empty muted">Checking records for anything that needs review…</p>
@@ -498,6 +510,7 @@ export default function Database() {
                         type="button"
                         className="worklist-dismiss"
                         title="Not an issue — dismiss"
+                        disabled={flagBusyKey === flag.key}
                         onClick={() => dismissFlagNow(flag)}
                       >
                         ✕
@@ -571,6 +584,7 @@ export default function Database() {
             reason={reason}
             onReasonChange={setReason}
             onSetHidden={setHidden}
+            actionBusy={actionBusy}
             actionError={actionError}
             actionMessage={actionMessage}
           />
@@ -1602,6 +1616,7 @@ function RecordDetail({
   reason,
   onReasonChange,
   onSetHidden,
+  actionBusy,
   actionError,
   actionMessage,
 }: {
@@ -1618,6 +1633,7 @@ function RecordDetail({
   reason: string;
   onReasonChange: (value: string) => void;
   onSetHidden: (hidden: boolean) => void;
+  actionBusy: boolean;
   actionError: string;
   actionMessage: string;
 }) {
@@ -1735,7 +1751,7 @@ function RecordDetail({
                     onChange={(e) => onReasonChange(e.target.value)}
                     placeholder="reason (required) — e.g. duplicate of #1922"
                   />
-                  <button type="button" className="pill-button is-danger" onClick={() => onSetHidden(true)}>
+                  <button type="button" className="pill-button is-danger" disabled={actionBusy} onClick={() => onSetHidden(true)}>
                     Hide record
                   </button>
                 </div>
@@ -1761,7 +1777,7 @@ function RecordDetail({
               onChange={(e) => onReviewerChange(e.target.value)}
               placeholder="initials"
             />
-            <button type="button" className="pill-button is-active" onClick={() => onSetHidden(false)}>
+            <button type="button" className="pill-button is-active" disabled={actionBusy} onClick={() => onSetHidden(false)}>
               Restore record
             </button>
           </div>

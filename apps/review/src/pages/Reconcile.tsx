@@ -144,6 +144,8 @@ export default function Reconcile() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      // rethrow so DecisionBar knows the save failed and KEEPS the typed note
+      throw err;
     }
   };
 

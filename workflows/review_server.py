@@ -22,7 +22,7 @@ import unicodedata
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +33,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from workflows import corrections_db, data_quality, jewish_review, place_cache, reference_match, search_index, word_cross_check
+from workflows import corrections_db, data_quality, jewish_review, locks, place_cache, reference_match, search_index, word_cross_check
 from workflows.word_pipeline import act_components_for_review, folio_sort_key, parse_db_folio
 
 
@@ -458,6 +458,25 @@ def db_path() -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
+def serialized_write(func):
+    """Run a mutating endpoint's ENTIRE body under the process-wide write lock
+    (docs/multi_user_safety.md §0, Phase A): with every write serialized, each
+    check→write→log sequence is atomic — no drift-check TOCTOU, no max()+1 id
+    collisions, no duplicate verbatim-lookup mints, no torn store rewrites. An
+    external maintenance holder of the cross-process flock yields a clean 503."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            with locks.write_lock():
+                return func(*args, **kwargs)
+        except locks.WriteLockBusy:
+            raise HTTPException(
+                status_code=503,
+                detail="Maintenance in progress — nothing was saved; try again shortly.",
+            )
+    return wrapper
+
+
 def db_row_for_id(db_row_id: str) -> dict[str, Any]:
     if not db_row_id or ":" not in db_row_id:
         return {}
@@ -862,6 +881,7 @@ def image(path: str) -> FileResponse:
 
 
 @app.post("/api/decisions")
+@serialized_write
 def save_decision(decision: ReviewDecision) -> dict[str, Any]:
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     decision_row = decision.model_dump()
@@ -887,10 +907,14 @@ def save_decision(decision: ReviewDecision) -> dict[str, Any]:
     existing_rows = load_decisions()
     kept_rows = [row for row in existing_rows if row.get("review_id") != decision_row["review_id"]]
     kept_rows.append(decision_row)
-    with DECISIONS_PATH.open("w", encoding="utf-8", newline="") as handle:
+    # Write-temp-then-replace: the decisions ledger never passes through a
+    # truncated state a concurrent reader or backup could observe (§0 Phase A2).
+    tmp = DECISIONS_PATH.with_name(DECISIONS_PATH.name + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=DECISION_FIELDNAMES, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(kept_rows)
+    os.replace(tmp, DECISIONS_PATH)
     return {"ok": True, "review_id": decision_row["review_id"], "decisions_path": str(DECISIONS_PATH)}
 
 
@@ -909,7 +933,9 @@ def open_db() -> sqlite3.Connection:
     path = db_path()
     if not path.exists():
         raise HTTPException(status_code=503, detail="SQLite database not found.")
-    connection = sqlite3.connect(path)
+    # 15 s busy wait: a write queued behind a long Analysis read (≤6 s cap) waits
+    # and then succeeds instead of erroring (docs/multi_user_safety.md §0 A3).
+    connection = sqlite3.connect(path, timeout=15.0)
     connection.row_factory = sqlite3.Row
     return connection
 
@@ -1400,9 +1426,13 @@ def save_proposal(proposal: dict[str, Any]) -> None:
     CORRECTIONS_DIR.mkdir(parents=True, exist_ok=True)
     rows = [p for p in load_proposals() if p.get("proposal_id") != proposal["proposal_id"]]
     rows.append(proposal)
-    with PROPOSALS_PATH.open("w", encoding="utf-8") as handle:
+    # Write-temp-then-replace: readers always see a complete old-or-new ledger,
+    # and a crash mid-write can no longer truncate it (§0 Phase A2).
+    tmp = PROPOSALS_PATH.with_name(PROPOSALS_PATH.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    os.replace(tmp, PROPOSALS_PATH)
 
 
 def append_correction_event(event: dict[str, Any]) -> None:
@@ -2729,6 +2759,7 @@ class ReferenceLink(BaseModel):
 
 
 @app.post("/api/db/reference/{kind}/link")
+@serialized_write
 def db_reference_link(kind: str, action: ReferenceLink) -> dict[str, Any]:
     """Record a reviewed link between two terms — additive, attributed,
     reversible. Never mutates either verbatim term."""
@@ -3532,30 +3563,40 @@ def _set_hidden(table: str, record_id: str, *, hidden: bool, action: RecordActio
             connection.execute(
                 f"UPDATE {table} SET is_deleted = ? WHERE {col} = ?", (1 if hidden else 0, record_id)
             )
+        clog = open_corrections()
+        try:
+            corrections_db.record_operation(
+                clog,
+                op="delete" if hidden else "restore",
+                db_table=table,
+                pk={col: int(record_id)},
+                by=action.reviewer,
+                reason=action.reason.strip() or None,
+                note=action.reason.strip() or None,
+            )
+        except Exception:
+            # compensation-lite (§0 Phase A4): the flip committed but its op-log
+            # entry failed — put it back so no unlogged write survives a rebuild
+            with connection:
+                connection.execute(
+                    f"UPDATE {table} SET is_deleted = ? WHERE {col} = ?", (0 if hidden else 1, record_id)
+                )
+            raise
+        finally:
+            clog.close()
     finally:
         connection.close()
-    clog = open_corrections()
-    try:
-        corrections_db.record_operation(
-            clog,
-            op="delete" if hidden else "restore",
-            db_table=table,
-            pk={col: int(record_id)},
-            by=action.reviewer,
-            reason=action.reason.strip() or None,
-            note=action.reason.strip() or None,
-        )
-    finally:
-        clog.close()
     return {"ok": True, "is_deleted": hidden}
 
 
 @app.post("/api/db/record/{table}/{record_id}/hide")
+@serialized_write
 def hide_record(table: str, record_id: str, action: RecordAction) -> dict[str, Any]:
     return _set_hidden(table, record_id, hidden=True, action=action)
 
 
 @app.post("/api/db/record/{table}/{record_id}/restore")
+@serialized_write
 def restore_record(table: str, record_id: str, action: RecordAction) -> dict[str, Any]:
     return _set_hidden(table, record_id, hidden=False, action=action)
 
@@ -3599,17 +3640,25 @@ def _rederive_is_joint(
             connection.execute(
                 "UPDATE investor SET is_joint = ? WHERE investor_id = ?", (target, m["investor_id"])
             )
-        corrections_db.record_operation(
-            clog,
-            op="update",
-            db_table="investor",
-            pk={"investor_id": int(m["investor_id"])},
-            field="is_joint",
-            before_value=str(current),
-            after_value=str(target),
-            by=reviewer,
-            reason=f"is_joint re-derived ({reason})",
-        )
+        try:
+            corrections_db.record_operation(
+                clog,
+                op="update",
+                db_table="investor",
+                pk={"investor_id": int(m["investor_id"])},
+                field="is_joint",
+                before_value=str(current),
+                after_value=str(target),
+                by=reviewer,
+                reason=f"is_joint re-derived ({reason})",
+            )
+        except Exception:
+            # compensation-lite (§0 Phase A4): unlogged flip → put it back
+            with connection:
+                connection.execute(
+                    "UPDATE investor SET is_joint = ? WHERE investor_id = ?", (current, m["investor_id"])
+                )
+            raise
 
 
 def _set_partner_removed(cid: str, investor_id: str, *, removed: bool, action: RecordAction) -> dict[str, Any]:
@@ -3640,21 +3689,39 @@ def _set_partner_removed(cid: str, investor_id: str, *, removed: bool, action: R
             connection.execute(
                 "UPDATE investor SET is_deleted = ? WHERE investor_id = ?", (1 if removed else 0, investor_id)
             )
-        corrections_db.record_operation(
-            clog, op="delete" if removed else "restore", db_table="investor",
-            pk={"investor_id": int(investor_id)}, by=action.reviewer, reason=reason, note=reason,
-        )
+        try:
+            corrections_db.record_operation(
+                clog, op="delete" if removed else "restore", db_table="investor",
+                pk={"investor_id": int(investor_id)}, by=action.reviewer, reason=reason, note=reason,
+            )
+        except Exception:
+            # compensation-lite (§0 Phase A4): unlogged flip → put it back
+            with connection:
+                connection.execute(
+                    "UPDATE investor SET is_deleted = ? WHERE investor_id = ?", (0 if removed else 1, investor_id)
+                )
+            raise
         for link in links:
             with connection:
                 connection.execute(
                     "UPDATE investor_group SET is_deleted = ? WHERE investor_id = ? AND investment_id = ?",
                     (1 if removed else 0, investor_id, link["investment_id"]),
                 )
-            corrections_db.record_operation(
-                clog, op="delete" if removed else "restore", db_table="investor_group",
-                pk={"investor_id": int(investor_id), "investment_id": int(link["investment_id"])},
-                by=action.reviewer, reason=reason, note=reason,
-            )
+            try:
+                corrections_db.record_operation(
+                    clog, op="delete" if removed else "restore", db_table="investor_group",
+                    pk={"investor_id": int(investor_id), "investment_id": int(link["investment_id"])},
+                    by=action.reviewer, reason=reason, note=reason,
+                )
+            except Exception:
+                # every earlier pair in the cascade is applied AND logged — undo
+                # only this link's unlogged flip, then abort (replay-consistent)
+                with connection:
+                    connection.execute(
+                        "UPDATE investor_group SET is_deleted = ? WHERE investor_id = ? AND investment_id = ?",
+                        (0 if removed else 1, investor_id, link["investment_id"]),
+                    )
+                raise
 
         unattached = False
         for link in links:
@@ -3683,11 +3750,13 @@ def _set_partner_removed(cid: str, investor_id: str, *, removed: bool, action: R
 
 
 @app.post("/api/db/contract/{cid}/partner/{investor_id}/remove")
+@serialized_write
 def remove_partner(cid: str, investor_id: str, action: RecordAction) -> dict[str, Any]:
     return _set_partner_removed(cid, investor_id, removed=True, action=action)
 
 
 @app.post("/api/db/contract/{cid}/partner/{investor_id}/restore")
+@serialized_write
 def restore_partner(cid: str, investor_id: str, action: RecordAction) -> dict[str, Any]:
     return _set_partner_removed(cid, investor_id, removed=False, action=action)
 
@@ -3698,6 +3767,7 @@ class AttributionRefute(BaseModel):
 
 
 @app.post("/api/db/investor/{investor_id}/refute-jewish-attribution")
+@serialized_write
 def refute_jewish_attribution(investor_id: str, payload: AttributionRefute) -> dict[str, Any]:
     """The one sanctioned write to the legacy editorial layer: a reviewer judges a
     2010s Jewish attribution erroneous and clears it (jewish_db 1→0), audited with
@@ -3717,11 +3787,17 @@ def refute_jewish_attribution(investor_id: str, payload: AttributionRefute) -> d
             raise HTTPException(status_code=409, detail="No editorial attribution is set on this investor.")
         with connection:
             connection.execute("UPDATE investor SET jewish_db = 0 WHERE investor_id = ?", (investor_id,))
-        corrections_db.record_operation(
-            clog, op="update", db_table="investor", pk={"investor_id": int(investor_id)},
-            field="jewish_db", before_value=1, after_value=0,
-            by=payload.reviewer, reason=payload.reason.strip(),
-        )
+        try:
+            corrections_db.record_operation(
+                clog, op="update", db_table="investor", pk={"investor_id": int(investor_id)},
+                field="jewish_db", before_value=1, after_value=0,
+                by=payload.reviewer, reason=payload.reason.strip(),
+            )
+        except Exception:
+            # compensation-lite (§0 Phase A4): an unlogged refute must not stand
+            with connection:
+                connection.execute("UPDATE investor SET jewish_db = 1 WHERE investor_id = ?", (investor_id,))
+            raise
     finally:
         clog.close()
         connection.close()
@@ -4080,6 +4156,7 @@ class RelinkAction(BaseModel):
 
 
 @app.post("/api/db/relink/{table}/{record_id}")
+@serialized_write
 def relink_record(table: str, record_id: str, action: RelinkAction) -> dict[str, Any]:
     """Re-point an FK column (title/place/currency/economic_sector) to a lookup
     row: reuse an existing phrase, create one verbatim, or clear to none. Audited
@@ -4107,10 +4184,17 @@ def relink_record(table: str, record_id: str, action: RelinkAction) -> dict[str,
             raise HTTPException(status_code=409, detail="That is already the recorded value.")
         with connection:
             connection.execute(f"UPDATE {table} SET {action.field} = ? WHERE {pk_col} = ?", (new_id, record_id))
-        corrections_db.record_operation(
-            clog, op="update", db_table=table, pk={pk_col: int(record_id)}, field=action.field,
-            before_value=old_id, after_value=new_id, by=action.reviewer, reason=reason,
-        )
+        try:
+            corrections_db.record_operation(
+                clog, op="update", db_table=table, pk={pk_col: int(record_id)}, field=action.field,
+                before_value=old_id, after_value=new_id, by=action.reviewer, reason=reason,
+            )
+        except Exception:
+            # compensation-lite (§0 Phase A4): unlogged FK change → restore it
+            # (a phrase minted above stays — it is separately create-logged)
+            with connection:
+                connection.execute(f"UPDATE {table} SET {action.field} = ? WHERE {pk_col} = ?", (old_id, record_id))
+            raise
     finally:
         clog.close()
         connection.close()
@@ -4139,6 +4223,7 @@ class PlaceAddress(BaseModel):
 
 
 @app.post("/api/db/contract/{cid}/place/add")
+@serialized_write
 def add_place(cid: str, payload: PlaceAdd) -> dict[str, Any]:
     connection = open_db()
     clog = open_corrections()
@@ -4176,16 +4261,34 @@ def add_place(cid: str, payload: PlaceAdd) -> dict[str, Any]:
                         "UPDATE contract_place SET is_deleted = 0 WHERE contract_id = ? AND place_id = ?",
                         (cid, place_id),
                     )
-            corrections_db.record_operation(
-                clog, op="restore", db_table="contract_place",
-                pk={"place_id": int(place_id), "contract_id": int(cid)}, by=payload.reviewer, reason=reason,
-            )
-            if new_addr is not None:
+            try:
                 corrections_db.record_operation(
-                    clog, op="update", db_table="contract_place",
-                    pk={"place_id": int(place_id), "contract_id": int(cid)}, field="address",
-                    before_value=old_addr, after_value=new_addr, by=payload.reviewer, reason=reason,
+                    clog, op="restore", db_table="contract_place",
+                    pk={"place_id": int(place_id), "contract_id": int(cid)}, by=payload.reviewer, reason=reason,
                 )
+            except Exception:
+                # compensation-lite (§0 Phase A4): undo the whole unlogged restore
+                with connection:
+                    connection.execute(
+                        "UPDATE contract_place SET is_deleted = 1, address = ? WHERE contract_id = ? AND place_id = ?",
+                        (old_addr, cid, place_id),
+                    )
+                raise
+            if new_addr is not None:
+                try:
+                    corrections_db.record_operation(
+                        clog, op="update", db_table="contract_place",
+                        pk={"place_id": int(place_id), "contract_id": int(cid)}, field="address",
+                        before_value=old_addr, after_value=new_addr, by=payload.reviewer, reason=reason,
+                    )
+                except Exception:
+                    # the restore op above IS logged — undo only the address change
+                    with connection:
+                        connection.execute(
+                            "UPDATE contract_place SET address = ? WHERE contract_id = ? AND place_id = ?",
+                            (old_addr, cid, place_id),
+                        )
+                    raise
         else:
             _insert_and_log(
                 connection, table="contract_place",
@@ -4217,11 +4320,20 @@ def _set_place_removed(cid: str, place_id: str, *, removed: bool, action: Record
                 "UPDATE contract_place SET is_deleted = ? WHERE contract_id = ? AND place_id = ?",
                 (1 if removed else 0, cid, place_id),
             )
-        corrections_db.record_operation(
-            clog, op="delete" if removed else "restore", db_table="contract_place",
-            pk={"place_id": int(place_id), "contract_id": int(cid)},
-            by=action.reviewer, reason=action.reason.strip() or None,
-        )
+        try:
+            corrections_db.record_operation(
+                clog, op="delete" if removed else "restore", db_table="contract_place",
+                pk={"place_id": int(place_id), "contract_id": int(cid)},
+                by=action.reviewer, reason=action.reason.strip() or None,
+            )
+        except Exception:
+            # compensation-lite (§0 Phase A4): unlogged flip → put it back
+            with connection:
+                connection.execute(
+                    "UPDATE contract_place SET is_deleted = ? WHERE contract_id = ? AND place_id = ?",
+                    (0 if removed else 1, cid, place_id),
+                )
+            raise
     finally:
         clog.close()
         connection.close()
@@ -4229,16 +4341,19 @@ def _set_place_removed(cid: str, place_id: str, *, removed: bool, action: Record
 
 
 @app.post("/api/db/contract/{cid}/place/{place_id}/remove")
+@serialized_write
 def remove_place(cid: str, place_id: str, action: RecordAction) -> dict[str, Any]:
     return _set_place_removed(cid, place_id, removed=True, action=action)
 
 
 @app.post("/api/db/contract/{cid}/place/{place_id}/restore")
+@serialized_write
 def restore_place(cid: str, place_id: str, action: RecordAction) -> dict[str, Any]:
     return _set_place_removed(cid, place_id, removed=False, action=action)
 
 
 @app.post("/api/db/contract/{cid}/place/{place_id}/address")
+@serialized_write
 def edit_place_address(cid: str, place_id: str, payload: PlaceAddress) -> dict[str, Any]:
     connection = open_db()
     clog = open_corrections()
@@ -4256,11 +4371,19 @@ def edit_place_address(cid: str, place_id: str, payload: PlaceAddress) -> dict[s
             connection.execute(
                 "UPDATE contract_place SET address = ? WHERE contract_id = ? AND place_id = ?", (new, cid, place_id)
             )
-        corrections_db.record_operation(
-            clog, op="update", db_table="contract_place",
-            pk={"place_id": int(place_id), "contract_id": int(cid)}, field="address",
-            before_value=old, after_value=new, by=payload.reviewer, reason=payload.reason.strip() or None,
-        )
+        try:
+            corrections_db.record_operation(
+                clog, op="update", db_table="contract_place",
+                pk={"place_id": int(place_id), "contract_id": int(cid)}, field="address",
+                before_value=old, after_value=new, by=payload.reviewer, reason=payload.reason.strip() or None,
+            )
+        except Exception:
+            # compensation-lite (§0 Phase A4): unlogged edit → restore the old address
+            with connection:
+                connection.execute(
+                    "UPDATE contract_place SET address = ? WHERE contract_id = ? AND place_id = ?", (old, cid, place_id)
+                )
+            raise
     finally:
         clog.close()
         connection.close()
@@ -4395,6 +4518,7 @@ class SubContractCreate(BaseModel):
 
 
 @app.post("/api/db/create/contract")
+@serialized_write
 def create_contract(payload: ContractCreate) -> dict[str, Any]:
     if not DATE_OR_BLANK.match(payload.registration_date):
         raise HTTPException(status_code=400, detail="Registration date must be YYYY-MM-DD.")
@@ -4445,6 +4569,7 @@ def create_contract(payload: ContractCreate) -> dict[str, Any]:
 
 
 @app.post("/api/db/create/sub_contract")
+@serialized_write
 def create_sub_contract(payload: SubContractCreate) -> dict[str, Any]:
     if payload.sub_type not in SUB_TYPES:
         raise HTTPException(status_code=400, detail=f"sub_type must be one of {SUB_TYPES}.")
@@ -4668,6 +4793,7 @@ class InvestorCreate(BaseModel):
 
 
 @app.post("/api/db/create/investor")
+@serialized_write
 def create_investor(payload: InvestorCreate) -> dict[str, Any]:
     """Add a person to a contract: person (reused or new) + investor row +
     capital tranche (own, or joining an existing one) + the group link — one
@@ -4818,17 +4944,26 @@ def create_investor(payload: InvestorCreate) -> dict[str, Any]:
                             "UPDATE investor SET is_joint = 1 WHERE investor_id = ?",
                             (sib["investor_id"],),
                         )
-                    corrections_db.record_operation(
-                        clog,
-                        op="update",
-                        db_table="investor",
-                        pk={"investor_id": int(sib["investor_id"])},
-                        by=reviewer,
-                        field="is_joint",
-                        before_value="0",
-                        after_value="1",
-                        reason=f"joint tranche gained a member ({reason})",
-                    )
+                    try:
+                        corrections_db.record_operation(
+                            clog,
+                            op="update",
+                            db_table="investor",
+                            pk={"investor_id": int(sib["investor_id"])},
+                            by=reviewer,
+                            field="is_joint",
+                            before_value="0",
+                            after_value="1",
+                            reason=f"joint tranche gained a member ({reason})",
+                        )
+                    except Exception:
+                        # compensation-lite (§0 Phase A4): unlogged flip → put it back
+                        with connection:
+                            connection.execute(
+                                "UPDATE investor SET is_joint = 0 WHERE investor_id = ?",
+                                (sib["investor_id"],),
+                            )
+                        raise
             finally:
                 clog.close()
     finally:
@@ -5097,6 +5232,7 @@ def list_corrections(
 
 
 @app.post("/api/corrections")
+@serialized_write
 def create_correction(payload: CorrectionCreate) -> dict[str, Any]:
     parsed = primary_key_for(payload.db_row_id)
     if not parsed:
@@ -5201,11 +5337,13 @@ def _transition(proposal_id: str, action: CorrectionAction, *, to_status: str, f
 
 
 @app.post("/api/corrections/{proposal_id}/approve")
+@serialized_write
 def approve_correction(proposal_id: str, action: CorrectionAction) -> dict[str, Any]:
     return _transition(proposal_id, action, to_status="approved", from_status="proposed")
 
 
 @app.post("/api/corrections/{proposal_id}/reject")
+@serialized_write
 def reject_correction(proposal_id: str, action: CorrectionAction) -> dict[str, Any]:
     return _transition(proposal_id, action, to_status="rejected", from_status="proposed")
 
@@ -5228,7 +5366,8 @@ def _log_update_op(
     UI; this is what `db_import.replay_corrections` actually replays onto a fresh
     seed — so without this, a `main.db` rebuild would silently drop the edit.
     Raw (un-normalized) values are passed so a NULL pre-image stays NULL on
-    replay. Best-effort: a failure here must not undo the committed main.db write."""
+    replay. A failure here propagates: the callers compensate by restoring the
+    pre-edit value, so no unlogged main.db write survives (§0 Phase A4)."""
     try:
         pk_int: Any = int(pk_value)
     except (TypeError, ValueError):
@@ -5253,6 +5392,7 @@ def _log_update_op(
 
 
 @app.post("/api/corrections/{proposal_id}/apply")
+@serialized_write
 def apply_correction(proposal_id: str, action: CorrectionAction) -> dict[str, Any]:
     proposal = proposal_by_id(proposal_id)
     if not proposal:
@@ -5271,9 +5411,7 @@ def apply_correction(proposal_id: str, action: CorrectionAction) -> dict[str, An
     if not meta:
         raise HTTPException(status_code=400, detail="Field is no longer correctable.")
 
-    path = db_path()
-    connection = sqlite3.connect(path)
-    connection.row_factory = sqlite3.Row
+    connection = open_db()  # busy_timeout + the tests' patch point (§0 Phase A)
     try:
         if field not in table_columns(connection, table):
             raise HTTPException(status_code=400, detail=f"'{field}' is not a column of {table}.")
@@ -5301,18 +5439,30 @@ def apply_correction(proposal_id: str, action: CorrectionAction) -> dict[str, An
     now = datetime.now(timezone.utc).isoformat()
     run_id = f"apply-{now[:10]}"
     # §5: persist the edit to the authoritative op-log so it survives a reseed.
-    _log_update_op(
-        table=table,
-        pk_col=pk_col,
-        pk_value=pk_value,
-        field=field,
-        before_value=current,
-        after_value=new_value,
-        reviewer=action.reviewer,
-        reason=proposal.get("rationale") or None,
-        run_id=run_id,
-        note=action.note.strip() or None,
-    )
+    try:
+        _log_update_op(
+            table=table,
+            pk_col=pk_col,
+            pk_value=pk_value,
+            field=field,
+            before_value=current,
+            after_value=new_value,
+            reviewer=action.reviewer,
+            reason=proposal.get("rationale") or None,
+            run_id=run_id,
+            note=action.note.strip() or None,
+        )
+    except Exception:
+        # compensation-lite (§0 Phase A4): the UPDATE committed but its op-log
+        # entry failed — restore the pre-edit value so no unlogged change
+        # survives into a rebuild; the proposal stays 'approved' for a retry
+        undo = open_db()
+        try:
+            with undo:
+                undo.execute(f"UPDATE {table} SET {field} = ? WHERE {pk_col} = ?", (current, pk_value))
+        finally:
+            undo.close()
+        raise
     proposal["status"] = "applied"
     proposal["applied_at"] = now
     proposal["applied_by"] = action.reviewer
@@ -5335,6 +5485,7 @@ def apply_correction(proposal_id: str, action: CorrectionAction) -> dict[str, An
 
 
 @app.post("/api/corrections/{proposal_id}/revert")
+@serialized_write
 def revert_correction(proposal_id: str, action: CorrectionAction) -> dict[str, Any]:
     proposal = proposal_by_id(proposal_id)
     if not proposal:
@@ -5349,9 +5500,7 @@ def revert_correction(proposal_id: str, action: CorrectionAction) -> dict[str, A
     if not pk_col or not meta:
         raise HTTPException(status_code=400, detail="Unknown table/field.")
 
-    path = db_path()
-    connection = sqlite3.connect(path)
-    connection.row_factory = sqlite3.Row
+    connection = open_db()  # busy_timeout + the tests' patch point (§0 Phase A)
     try:
         if field not in table_columns(connection, table):
             raise HTTPException(status_code=400, detail=f"'{field}' is not a column of {table}.")
@@ -5369,18 +5518,28 @@ def revert_correction(proposal_id: str, action: CorrectionAction) -> dict[str, A
     now = datetime.now(timezone.utc).isoformat()
     # §5: a revert is itself a change — log a compensating `update` (applied value
     # → original) so replay nets out to the original on a reseed.
-    _log_update_op(
-        table=table,
-        pk_col=pk_col,
-        pk_value=pk_value,
-        field=field,
-        before_value=current,
-        after_value=restore,
-        reviewer=action.reviewer,
-        reason="revert",
-        run_id=f"revert-{now[:10]}",
-        note=action.note.strip() or None,
-    )
+    try:
+        _log_update_op(
+            table=table,
+            pk_col=pk_col,
+            pk_value=pk_value,
+            field=field,
+            before_value=current,
+            after_value=restore,
+            reviewer=action.reviewer,
+            reason="revert",
+            run_id=f"revert-{now[:10]}",
+            note=action.note.strip() or None,
+        )
+    except Exception:
+        # compensation-lite (§0 Phase A4): unlogged revert → put the value back
+        undo = open_db()
+        try:
+            with undo:
+                undo.execute(f"UPDATE {table} SET {field} = ? WHERE {pk_col} = ?", (current, pk_value))
+        finally:
+            undo.close()
+        raise
     proposal["status"] = "reverted"
     save_proposal(proposal)
     append_correction_event(
