@@ -79,17 +79,20 @@ GROUP_META: dict[str, dict[str, str]] = {
         "label": "Jewish — name-based conjecture (no textual attestation)",
         "severity": "low",
         "explanation": (
-            "Machine-suggested from name and context only — the documents do not state it. Set "
-            "“stated in the act” ONLY if you find textual attestation; otherwise dismiss. "
-            "Held behind a switch pending the PI's sign-off."
+            "Machine-suggested from name and context only — the documents do not state it, and "
+            "each item names its basis. Set “stated in the act” ONLY if you find textual "
+            "attestation on the record; otherwise dismiss. Confirming without attestation would "
+            "repeat the 2010s unrecorded-basis mistake this review exists to untangle."
         ),
     },
 }
 
 # Group 8 of the queue design: ten unflagged investors whose names/context suggest
-# Jewish identity. Pure conjecture (no textual attestation), so it stays OFF until
-# the PI explicitly enables it — see docs/data_quality/jewish_db.md.
-CONJECTURE_ENABLED = False
+# Jewish identity. Pure conjecture (no textual attestation) — kept OFF from the
+# 2026-07 build until enabled on WH's instruction, 2026-08-27 (see
+# docs/data_quality/jewish_db.md and the decisions register). Flip back to False
+# to withdraw the lane; nothing else changes.
+CONJECTURE_ENABLED = True
 
 # (investor_id, contract_id, evidence) — see jewish_db.md "Lane D" for the ranking.
 CONJECTURE: list[tuple[int, int, str]] = [
