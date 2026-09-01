@@ -2008,6 +2008,25 @@ function RecordDetail({
         </div>
       )}
 
+      {/* A person with zero live appearances gets no "Appears in contracts"
+          section from the server, so its absence IS the zero-appearance
+          signal. Explain the row instead of leaving a silent gap — these rows
+          usually come from superseded data entry, and the identity hint above
+          (when present) is the only pointer onward; no auto-navigation. */}
+      {record.table === "person" &&
+        !record.sections.some((section) => section.title.startsWith("Appears in contracts")) && (
+        <section className="db-block" id="rec-related">
+          <div className="db-block-head">
+            <h3>Appears in contracts (0)</h3>
+          </div>
+          <p className="muted">
+            This entered name-form is not attached to any contract as a partner. Rows like
+            this usually come from superseded or abandoned data entry — or record a person
+            named only in the text of an act.
+          </p>
+        </section>
+      )}
+
       {/* Each table serves at most one related-records section (sub-contracts /
           parent contract / appears-in), and the empty-subs block below never
           renders alongside it — so a single jump-anchor id is unambiguous. */}

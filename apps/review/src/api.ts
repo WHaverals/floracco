@@ -151,20 +151,20 @@ export function loadPersonLinkageSummary(): Promise<import("./types").PersonLink
   return request("/api/person-linkage/summary");
 }
 
-export function loadPersonLinkageCases(opts: {
-  lane: import("./types").PersonLinkageLane;
-  status?: string;
-  priorityBand?: string;
-  q?: string;
-  offset?: number;
-  limit?: number;
-}): Promise<import("./types").PersonLinkageCasesResponse> {
+export function loadPersonLinkageCases(
+  opts: import("./types").PersonLinkageCasesRequest,
+): Promise<import("./types").PersonLinkageCasesResponse> {
   const params = new URLSearchParams({ lane: opts.lane });
   if (opts.status) params.set("status", opts.status);
   if (opts.priorityBand) params.set("priority_band", opts.priorityBand);
   if (opts.q) params.set("q", opts.q);
   if (opts.offset) params.set("offset", String(opts.offset));
   if (opts.limit) params.set("limit", String(opts.limit));
+  if (opts.stranded) {
+    params.set("stranded", "1");
+    // Scope only travels with the facet — alone it would mean nothing server-side.
+    if (opts.strandedScope) params.set("stranded_scope", opts.strandedScope);
+  }
   return request(`/api/person-linkage/cases?${params.toString()}`);
 }
 

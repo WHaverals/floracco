@@ -5900,6 +5900,57 @@ progress {
   width: 100%;
 }
 
+/* Stranded-entry facet (other_matches rail): an invitation, not an alert —
+   same warm quiet palette as the lane buttons, amber only when pressed. */
+.pl-stranded {
+  display: grid;
+  gap: 3px;
+}
+
+.pl-stranded-chip {
+  background: #201a16;
+  border: 1px solid #3b3028;
+  border-radius: 999px;
+  color: #d8cabb;
+  cursor: pointer;
+  font-size: 0.69rem;
+  font-weight: 650;
+  justify-self: start;
+  padding: 4px 12px;
+}
+
+.pl-stranded-chip:hover {
+  background: #2a221b;
+  color: #fffaf3;
+}
+
+.pl-stranded-chip.is-active {
+  background: #2a221b;
+  border-color: #8f6b4b;
+  box-shadow: inset 3px 0 0 #d6aa7d;
+  color: #fffaf3;
+}
+
+.pl-stranded-help {
+  color: #8f8173;
+  font-size: 0.61rem;
+  line-height: 1.25;
+}
+
+.pl-stranded-scope {
+  align-items: center;
+  color: #d8cabb;
+  cursor: pointer;
+  display: flex;
+  font-size: 0.66rem;
+  gap: 6px;
+}
+
+.pl-stranded-scope input {
+  accent-color: #d6aa7d;
+  margin: 0;
+}
+
 .pl-queue-count {
   color: #8f8173;
   font-size: 0.72rem;

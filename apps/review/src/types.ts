@@ -330,6 +330,24 @@ export type PersonLinkageCasesResponse = {
   reserved_for_labeling?: number;
 };
 
+/** Query options for GET /api/person-linkage/cases. Mirrors the server's query
+ * params (camelCase here; api.ts translates). The stranded facet is honoured
+ * only with lane=other_matches — the server ignores it elsewhere. */
+export type PersonLinkageCasesRequest = {
+  lane: PersonLinkageLane;
+  status?: string;
+  priorityBand?: string;
+  q?: string;
+  offset?: number;
+  limit?: number;
+  /** Stranded-entry facet: scored pairs where exactly one side never appears
+   * in a contract (review tier only by default). */
+  stranded?: boolean;
+  /** "all" widens the facet past the review tier to every zero-appearance
+   * pair, both-zero pairs included. Only meaningful alongside `stranded`. */
+  strandedScope?: "all";
+};
+
 export type PersonAppearance = {
   investor_id: number;
   contract_id: number;

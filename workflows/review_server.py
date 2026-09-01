@@ -2187,6 +2187,23 @@ def search_meta(date: Any, folio: Any, folder: Any, sub_type: Any = None) -> str
     return " · ".join(part for part in parts if part)
 
 
+def _person_search_meta(person_id: Any, contract_count: Any) -> str:
+    """Meta line for a person browse row: '#12 · 2 contracts'.
+
+    Formatted server-side so every client renders the same plural-safe copy;
+    "no contracts" marks the stranded entries (name-forms attached to nothing)
+    that person-linkage review keeps surfacing.
+    """
+    count = int(contract_count or 0)
+    if count == 0:
+        suffix = "no contracts"
+    elif count == 1:
+        suffix = "1 contract"
+    else:
+        suffix = f"{count} contracts"
+    return f"#{person_id} · {suffix}"
+
+
 # Whitelisted ORDER BY bodies (after the exact-id-float lead key). No user text is
 # interpolated — the `sort` param only selects a key. Folio is intentionally absent:
 # its values are unparsed strings ("154r-v", "97r [ORIG. 96r]") and sort unreliably.
@@ -2334,7 +2351,14 @@ def db_search(
                 f"SELECT COUNT(*) AS c FROM person {where}", params
             ).fetchone()["c"]
             rows = connection.execute(
-                f"SELECT person_id, first_name, last_name, nickname FROM person {where} "
+                "SELECT person_id, first_name, last_name, nickname, "
+                # Live-contract count rides along so the browse rail can tell a
+                # working row from a stranded entry (a name-form that never
+                # appears in any contract) without opening each record.
+                "(SELECT COUNT(DISTINCT iv.contract_id) FROM investor iv "
+                " WHERE iv.person_id = person.person_id AND iv.is_deleted = 0"
+                ") AS live_contract_count "
+                f"FROM person {where} "
                 # Mononyms (blank surname) sort last, not first (the default name sort).
                 f"ORDER BY CASE WHEN CAST(person_id AS TEXT) = ? THEN 0 ELSE 1 END, {order_body} "
                 "LIMIT ? OFFSET ?",
@@ -2348,7 +2372,9 @@ def db_search(
                     "title": person_display_name(
                         r["first_name"], r["last_name"], r["nickname"]
                     ),
-                    "meta": f"#{r['person_id']}",
+                    "meta": _person_search_meta(
+                        r["person_id"], r["live_contract_count"]
+                    ),
                     "identity_hint": _person_identity_hint(identity[int(r["person_id"])]),
                 }
                 for r in rows
@@ -3005,6 +3031,42 @@ def _person_labeling_open_case_ids(
     return open_ids
 
 
+def _person_labeling_frozen_case_ids(
+    run: dict[str, Any], latest: dict[str, dict[str, Any]]
+) -> set[str]:
+    """Open packet cases PLUS their co-minted sibling pairs.
+
+    Four rows minted in one entry batch (the Corradini shape) produce star
+    pairs against the row with the appearance — sampled into the packet —
+    and ghost-to-ghost sibling pairs that are not. The siblings carry the
+    same family, the same evidence, and a visible score, so leaving them
+    browsable mid-round is a side door into the blind judgment. A pair is
+    frozen when BOTH its persons belong to open packet cases; a pair with
+    any outside person is other work and stays visible. Everything thaws
+    per-person as that person's packet cases are decided.
+    """
+    open_ids = _person_labeling_open_case_ids(run, latest)
+    if not open_ids:
+        return open_ids
+    members: set[int] = set()
+    for case_id in open_ids:
+        left, _, right = case_id.removeprefix("pair:").partition(":")
+        members.add(int(left))
+        members.add(int(right))
+    cache = open_person_cache()
+    try:
+        marks = ",".join("?" for _ in members)
+        ordered = sorted(members)
+        rows = cache.execute(
+            f"SELECT pair_key FROM person_pair_suggestion "
+            f"WHERE person_id_l IN ({marks}) AND person_id_r IN ({marks})",
+            (*ordered, *ordered),
+        ).fetchall()
+    finally:
+        cache.close()
+    return open_ids | {f"pair:{row['pair_key']}" for row in rows}
+
+
 # Record-derived evidence a blind labeler may see. Everything else inside
 # evidence_json (network_diagnostics, firm_token_diagnostics) is computed by
 # the pipeline and would leak the model's routing into the label.
@@ -3398,9 +3460,9 @@ def _person_identity_suppressed_case_ids(
     Database would unblind the packet edge. Unrelated groups on the same
     person stay visible: that is other work, not the round.
     """
-    open_pairs = _person_labeling_open_case_ids(run, latest)
-    suppressed = set(open_pairs)
-    packet_keys = {case_id.removeprefix("pair:") for case_id in open_pairs}
+    frozen_pairs = _person_labeling_frozen_case_ids(run, latest)
+    suppressed = set(frozen_pairs)
+    packet_keys = {case_id.removeprefix("pair:") for case_id in frozen_pairs}
     if not packet_keys:
         return suppressed
     for case_id, _members, edge_keys in groups:
@@ -3458,6 +3520,26 @@ def _person_identity_payload(
     }
 
 
+def _person_stranded_exact_hint(row: sqlite3.Row | dict[str, Any]) -> bool:
+    """Review-tier stranded pair whose given name, father, and surname all match.
+
+    The model scores these pairs low (a zero-appearance side has no business
+    context to agree on), so the p>=0.50 arm never surfaces them — yet a full
+    exact name chain against a record that never reaches a contract is exactly
+    the superseded-entry pattern reviewers want flagged on the person record.
+    Exact flags carry person_linkage's both-recorded semantics: a missing name
+    part is never "exact", so sludge pairs (first+father only) stay out.
+    """
+    if row["deterministic_tier"] != "review":
+        return False
+    left, right = row["appearances_l"], row["appearances_r"]
+    # Both counts must be recorded, and exactly one of them zero (XOR): a
+    # both-zero pair strands two entries and belongs to bulk review, not hints.
+    if left is None or right is None or ((left == 0) == (right == 0)):
+        return False
+    return bool(row["given_exact"]) and bool(row["father_exact"]) and bool(row["surname_exact"])
+
+
 def person_identity_statuses(person_ids: list[int]) -> dict[int, dict[str, Any]]:
     """Reviewed identity families, split flags, and open cases for entered rows."""
     wanted = sorted({int(value) for value in person_ids})
@@ -3505,8 +3587,16 @@ def person_identity_statuses(person_ids: list[int]) -> dict[int, dict[str, Any]]
         run = dict(run_row) if run_row else {}
         marks = ",".join("?" for _ in wanted)
         pair_rows = cache.execute(
+            # json_extract in the SELECT (rather than decoding whole rows in
+            # Python) keeps this hot path — it runs per browse page — reading
+            # five scalars instead of parsing every evidence blob.
             f"""
-            SELECT pair_key,person_id_l,person_id_r,deterministic_tier,match_probability
+            SELECT pair_key,person_id_l,person_id_r,deterministic_tier,match_probability,
+              json_extract(evidence_json,'$.appearance_counts.left') AS appearances_l,
+              json_extract(evidence_json,'$.appearance_counts.right') AS appearances_r,
+              json_extract(evidence_json,'$.name_review.given_name.exact') AS given_exact,
+              json_extract(evidence_json,'$.name_review.father.exact') AS father_exact,
+              json_extract(evidence_json,'$.name_review.surname.exact') AS surname_exact
             FROM person_pair_suggestion
             WHERE person_id_l IN ({marks}) OR person_id_r IN ({marks})
             ORDER BY match_probability DESC
@@ -3558,6 +3648,7 @@ def person_identity_statuses(person_ids: list[int]) -> dict[int, dict[str, Any]]
                     and row["match_probability"] is not None
                     and float(row["match_probability"]) >= 0.50
                 )
+                or _person_stranded_exact_hint(row)
             )
         )
         open_cases = list(dict.fromkeys(open_cases))
@@ -3777,11 +3868,17 @@ def person_linkage_cases(
     status: str = "open",
     priority_band: str = "All",
     q: str = "",
+    stranded: int = 0,
+    stranded_scope: str = "",
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> dict[str, Any]:
     if not person_linkage_enabled():
         raise HTTPException(status_code=404, detail="Person identity review is not enabled.")
+    # The stranded facet is a pair-population filter, so it only means anything
+    # in the one lane whose pairs it partitions; elsewhere it is ignored rather
+    # than rejected, so a stale bookmarked URL still renders its lane.
+    stranded_active = bool(stranded) and lane == "other_matches"
     cache = open_person_cache()
     run = dict(cache.execute("SELECT * FROM cache_run LIMIT 1").fetchone())
     groups, pair_by_key = _person_cache_groups(cache)
@@ -3806,15 +3903,18 @@ def person_linkage_cases(
     finally:
         clog.close()
     # Pairs frozen in the open blind round must vanish from their natural
-    # lanes: seeing one both blinded and scored would defeat the round.
-    open_round_pair_keys = {
+    # lanes: seeing one both blinded and scored would defeat the round. The
+    # frozen set is the packet's open cases plus their co-minted sibling
+    # pairs (both persons in open packet cases) — the Corradini ghost-to-
+    # ghost pairs that would otherwise show the family's score mid-round.
+    frozen_pair_keys = {
         case_id.removeprefix("pair:")
-        for case_id in _person_labeling_open_case_ids(run, latest)
+        for case_id in _person_labeling_frozen_case_ids(run, latest)
     }
 
     def group_in_open_round(group: dict[str, Any]) -> bool:
         return any(
-            key in open_round_pair_keys
+            key in frozen_pair_keys
             for key in group.get("edge_pair_keys_json") or []
         )
 
@@ -3828,7 +3928,7 @@ def person_linkage_cases(
         of this lane's kind are in the round", not "N would have matched your
         current filters".
         """
-        if lane in {"labeling_round", "decided"} or not open_round_pair_keys:
+        if lane in {"labeling_round", "decided"} or not frozen_pair_keys:
             return 0
         reserved = 0
         if lane == "likely_duplicates":
@@ -3856,7 +3956,7 @@ def person_linkage_cases(
         }[lane]
         # A packet pair that is also a projected group edge belongs to its
         # group's lane, so it must not count here as well.
-        keys = sorted(open_round_pair_keys - projected_edge_keys)
+        keys = sorted(frozen_pair_keys - projected_edge_keys)
         if not keys:
             return reserved
         marks = ",".join("?" for _ in keys)
@@ -3994,7 +4094,11 @@ def person_linkage_cases(
             )
             if preview["lane"] == "possible_splits" and keep_preview(preview)
         )
-    elif lane == "other_matches":
+    elif lane == "other_matches" and not stranded_active:
+        # While the stranded facet is active the group previews are skipped:
+        # measured on the current cache, zero stranded pairs are other_matches
+        # group edges (batch_ghost XOR pairs live in Likely duplicates by
+        # design), so interleaving groups would only dilute the facet.
         group_cases = [
             preview
             for preview in (
@@ -4043,13 +4147,24 @@ def person_linkage_cases(
         marks = ",".join("?" for _ in projected_edge_keys)
         where.append(f"pair_key NOT IN ({marks})")
         params.extend(sorted(projected_edge_keys))
-    if open_round_pair_keys:
-        marks = ",".join("?" for _ in open_round_pair_keys)
+    if frozen_pair_keys:
+        marks = ",".join("?" for _ in frozen_pair_keys)
         where.append(f"pair_key NOT IN ({marks})")
-        params.extend(sorted(open_round_pair_keys))
+        params.extend(sorted(frozen_pair_keys))
     if priority_band != "All":
         where.append("priority_band=?")
         params.append(priority_band)
+    if stranded_active:
+        zero_l = "json_extract(evidence_json,'$.appearance_counts.left')=0"
+        zero_r = "json_extract(evidence_json,'$.appearance_counts.right')=0"
+        if stranded_scope == "all":
+            # Full stranded population: any zero side (XOR plus both-zero),
+            # whatever the tier — the lane condition still applies.
+            where.append(f"({zero_l}) OR ({zero_r})")
+        else:
+            # Default: the review-tier XOR population — exactly one side has
+            # never appeared in a contract, and the rules asked for review.
+            where.append(f"(({zero_l}) <> ({zero_r})) AND deterministic_tier='review'")
     if query:
         where.append(
             "(lower(evidence_json) LIKE ? OR CAST(person_id_l AS TEXT)=? OR CAST(person_id_r AS TEXT)=?)"
@@ -4075,12 +4190,30 @@ def person_linkage_cases(
     remaining = limit - len(group_page)
     pair_offset = max(0, offset - len(group_cases))
     pair_cases: list[dict[str, Any]] = []
+    if stranded_active:
+        # Stranded ordering leads with the evidence class, not the score: the
+        # model scores every stranded pair low (a zero-appearance side has no
+        # business context), so the score would bury the strongest name
+        # evidence. Ranks: 0 = given+father+surname exact, 1 = given+surname
+        # exact, 2 = father+grandfather exact (name-form drifted), 3 = rest.
+        given = "json_extract(evidence_json,'$.name_review.given_name.exact')=1"
+        father = "json_extract(evidence_json,'$.name_review.father.exact')=1"
+        surname = "json_extract(evidence_json,'$.name_review.surname.exact')=1"
+        grandfather = "json_extract(evidence_json,'$.name_review.grandfather.exact')=1"
+        order_sql = (
+            f"CASE WHEN {given} AND {father} AND {surname} THEN 0 "
+            f"WHEN {given} AND {surname} THEN 1 "
+            f"WHEN {father} AND {grandfather} THEN 2 "
+            "ELSE 3 END ASC, review_score DESC, person_id_l, person_id_r"
+        )
+    else:
+        order_sql = "review_score DESC, person_id_l, person_id_r"
     if remaining:
         rows = cache.execute(
             f"""
             SELECT * FROM person_pair_suggestion
             WHERE {where_sql}
-            ORDER BY review_score DESC, person_id_l, person_id_r
+            ORDER BY {order_sql}
             LIMIT ? OFFSET ?
             """,
             (*params, remaining, pair_offset),
@@ -4653,7 +4786,7 @@ def person_linkage_case(case_id: str) -> dict[str, Any]:
         latest = _latest_person_events(clog)
     finally:
         clog.close()
-    if payload["case_id"] in _person_labeling_open_case_ids(payload["run"], latest):
+    if payload["case_id"] in _person_labeling_frozen_case_ids(payload["run"], latest):
         return _person_blind_case_payload(payload)
     return payload
 
@@ -4695,13 +4828,25 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
             detail="Explain what evidence is still needed before deferring this case.",
         )
     case = _person_case_payload(case_id)
+    clog = open_corrections()
+    try:
+        latest = _latest_person_events(clog)
+    finally:
+        clog.close()
+    round_open_ids = _person_labeling_open_case_ids(case["run"], latest)
+    if (
+        case_id not in round_open_ids
+        and case_id in _person_labeling_frozen_case_ids(case["run"], latest)
+    ):
+        # A co-minted sibling pair: not itself a labeling case, but both of
+        # its persons are — deciding it mid-round would settle the family
+        # the labeler is judging blind. It thaws as the packet cases decide.
+        raise HTTPException(
+            status_code=409,
+            detail="Both records in this case are part of the open labeling round — finish the round first.",
+        )
     if action.review_mode != "blind_labeling":
-        clog = open_corrections()
-        try:
-            latest = _latest_person_events(clog)
-        finally:
-            clog.close()
-        if case_id in _person_labeling_open_case_ids(case["run"], latest):
+        if case_id in round_open_ids:
             # A standard decision would be made against the full payload and
             # contaminate the blind label, so the round must be worked (or
             # explicitly finished) before ordinary review resumes here.

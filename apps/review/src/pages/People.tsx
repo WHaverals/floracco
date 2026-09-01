@@ -664,6 +664,11 @@ export default function People() {
   const [detail, setDetail] = useState<PersonLinkageCase | null>(null);
   const [query, setQuery] = useState("");
   const [priorityBand, setPriorityBand] = useState("All");
+  // Stranded-entry facet (other_matches only): pairs where exactly one side
+  // never appears in a contract. Ghost-tier groups are NOT here — the batch
+  // rules already route them to Likely duplicates, and the help copy says so.
+  const [stranded, setStranded] = useState(false);
+  const [strandedAll, setStrandedAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -685,6 +690,8 @@ export default function People() {
     beginDetailLoad(); // invalidate any in-flight case from the previous lane
     setLane(nextLane);
     setPriorityBand(nextLane === "other_matches" ? "priority_1" : "All");
+    setStranded(false);
+    setStrandedAll(false);
     setOffset(0);
     setSelected("");
     setDetail(null);
@@ -707,6 +714,8 @@ export default function People() {
           q: query,
           offset,
           limit: pageSize,
+          stranded: lane === "other_matches" && stranded,
+          strandedScope: lane === "other_matches" && stranded && strandedAll ? "all" : undefined,
         }),
       ]);
       setSummary(nextSummary);
@@ -724,9 +733,9 @@ export default function People() {
     } finally {
       setLoading(false);
     }
-  }, [caseId, lane, navigate, offset, priorityBand, query, selected]);
+  }, [caseId, lane, navigate, offset, priorityBand, query, selected, stranded, strandedAll]);
 
-  useEffect(() => { void reload(); }, [lane, priorityBand, offset]); // query submits explicitly
+  useEffect(() => { void reload(); }, [lane, priorityBand, offset, stranded, strandedAll]); // query submits explicitly
   useEffect(() => {
     if (caseId) setSelected(caseId);
   }, [caseId]);
@@ -753,6 +762,10 @@ export default function People() {
         if (caseId && selectedIndex < 0 && targetLane !== lane) {
           setLane(targetLane);
           setPriorityBand(targetLane === "other_matches" ? "All" : priorityBand);
+          // A deep link must land on the unfiltered lane — a lingering stranded
+          // facet from an earlier visit could silently hide the linked case.
+          setStranded(false);
+          setStrandedAll(false);
         }
       })
       .catch((err: Error) => { if (fresh()) setError(err.message); });
@@ -1013,6 +1026,37 @@ export default function People() {
                 <option value="priority_3">Priority 3 · next 20%</option>
                 <option value="priority_4">Priority 4 · remaining candidates</option>
               </select>
+            ) : null}
+            {lane === "other_matches" ? (
+              <div className="pl-stranded">
+                <button
+                  type="button"
+                  className={stranded ? "pl-stranded-chip is-active" : "pl-stranded-chip"}
+                  aria-pressed={stranded}
+                  onClick={() => {
+                    setOffset(0);
+                    setStranded((on) => !on);
+                    // Leaving the facet also drops its widened scope, so the
+                    // next activation starts back at the review-tier default.
+                    if (stranded) setStrandedAll(false);
+                  }}
+                >
+                  Stranded entries
+                </button>
+                <small className="pl-stranded-help">
+                  One side never appears in a contract. Ghost-tier groups stay in Likely duplicates.
+                </small>
+                {stranded ? (
+                  <label className="pl-stranded-scope">
+                    <input
+                      type="checkbox"
+                      checked={strandedAll}
+                      onChange={(event) => { setOffset(0); setStrandedAll(event.target.checked); }}
+                    />
+                    Include low-evidence pairs
+                  </label>
+                ) : null}
+              </div>
             ) : null}
           </form>
           <p className="pl-queue-count">
