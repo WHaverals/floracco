@@ -695,6 +695,7 @@ export default function People() {
     setOffset(0);
     setSelected("");
     setDetail(null);
+    setEvidenceDrawer(null);
     setMobileQueueOpen(false);
     setMessage("");
     setLastDecisionEventId(null);
@@ -755,9 +756,6 @@ export default function People() {
         setPendingDecision(null);
         setSplitPersonId(null);
         setSelectedCitations([]);
-        if (value.lane === "read_source") {
-          setEvidenceDrawer("sources");
-        }
         const targetLane = value.status === "open" ? value.lane : "decided";
         if (caseId && selectedIndex < 0 && targetLane !== lane) {
           setLane(targetLane);
