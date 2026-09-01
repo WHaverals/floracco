@@ -262,6 +262,49 @@ def _partner_sets(appearances: pd.DataFrame, hub_threshold: int) -> pd.DataFrame
     return partners
 
 
+def _partner_network_all(appearances: pd.DataFrame) -> pd.DataFrame:
+    """Unfiltered temporal ego networks for diagnostics, never model input.
+
+    Unlike `partners`, this preserves high-activity neighbors so weighted
+    diagnostics can evaluate replacing the hard hub cutoff rather than
+    inheriting it.
+    """
+    pairs = appearances[
+        ["person_id", "contract_id", "year"]
+    ].merge(
+        appearances[["person_id", "contract_id"]],
+        on="contract_id",
+        suffixes=("", "_partner"),
+    )
+    pairs = pairs[pairs["person_id"] != pairs["person_id_partner"]].drop_duplicates(
+        ["person_id", "person_id_partner", "contract_id"]
+    )
+    if pairs.empty:
+        return pd.DataFrame(columns=["partners_all", "partner_events_all"])
+
+    def partner_ids(group: pd.DataFrame) -> list[int]:
+        return sorted({int(value) for value in group["person_id_partner"]})
+
+    def events(group: pd.DataFrame) -> dict[str, list[dict[str, int | None]]]:
+        result: dict[str, list[dict[str, int | None]]] = {}
+        for row in group.sort_values(["person_id_partner", "year", "contract_id"]).itertuples():
+            result.setdefault(str(int(row.person_id_partner)), []).append(
+                {
+                    "contract_id": int(row.contract_id),
+                    "year": int(row.year) if pd.notna(row.year) else None,
+                }
+            )
+        return result
+
+    grouped = pairs.groupby("person_id")
+    return pd.DataFrame(
+        {
+            "partners_all": grouped.apply(partner_ids, include_groups=False),
+            "partner_events_all": grouped.apply(events, include_groups=False),
+        }
+    )
+
+
 def _firm_tokens(appearances: pd.DataFrame) -> pd.Series:
     """Distinctive WORDS from the firm names a person appears under.
 
@@ -285,6 +328,29 @@ def _firm_tokens(appearances: pd.DataFrame) -> pd.Series:
         return sorted(out)
 
     return appearances.groupby("person_id")["firm_name"].agg(tokens).rename("firm_tokens")
+
+
+def firm_token_document_frequency(
+    conn: sqlite3.Connection,
+) -> tuple[int, dict[str, int]]:
+    """Contract-level token document frequencies for unscored IDF diagnostics."""
+    rows = conn.execute(
+        """
+        SELECT contract_id, firm_name
+        FROM contract
+        WHERE is_deleted=0 AND TRIM(COALESCE(firm_name, '')) <> ''
+        """
+    ).fetchall()
+    frequencies: dict[str, int] = {}
+    for row in rows:
+        tokens = {
+            token
+            for token in normalize_name(row["firm_name"]).split()
+            if len(token) >= 3 and token not in _FIRM_STOPWORDS
+        }
+        for token in tokens:
+            frequencies[token] = frequencies.get(token, 0) + 1
+    return len(rows), frequencies
 
 
 def _firm_names(appearances: pd.DataFrame) -> pd.Series:
@@ -401,6 +467,78 @@ def _roles(conn: sqlite3.Connection) -> pd.DataFrame:
     return counts[["n_gp", "n_lp", "dominant_role"]]
 
 
+def _context_profiles(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Verbatim contextual evidence for review display, never model weights.
+
+    These fields are promising but correlated with firms and business circles.
+    Keeping them in the cache lets historians label with the full record while
+    preventing an unlabeled model from multiplying them as independent facts.
+    """
+    rows = conn.execute(
+        """
+        SELECT i.person_id,
+               NULLIF(TRIM(i.profession), '') AS profession,
+               residence.place_name AS residence,
+               origin.place_name AS origin,
+               t.title_name AS title,
+               parent_title.title_name AS father_mother_title,
+               grandfather_title.title_name AS grandfather_title,
+               husband_title.title_name AS husband_title,
+               activity.activity AS economic_activity
+        FROM investor i
+        JOIN contract c ON c.contract_id=i.contract_id AND c.is_deleted=0
+        LEFT JOIN place residence
+          ON residence.place_id=i.place_of_residence AND i.place_of_residence <> 0
+        LEFT JOIN place origin
+          ON origin.place_id=i.place_of_origin AND i.place_of_origin <> 0
+        LEFT JOIN title t ON t.title_id=i.title AND i.title <> 0
+        LEFT JOIN title parent_title
+          ON parent_title.title_id=i.title_father_mother AND i.title_father_mother <> 0
+        LEFT JOIN title grandfather_title
+          ON grandfather_title.title_id=i.title_grandfather AND i.title_grandfather <> 0
+        LEFT JOIN title husband_title
+          ON husband_title.title_id=i.title_husband AND i.title_husband <> 0
+        LEFT JOIN economic_activity activity
+          ON activity.ec_activity_id=c.economic_sector AND c.economic_sector <> 0
+        WHERE i.is_deleted=0
+        """
+    ).fetchall()
+    columns = (
+        "professions",
+        "residences",
+        "origins",
+        "titles",
+        "father_mother_titles",
+        "grandfather_titles",
+        "husband_titles",
+        "economic_activities",
+    )
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    frame = pd.DataFrame([dict(row) for row in rows])
+
+    def values(series: pd.Series) -> list[str]:
+        return sorted(
+            {
+                str(value).strip()
+                for value in series
+                if value is not None and pd.notna(value) and str(value).strip()
+            },
+            key=str.casefold,
+        )
+
+    return frame.groupby("person_id").agg(
+        professions=("profession", values),
+        residences=("residence", values),
+        origins=("origin", values),
+        titles=("title", values),
+        father_mother_titles=("father_mother_title", values),
+        grandfather_titles=("grandfather_title", values),
+        husband_titles=("husband_title", values),
+        economic_activities=("economic_activity", values),
+    )
+
+
 def _husbands(conn: sqlite3.Connection) -> pd.DataFrame:
     """Husband names from a woman's investor rows — for the 242 women the
     richest field they have (59% filled), and stable across the wife→widow
@@ -472,15 +610,34 @@ def load_person_spine(
 
     people = people.join(_career_windows(appearances))
     people = people.join(_partner_sets(appearances, hub_threshold))
+    people = people.join(_partner_network_all(appearances))
     people = people.join(_firm_tokens(appearances))
     people = people.join(_firm_names(appearances))
     people = people.join(_roles(conn))
+    people = people.join(_context_profiles(conn))
     people = people.join(_husbands(conn))
 
     # A person with no live appearances has empty arrays, not missing ones —
     # 856 such rows exist (the batch-entry ghosts), and they are candidates too.
-    for column in ("contracts", "partners", "firm_tokens", "firms"):
+    for column in (
+        "contracts",
+        "partners",
+        "partners_all",
+        "firm_tokens",
+        "firms",
+        "professions",
+        "residences",
+        "origins",
+        "titles",
+        "father_mother_titles",
+        "grandfather_titles",
+        "husband_titles",
+        "economic_activities",
+    ):
         people[column] = people[column].apply(lambda v: v if isinstance(v, list) else [])
+    people["partner_events_all"] = people["partner_events_all"].apply(
+        lambda value: value if isinstance(value, dict) else {}
+    )
     # After the arrays are real lists and the name columns exist: a firm named
     # after its partners must not hand a person their own name back as network
     # evidence. See `_drop_self_referential_tokens`.

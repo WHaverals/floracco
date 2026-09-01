@@ -5,14 +5,15 @@ Run:
 
 Write scope: review decisions (CSV), correction proposals (JSONL), and —
 exclusively through the audited corrections.db op-log — governed updates,
-hide/restore, and creation of DB-native rows in main.db. Word files, images,
-and pipeline outputs are never written.
+hide/restore, creation of DB-native rows in main.db, and reversible stand-off
+identity links. Word files, images, and pipeline outputs are never written.
 """
 
 from __future__ import annotations
 
 import csv
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -33,7 +34,17 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from workflows import corrections_db, data_quality, jewish_review, locks, place_cache, reference_match, search_index, word_cross_check
+from workflows import (
+    corrections_db,
+    data_quality,
+    jewish_review,
+    locks,
+    person_cache,
+    place_cache,
+    reference_match,
+    search_index,
+    word_cross_check,
+)
 from workflows.word_pipeline import act_components_for_review, folio_sort_key, parse_db_folio
 
 
@@ -68,6 +79,26 @@ CANDIDATE_DISMISSALS_PATH = CORRECTIONS_DIR / "correction_candidate_dismissals.j
 # their append-only dismissal log ("reviewed, not an error").
 FLAG_DISMISSALS_PATH = CORRECTIONS_DIR / "flag_dismissals.jsonl"
 DEFAULT_DB_PATH = DATA_ROOT / "sqlite/main.db"
+PERSON_CACHE_PATH = Path(
+    os.getenv("FLORACCO_PERSON_CACHE_PATH") or (DATA_ROOT / "sqlite/person_cache.db")
+).expanduser().resolve()
+PERSON_MODEL_PATH = Path(
+    os.getenv("FLORACCO_PERSON_MODEL_PATH")
+    or (PROJECT_ROOT / "docs/person_linkage/person_model.json")
+).expanduser().resolve()
+PERSON_LABELING_PACKET_PATH = Path(
+    os.getenv("FLORACCO_PERSON_LABELING_PACKET_PATH")
+    or (DATA_ROOT / "derived/person-linkage/labeling_packet_v3.jsonl")
+).expanduser().resolve()
+
+
+def person_linkage_enabled() -> bool:
+    """Explicit in single-origin deployments; on by default only in local dev."""
+    raw = os.getenv("FLORACCO_ENABLE_PERSON_LINKAGE")
+    if raw is not None:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    serve_static = os.getenv("FLORACCO_SERVE_STATIC", "").strip().lower()
+    return serve_static not in {"1", "true", "yes", "on"}
 
 # Fields a reviewer may correct in v1: scalar values only, safe to edit as plain
 # text/date/number/enum. Foreign keys (title/currency/place ids, person_id) are
@@ -2133,6 +2164,7 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
         "document": None,
         "word_sources": word_sources,
         "word_sources_note": word_sources_note,
+        "identity_status": person_identity_status(int(raw_id)),
     }
 
 
@@ -2308,6 +2340,7 @@ def db_search(
                 "LIMIT ? OFFSET ?",
                 (*params, term, limit, offset),
             ).fetchall()
+            identity = person_identity_statuses([int(r["person_id"]) for r in rows])
             results = [
                 {
                     "id": str(r["person_id"]),
@@ -2316,6 +2349,7 @@ def db_search(
                         r["first_name"], r["last_name"], r["nickname"]
                     ),
                     "meta": f"#{r['person_id']}",
+                    "identity_hint": _person_identity_hint(identity[int(r["person_id"])]),
                 }
                 for r in rows
             ]
@@ -2790,9 +2824,16 @@ class ReviewerOnly(BaseModel):
 
 
 @app.post("/api/db/reference/link/{link_id}/revoke")
+@serialized_write
 def db_reference_link_revoke(link_id: str, action: ReviewerOnly) -> dict[str, Any]:
     clog = open_corrections()
     try:
+        link = corrections_db.reference_link_by_id(clog, link_id)
+        if link and link.get("kind") == "person":
+            raise HTTPException(
+                status_code=409,
+                detail="Person identity links must be undone from the People review tool.",
+            )
         ok = corrections_db.revoke_reference_link(clog, link_id, by=action.reviewer)
         if not ok:
             raise HTTPException(status_code=404, detail="No active link with that id.")
@@ -2830,6 +2871,2001 @@ def db_reference_place_map() -> dict[str, Any]:
     finally:
         cache.close()
         connection.close()
+
+
+# ---- People: reviewed identity links over preserved person rows -------------
+
+_PERSON_JSON_COLUMNS = {
+    "blocking_lanes_json",
+    "reasons_json",
+    "concordance_reasons_json",
+    "network_diagnostics_json",
+    "firm_token_diagnostics_json",
+    "evidence_json",
+    "shared_contract_ids_json",
+    "shared_firms_json",
+    "shared_firm_words_json",
+    "shared_partner_ids_json",
+    "roles_json",
+    "career_span_json",
+    "contract_pointers_json",
+    "source_pointers_json",
+    "waterfall_contributions_json",
+}
+_PERSON_CLEAR_TIERS = {"batch_ghost", "same_as_strong"}
+_PERSON_CAUTION_TIERS = {
+    "caution_coappearance",
+    "caution_posthumous_conflict",
+    "caution_gf_conflict",
+}
+
+
+def _person_labeling_packet_rows() -> list[dict[str, Any]]:
+    """Frozen packet order/provenance for the blind labeling round.
+
+    Parsed bytes are memoised on (path, mtime, size) so Database People browse
+    does not re-read the JSONL on every keystroke. A replaced packet (new mtime
+    or size) misses the cache; a missing file is not cached as empty.
+    """
+    path = PERSON_LABELING_PACKET_PATH
+    if not path.is_file():
+        return []
+    stat = path.stat()
+    return list(
+        _person_labeling_packet_rows_cached(str(path.resolve()), stat.st_mtime, stat.st_size)
+    )
+
+
+@lru_cache(maxsize=1)
+def _person_labeling_packet_rows_cached(
+    path: str, mtime: float, size: int
+) -> tuple[dict[str, Any], ...]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    with Path(path).open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"{path}:{line_number}: invalid JSON") from exc
+            key = str(row.get("pair_key") or "")
+            if key and key not in seen:
+                seen.add(key)
+                rows.append(row)
+    return tuple(rows)
+
+
+def _person_labeling_metadata(case_id: str) -> dict[str, Any] | None:
+    if not case_id.startswith("pair:"):
+        return None
+    pair_key_value = case_id.removeprefix("pair:")
+    row = next(
+        (
+            item
+            for item in _person_labeling_packet_rows()
+            if str(item.get("pair_key")) == pair_key_value
+        ),
+        None,
+    )
+    if not row:
+        return None
+    manifest_path = PERSON_LABELING_PACKET_PATH.with_name(
+        f"{PERSON_LABELING_PACKET_PATH.stem}.manifest.json"
+    )
+    manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.is_file()
+        else {}
+    )
+    return {
+        "packet_id": f"{manifest.get('algorithm_version', 'unknown')}:{str(manifest.get('packet_sha256') or '')[:12]}",
+        "packet_sha256": manifest.get("packet_sha256"),
+        "algorithm_version": manifest.get("algorithm_version"),
+        "labeling_stratum": row.get("labeling_stratum"),
+        "stratum_population": row.get("stratum_population"),
+        "stratum_sample_size": row.get("stratum_sample_size"),
+        "inclusion_probability": row.get("inclusion_probability"),
+        "sampling_weight": row.get("sampling_weight"),
+    }
+
+
+def _person_labeling_packet_matches_run(
+    rows: list[dict[str, Any]], run: dict[str, Any]
+) -> bool:
+    """Every packet row must come from the current cache run to run the round."""
+    return bool(rows) and all(
+        str(row.get("run_id")) == str(run.get("run_id")) for row in rows
+    )
+
+
+def _person_labeling_open_case_ids(
+    run: dict[str, Any], latest: dict[str, dict[str, Any]]
+) -> set[str]:
+    """Case ids still frozen in the blind labeling round for this cache run.
+
+    One membership test gates the blind detail payload, the standard-decision
+    409, the lane exclusions and the summary count, so they can never drift
+    apart. A missing or stale packet (any row cut from another cache run)
+    yields no members: half-blinding a mismatched round would stamp labels
+    with the wrong sampling provenance, so the round simply suspends and
+    normal review behaviour returns. A case leaves the round once its latest
+    event is a decision, and re-enters it on reopen.
+    """
+    rows = _person_labeling_packet_rows()
+    if not _person_labeling_packet_matches_run(rows, run):
+        return set()
+    open_ids: set[str] = set()
+    for row in rows:
+        case_id = f"pair:{row['pair_key']}"
+        event = latest.get(case_id)
+        if event is None or event["action"] == "reopen":
+            open_ids.add(case_id)
+    return open_ids
+
+
+# Record-derived evidence a blind labeler may see. Everything else inside
+# evidence_json (network_diagnostics, firm_token_diagnostics) is computed by
+# the pipeline and would leak the model's routing into the label.
+_PERSON_BLIND_EVIDENCE_KEYS = {
+    "names",
+    "name_review",
+    "career",
+    "roles",
+    "appearance_counts",
+    "shared",
+    "context_for_review",
+}
+
+
+def open_person_cache() -> sqlite3.Connection:
+    if not PERSON_CACHE_PATH.exists():
+        raise HTTPException(
+            status_code=503,
+            detail="Person-linkage suggestions have not been built yet.",
+        )
+    connection = sqlite3.connect(f"file:{PERSON_CACHE_PATH}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def _decode_person_pair(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    item = dict(row)
+    for column in _PERSON_JSON_COLUMNS:
+        value = item.get(column)
+        if isinstance(value, str):
+            item[column] = json.loads(value)
+    item["case_id"] = f"pair:{item['pair_key']}"
+    return item
+
+
+def _decode_person_group(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    item = dict(row)
+    for column in (
+        "person_ids_json",
+        "edge_pair_keys_json",
+        "pair_matrix_json",
+        "reasons_json",
+    ):
+        if isinstance(item.get(column), str):
+            item[column] = json.loads(item[column])
+    item["case_id"] = f"group:{item['group_key']}"
+    return item
+
+
+def _person_name_from_evidence(evidence: dict[str, Any], side: str) -> str:
+    names = ((evidence.get("names") or {}).get(side) or {})
+    return person_display_name(
+        names.get("first_name"),
+        names.get("last_name"),
+        names.get("nickname"),
+        names.get("father_mother"),
+        names.get("grandfather"),
+    )
+
+
+def _person_pair_lane(row: dict[str, Any]) -> str:
+    tier = row.get("deterministic_tier")
+    if tier in _PERSON_CLEAR_TIERS:
+        return "likely_duplicates"
+    if tier in _PERSON_CAUTION_TIERS:
+        return "read_source"
+    if tier == "distinct_strong":
+        return "rule_exclusions"
+    if row.get("high_concordance"):
+        return "high_concordance"
+    return "other_matches"
+
+
+def _person_pair_preview(row: dict[str, Any]) -> dict[str, Any]:
+    evidence = row.get("evidence_json") or {}
+    career = row.get("career_span_json") or {}
+    return {
+        "case_id": row["case_id"],
+        "kind": "pair",
+        "person_ids": [int(row["person_id_l"]), int(row["person_id_r"])],
+        "names": [
+            _person_name_from_evidence(evidence, "left"),
+            _person_name_from_evidence(evidence, "right"),
+        ],
+        "lane": _person_pair_lane(row),
+        "tier": row.get("deterministic_tier"),
+        "source": row.get("source"),
+        "score_band": row.get("score_band"),
+        "priority_band": row.get("priority_band"),
+        "review_rank": row.get("review_rank"),
+        "review_percentile": row.get("review_percentile"),
+        "review_score": row.get("review_score"),
+        "match_probability": row.get("match_probability"),
+        "career": career,
+        "reasons": row.get("concordance_reasons_json") or row.get("reasons_json") or [],
+    }
+
+
+def _person_group_preview(
+    group: dict[str, Any], pair_by_key: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    edges = [
+        pair_by_key[key]
+        for key in group.get("edge_pair_keys_json") or []
+        if key in pair_by_key
+    ]
+    names_by_id: dict[int, str] = {}
+    probabilities: list[float] = []
+    review_scores: list[float] = []
+    for edge in edges:
+        evidence = edge.get("evidence_json") or {}
+        names_by_id[int(edge["person_id_l"])] = _person_name_from_evidence(evidence, "left")
+        names_by_id[int(edge["person_id_r"])] = _person_name_from_evidence(evidence, "right")
+        if edge.get("match_probability") is not None:
+            probabilities.append(float(edge["match_probability"]))
+        if edge.get("review_score") is not None:
+            review_scores.append(float(edge["review_score"]))
+    ids = [int(value) for value in group.get("person_ids_json") or []]
+    all_rule_clear = bool(edges) and all(
+        edge.get("deterministic_tier") in _PERSON_CLEAR_TIERS for edge in edges
+    )
+    guarded = group.get("guard_status") not in (None, "", "clear")
+    probability = min(probabilities) if probabilities else None
+    review_score = min(review_scores) if review_scores else None
+    return {
+        "case_id": group["case_id"],
+        "kind": "group",
+        "person_ids": ids,
+        "names": [names_by_id.get(value, f"Person {value}") for value in ids],
+        "lane": (
+            "possible_splits"
+            if guarded
+            else "likely_duplicates"
+            if all_rule_clear
+            else "other_matches"
+        ),
+        "tier": "group",
+        "source": "rule" if all_rule_clear else "splink",
+        "score_band": (
+            "very_high"
+            if probability is not None and probability >= 0.90
+            else "high"
+            if probability is not None and probability >= 0.70
+            else "possible"
+            if probability is not None and probability >= 0.50
+            else None
+        ),
+        "match_probability": probability,
+        "review_score": review_score,
+        "review_rank": min(
+            (int(edge["review_rank"]) for edge in edges if edge.get("review_rank") is not None),
+            default=None,
+        ),
+        "review_percentile": min(
+            (
+                float(edge["review_percentile"])
+                for edge in edges
+                if edge.get("review_percentile") is not None
+            ),
+            default=None,
+        ),
+        "priority_band": next(
+            (edge.get("priority_band") for edge in edges if edge.get("priority_band")),
+            None,
+        ),
+        "career": {
+            "first_year": group.get("first_year"),
+            "last_year": group.get("last_year"),
+            "combined_span_years": group.get("implied_career_years"),
+        },
+        "reasons": group.get("reasons_json") or [],
+        "guard_status": group.get("guard_status"),
+    }
+
+
+def _active_person_link_state(
+    clog: sqlite3.Connection,
+) -> tuple[list[dict[str, Any]], dict[int, int], set[frozenset[int]]]:
+    links = corrections_db.active_reference_links(clog, "person")
+    parent: dict[int, int] = {}
+
+    def find(value: int) -> int:
+        parent.setdefault(value, value)
+        if parent[value] != value:
+            parent[value] = find(parent[value])
+        return parent[value]
+
+    for link in links:
+        if link["rel"] == "same_as":
+            left, right = find(int(link["from_id"])), find(int(link["to_id"]))
+            if left != right:
+                low, high = sorted((left, right))
+                parent[high] = low
+    for value in list(parent):
+        parent[value] = find(value)
+    distinct = {
+        frozenset(
+            (
+                parent.get(int(link["from_id"]), int(link["from_id"])),
+                parent.get(int(link["to_id"]), int(link["to_id"])),
+            )
+        )
+        for link in links
+        if link["rel"] == "distinct"
+    }
+    return links, parent, distinct
+
+
+def _latest_person_events(clog: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for event in corrections_db.person_review_events(clog):
+        case_id = event.get("case_id")
+        if case_id and case_id not in latest:
+            latest[str(case_id)] = event
+    return latest
+
+
+def _person_case_status(
+    case: dict[str, Any],
+    parent: dict[int, int],
+    distinct: set[frozenset[int]],
+    latest_events: dict[str, dict[str, Any]],
+) -> str:
+    event = latest_events.get(case["case_id"])
+    if event and event["action"] in {"defer", "flag_split"}:
+        return str(event["action"])
+    if event and event["action"] == "revoke":
+        return "revoked"
+    ids = [int(value) for value in case.get("person_ids") or []]
+    if len(ids) >= 2:
+        roots = {parent.get(value, value) for value in ids}
+        if len(roots) == 1:
+            return "same_as"
+        pairs = [
+            frozenset(
+                (
+                    parent.get(left, left),
+                    parent.get(right, right),
+                )
+            )
+            for left, right in itertools.combinations(ids, 2)
+        ]
+        if pairs and all(pair in distinct for pair in pairs):
+            return "distinct"
+    return "open"
+
+
+def _person_identity_case_is_open(
+    case_id: str,
+    person_ids: list[int],
+    parent: dict[int, int],
+    distinct: set[frozenset[int]],
+    latest: dict[str, dict[str, Any]],
+) -> bool:
+    """Whether Database should treat this case as still waiting.
+
+    Same rule as the People lanes: a reopen returns the case to open. Presence
+    in ``latest`` is not a close — defer/flag_split/links are.
+    """
+    return (
+        _person_case_status(
+            {"case_id": case_id, "person_ids": person_ids},
+            parent,
+            distinct,
+            latest,
+        )
+        == "open"
+    )
+
+
+def _person_cache_groups(
+    cache: sqlite3.Connection,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Load the small group projection plus only the pair edges it references."""
+    groups = [
+        _decode_person_group(row)
+        for row in cache.execute("SELECT * FROM person_group_projection")
+    ]
+    edge_keys = sorted(
+        {
+            key
+            for group in groups
+            for key in group.get("edge_pair_keys_json") or []
+        }
+    )
+    if not edge_keys:
+        return groups, {}
+    marks = ",".join("?" for _ in edge_keys)
+    pairs = [
+        _decode_person_pair(row)
+        for row in cache.execute(
+            f"SELECT * FROM person_pair_suggestion WHERE pair_key IN ({marks})",
+            edge_keys,
+        )
+    ]
+    return groups, {str(row["pair_key"]): row for row in pairs}
+
+
+def _person_cache_stale(run: dict[str, Any]) -> dict[str, Any]:
+    current_hash = (
+        person_cache.sha256_path(PERSON_MODEL_PATH) if PERSON_MODEL_PATH.exists() else None
+    )
+    model_changed = current_hash != run.get("model_sha256")
+    comparison_changed = (
+        run.get("comparison_rule_version") != person_cache.COMPARISON_RULE_VERSION
+    )
+    deterministic_changed = (
+        run.get("deterministic_rule_version")
+        != person_cache.DETERMINISTIC_RULE_VERSION
+    )
+    diagnostics_changed = (
+        run.get("diagnostic_rule_version")
+        != person_cache.DIAGNOSTIC_RULE_VERSION
+    )
+    source_path = (
+        DERIVED_ROOT
+        / "05_db_candidate_matches/source_entry_db_link_candidates.jsonl"
+    )
+    current_source_hash = (
+        f"sha256:{person_cache.sha256_path(source_path)}" if source_path.exists() else ""
+    )
+    source_pointers_changed = (
+        str(run.get("source_pointer_fingerprint") or "") != current_source_hash
+    )
+    try:
+        db_newer = db_path().stat().st_mtime > datetime.fromisoformat(
+            str(run["run_timestamp"]).replace("Z", "+00:00")
+        ).timestamp()
+    except (OSError, ValueError, KeyError):
+        db_newer = True
+    return {
+        "stale": bool(
+            model_changed
+            or comparison_changed
+            or deterministic_changed
+            or diagnostics_changed
+            or source_pointers_changed
+            or db_newer
+        ),
+        "model_changed": model_changed,
+        "comparison_rules_changed": comparison_changed,
+        "deterministic_rules_changed": deterministic_changed,
+        "diagnostic_rules_changed": diagnostics_changed,
+        "source_pointers_changed": source_pointers_changed,
+        "database_newer_than_cache": db_newer,
+    }
+
+
+def _person_split_flag(
+    latest: dict[str, dict[str, Any]], person_id: int
+) -> dict[str, Any] | None:
+    """Active flag_split for one entered row, regardless of which case stored it.
+
+    The People UI remaps a one-person flag to ``split:<id>``, but the API
+    records under whatever case_id was posted. Summary already counts any
+    latest ``flag_split``; Database and the picker must use the same scan.
+    A reopen (or any later non-flag action) on that case clears the flag.
+    """
+    wanted = int(person_id)
+    matches = [
+        event
+        for event in latest.values()
+        if event.get("action") == "flag_split"
+        and wanted in {int(value) for value in (event.get("person_ids") or [])}
+    ]
+    if not matches:
+        return None
+    event = max(
+        matches,
+        key=lambda item: (str(item.get("created_at") or ""), str(item.get("event_id") or "")),
+    )
+    return {
+        "person_id": wanted,
+        "case_id": str(event.get("case_id") or f"split:{wanted}"),
+        "created_by": event.get("created_by") or "",
+        "created_at": event.get("created_at") or "",
+        "rationale": event.get("rationale") or "",
+    }
+
+
+def _person_identity_suppressed_case_ids(
+    run: dict[str, Any],
+    latest: dict[str, dict[str, Any]],
+    groups: list[tuple[str, list[int], list[str]]],
+) -> set[str]:
+    """Labeling-round cases must not appear as Database identity hints.
+
+    One membership test already gates blind detail, the standard-decision 409,
+    lane counts and summary. Identity open_cases uses the same set, plus any
+    group whose edges include an open packet pair — opening that group from
+    Database would unblind the packet edge. Unrelated groups on the same
+    person stay visible: that is other work, not the round.
+    """
+    open_pairs = _person_labeling_open_case_ids(run, latest)
+    suppressed = set(open_pairs)
+    packet_keys = {case_id.removeprefix("pair:") for case_id in open_pairs}
+    if not packet_keys:
+        return suppressed
+    for case_id, _members, edge_keys in groups:
+        if packet_keys.intersection(edge_keys):
+            suppressed.add(case_id)
+    return suppressed
+
+
+def _person_identity_hint(status: dict[str, Any]) -> dict[str, Any]:
+    """Browse/picker summary of identity_status — no scores, no tiers."""
+    flags = status.get("split_flags") or []
+    return {
+        "open_count": status["open_count"],
+        "linked_count": len(status["person_ids"]),
+        "case_id": (
+            status["open_cases"][0]
+            if status["open_cases"]
+            else (flags[0]["case_id"] if flags else None)
+        ),
+        "split_flagged": bool(flags),
+    }
+
+
+def _person_hits_with_identity(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Attach identity_hint to person-search / same-surname hits."""
+    if not hits:
+        return hits
+    identity = person_identity_statuses([int(hit["person_id"]) for hit in hits])
+    for hit in hits:
+        hit["identity_hint"] = _person_identity_hint(identity[int(hit["person_id"])])
+    return hits
+
+
+def _person_identity_payload(
+    *,
+    available: bool,
+    person_id: int,
+    family: list[int],
+    links: list[dict[str, Any]],
+    latest: dict[str, dict[str, Any]],
+    open_cases: list[str],
+) -> dict[str, Any]:
+    flag = _person_split_flag(latest, person_id)
+    return {
+        "available": available,
+        "person_ids": family,
+        "active_links": [
+            link
+            for link in links
+            if int(link["from_id"]) in family or int(link["to_id"]) in family
+        ],
+        "open_cases": open_cases[:12],
+        "open_count": len(open_cases),
+        "split_flags": [flag] if flag else [],
+    }
+
+
+def person_identity_statuses(person_ids: list[int]) -> dict[int, dict[str, Any]]:
+    """Reviewed identity families, split flags, and open cases for entered rows."""
+    wanted = sorted({int(value) for value in person_ids})
+    if not wanted:
+        return {}
+    if not person_linkage_enabled():
+        return {
+            person_id: _person_identity_payload(
+                available=False,
+                person_id=person_id,
+                family=[person_id],
+                links=[],
+                latest={},
+                open_cases=[],
+            )
+            for person_id in wanted
+        }
+    clog = open_corrections()
+    try:
+        links, parent, distinct = _active_person_link_state(clog)
+        latest = _latest_person_events(clog)
+    finally:
+        clog.close()
+    families: dict[int, list[int]] = {}
+    for person_id in wanted:
+        root = parent.get(person_id, person_id)
+        families[person_id] = sorted(
+            value for value in set(parent) | {person_id} if parent.get(value, value) == root
+        )
+    if not PERSON_CACHE_PATH.exists():
+        return {
+            person_id: _person_identity_payload(
+                available=False,
+                person_id=person_id,
+                family=families[person_id],
+                links=links,
+                latest=latest,
+                open_cases=[],
+            )
+            for person_id in wanted
+        }
+    cache = open_person_cache()
+    try:
+        run_row = cache.execute("SELECT * FROM cache_run LIMIT 1").fetchone()
+        run = dict(run_row) if run_row else {}
+        marks = ",".join("?" for _ in wanted)
+        pair_rows = cache.execute(
+            f"""
+            SELECT pair_key,person_id_l,person_id_r,deterministic_tier,match_probability
+            FROM person_pair_suggestion
+            WHERE person_id_l IN ({marks}) OR person_id_r IN ({marks})
+            ORDER BY match_probability DESC
+            """,
+            (*wanted, *wanted),
+        ).fetchall()
+        group_rows = cache.execute(
+            "SELECT group_key, person_ids_json, edge_pair_keys_json FROM person_group_projection"
+        ).fetchall()
+    finally:
+        cache.close()
+    groups = [
+        (
+            f"group:{row['group_key']}",
+            [int(value) for value in json.loads(row["person_ids_json"])],
+            [str(value) for value in json.loads(row["edge_pair_keys_json"])],
+        )
+        for row in group_rows
+    ]
+    projected_pair_keys = {key for _, _, keys in groups for key in keys}
+    suppressed = _person_identity_suppressed_case_ids(run, latest, groups)
+    result: dict[int, dict[str, Any]] = {}
+    for person_id in wanted:
+        open_cases = [
+            case_id
+            for case_id, members, _ in groups
+            if person_id in members
+            and _person_identity_case_is_open(case_id, members, parent, distinct, latest)
+            and case_id not in suppressed
+        ]
+        open_cases.extend(
+            f"pair:{row['pair_key']}"
+            for row in pair_rows
+            if person_id in (int(row["person_id_l"]), int(row["person_id_r"]))
+            and _person_identity_case_is_open(
+                f"pair:{row['pair_key']}",
+                [int(row["person_id_l"]), int(row["person_id_r"])],
+                parent,
+                distinct,
+                latest,
+            )
+            and f"pair:{row['pair_key']}" not in suppressed
+            and str(row["pair_key"]) not in projected_pair_keys
+            and row["deterministic_tier"] not in _PERSON_CLEAR_TIERS
+            and (
+                row["deterministic_tier"] in _PERSON_CAUTION_TIERS
+                or (
+                    row["deterministic_tier"] != "distinct_strong"
+                    and row["match_probability"] is not None
+                    and float(row["match_probability"]) >= 0.50
+                )
+            )
+        )
+        open_cases = list(dict.fromkeys(open_cases))
+        result[person_id] = _person_identity_payload(
+            available=True,
+            person_id=person_id,
+            family=families[person_id],
+            links=links,
+            latest=latest,
+            open_cases=open_cases,
+        )
+    return result
+
+
+def person_identity_status(person_id: int) -> dict[str, Any]:
+    """Reviewed identity family, split flag, and open cases for one entered row."""
+    return person_identity_statuses([person_id])[person_id]
+
+
+@app.get("/api/person-linkage/summary")
+def person_linkage_summary() -> dict[str, Any]:
+    if not person_linkage_enabled():
+        return {
+            "available": False,
+            "disabled": True,
+            "lanes": {},
+            "decisions": {},
+            "stale": {"stale": False},
+        }
+    if not PERSON_CACHE_PATH.exists():
+        return {"available": False, "lanes": {}, "decisions": {}, "stale": {"stale": True}}
+    cache = open_person_cache()
+    try:
+        run = dict(cache.execute("SELECT * FROM cache_run LIMIT 1").fetchone())
+        groups, pair_by_key = _person_cache_groups(cache)
+        tier_counts = {
+            row["tier"]: int(row["n"])
+            for row in cache.execute(
+                """
+                SELECT COALESCE(deterministic_tier,'model_only') AS tier, COUNT(*) AS n
+                FROM person_pair_suggestion GROUP BY deterministic_tier
+                """
+            )
+        }
+    finally:
+        cache.close()
+    clear_groups = [
+        group
+        for group in groups
+        if group.get("guard_status") == "clear"
+        and group.get("edge_pair_keys_json")
+        and all(
+            pair_by_key.get(key, {}).get("deterministic_tier") in _PERSON_CLEAR_TIERS
+            for key in group["edge_pair_keys_json"]
+        )
+    ]
+    projected_edges = {
+        key for group in groups for key in group.get("edge_pair_keys_json") or []
+    }
+    projected_clear_edges = sum(
+        pair_by_key.get(key, {}).get("deterministic_tier") in _PERSON_CLEAR_TIERS
+        for key in projected_edges
+    )
+    projected_other_edges = len(projected_edges) - projected_clear_edges
+    cache = open_person_cache()
+    try:
+        all_high_concordance = int(
+            cache.execute(
+                "SELECT COUNT(*) FROM person_pair_suggestion WHERE high_concordance=1"
+            ).fetchone()[0]
+        )
+    finally:
+        cache.close()
+    high_concordance_pairs = all_high_concordance - sum(
+        bool(pair_by_key.get(key, {}).get("high_concordance"))
+        for key in projected_edges
+    )
+    raw_other = tier_counts.get("review", 0) + tier_counts.get("model_only", 0)
+    lane_counts: Counter[str] = Counter(
+        {
+            # Recounted below once decision events are known: only undecided
+            # (or reopened) packet cases from the current run stay in the round.
+            "labeling_round": 0,
+            "likely_duplicates": len(clear_groups),
+            "read_source": tier_counts.get("caution_coappearance", 0)
+            + tier_counts.get("caution_posthumous_conflict", 0)
+            + tier_counts.get("caution_gf_conflict", 0),
+            "high_concordance": high_concordance_pairs,
+            "rule_exclusions": tier_counts.get("distinct_strong", 0),
+            "other_matches": raw_other - projected_other_edges
+            - high_concordance_pairs + (len(groups) - len(clear_groups)),
+            "possible_splits": len(_person_split_previews()),
+        }
+    )
+    clog = open_corrections()
+    try:
+        links, parent, distinct = _active_person_link_state(clog)
+        events = corrections_db.person_review_events(clog)
+        latest = _latest_person_events(clog)
+    finally:
+        clog.close()
+    packet_rows = _person_labeling_packet_rows()
+    lane_counts["labeling_round"] = len(_person_labeling_open_case_ids(run, latest))
+    # Human decisions are few and carry their case id; subtract them from the
+    # corresponding source lane without materialising all 15,637 suggestions.
+    decided = 0
+    group_map = {group["case_id"]: group for group in groups}
+    split_map = {case["case_id"]: case for case in _person_split_previews()}
+    cache = open_person_cache()
+    try:
+        for case_id, event in latest.items():
+            if event["action"] in {"reopen", "bulk_rule_ack"}:
+                continue
+            lane = None
+            if case_id in group_map:
+                lane = _person_group_preview(group_map[case_id], pair_by_key)["lane"]
+            elif case_id in split_map:
+                lane = "possible_splits"
+            elif case_id.startswith("pair:"):
+                row = cache.execute(
+                    "SELECT * FROM person_pair_suggestion WHERE pair_key=?",
+                    (case_id.removeprefix("pair:"),),
+                ).fetchone()
+                if row:
+                    lane = _person_pair_lane(_decode_person_pair(row))
+            if lane:
+                lane_counts[lane] = max(0, lane_counts[lane] - 1)
+                decided += 1
+    finally:
+        cache.close()
+    lane_counts["decided"] = decided
+    return {
+        "available": True,
+        "run": run,
+        "stale": _person_cache_stale(run),
+        "labeling_packet_available": PERSON_LABELING_PACKET_PATH.is_file(),
+        "labeling_packet_stale": bool(packet_rows)
+        and not _person_labeling_packet_matches_run(packet_rows, run),
+        "lanes": dict(lane_counts),
+        "decisions": {
+            "active_links": len(links),
+            "same_as": sum(link["rel"] == "same_as" for link in links),
+            "distinct": sum(link["rel"] == "distinct" for link in links),
+            "events": len(events),
+            "deferred": sum(event["action"] == "defer" for event in latest.values()),
+            "split_flags": sum(event["action"] == "flag_split" for event in latest.values()),
+        },
+    }
+
+
+def _person_split_previews() -> list[dict[str, Any]]:
+    from workflows.person_features import classify_entity_kind
+
+    connection = open_db()
+    try:
+        rows = connection.execute(
+            """
+            SELECT p.person_id, p.first_name, p.father_mother, p.grandfather,
+                   p.last_name, p.nickname,
+                   MIN(CAST(substr(c.registration_date,1,4) AS INTEGER)) AS first_year,
+                   MAX(CAST(substr(c.registration_date,1,4) AS INTEGER)) AS last_year,
+                   COUNT(*) AS appearances
+            FROM person p
+            JOIN investor i ON i.person_id=p.person_id AND i.is_deleted=0
+            JOIN contract c ON c.contract_id=i.contract_id AND c.is_deleted=0
+            WHERE p.is_deleted=0 AND COALESCE(i.heirs_of,0)=0
+              AND c.registration_date NOT IN ('', '0000-00-00')
+            GROUP BY p.person_id
+            HAVING last_year-first_year > 60
+            ORDER BY last_year-first_year DESC
+            """
+        ).fetchall()
+        return [
+            {
+                "case_id": f"split:{row['person_id']}",
+                "kind": "split",
+                "person_ids": [int(row["person_id"])],
+                "names": [
+                    person_display_name(
+                        row["first_name"],
+                        row["last_name"],
+                        row["nickname"],
+                        row["father_mother"],
+                        row["grandfather"],
+                    )
+                ],
+                "lane": "possible_splits",
+                "tier": "career_span",
+                "source": "rule",
+                "score_band": None,
+                "match_probability": None,
+                "career": {
+                    "first_year": row["first_year"],
+                    "last_year": row["last_year"],
+                    "combined_span_years": row["last_year"] - row["first_year"],
+                },
+                "reasons": [
+                    f"the entered record spans {row['last_year']-row['first_year']} years"
+                ],
+            }
+            for row in rows
+            if classify_entity_kind(
+                row["first_name"],
+                row["father_mother"],
+                row["grandfather"],
+                row["last_name"],
+            )
+            == "person"
+        ]
+    finally:
+        connection.close()
+
+
+@app.get("/api/person-linkage/cases")
+def person_linkage_cases(
+    lane: str = "likely_duplicates",
+    status: str = "open",
+    priority_band: str = "All",
+    q: str = "",
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    if not person_linkage_enabled():
+        raise HTTPException(status_code=404, detail="Person identity review is not enabled.")
+    cache = open_person_cache()
+    run = dict(cache.execute("SELECT * FROM cache_run LIMIT 1").fetchone())
+    groups, pair_by_key = _person_cache_groups(cache)
+    clear_groups = [
+        group
+        for group in groups
+        if group.get("edge_pair_keys_json")
+        and group.get("guard_status") == "clear"
+        and all(
+            pair_by_key.get(key, {}).get("deterministic_tier") in _PERSON_CLEAR_TIERS
+            for key in group["edge_pair_keys_json"]
+        )
+    ]
+    projected_edge_keys = {
+        key for group in groups for key in group.get("edge_pair_keys_json") or []
+    }
+    model_groups = [group for group in groups if group not in clear_groups]
+    clog = open_corrections()
+    try:
+        _, parent, distinct = _active_person_link_state(clog)
+        latest = _latest_person_events(clog)
+    finally:
+        clog.close()
+    # Pairs frozen in the open blind round must vanish from their natural
+    # lanes: seeing one both blinded and scored would defeat the round.
+    open_round_pair_keys = {
+        case_id.removeprefix("pair:")
+        for case_id in _person_labeling_open_case_ids(run, latest)
+    }
+
+    def group_in_open_round(group: dict[str, Any]) -> bool:
+        return any(
+            key in open_round_pair_keys
+            for key in group.get("edge_pair_keys_json") or []
+        )
+
+    def reserved_for_labeling_count() -> int:
+        """Open-round cases whose NATURAL lane is the requested one.
+
+        The lane badge counts what the lane holds; the listing hides what the
+        blind round has frozen. Without this number the two disagree with no
+        explanation — a badge of 15 over "No open cases". It is deliberately
+        independent of the status/band/search filters: the promise is "N cases
+        of this lane's kind are in the round", not "N would have matched your
+        current filters".
+        """
+        if lane in {"labeling_round", "decided"} or not open_round_pair_keys:
+            return 0
+        reserved = 0
+        if lane == "likely_duplicates":
+            return sum(1 for group in clear_groups if group_in_open_round(group))
+        if lane in {"possible_splits", "other_matches"}:
+            reserved += sum(
+                1
+                for group in model_groups
+                if group_in_open_round(group)
+                and _person_group_preview(group, pair_by_key)["lane"] == lane
+            )
+        if lane == "possible_splits":
+            return reserved
+        lane_condition = {
+            "read_source": (
+                "deterministic_tier IN "
+                "('caution_coappearance','caution_posthumous_conflict','caution_gf_conflict')"
+            ),
+            "high_concordance": "high_concordance=1",
+            "rule_exclusions": "deterministic_tier='distinct_strong'",
+            "other_matches": (
+                "(deterministic_tier='review' OR deterministic_tier IS NULL) "
+                "AND high_concordance=0"
+            ),
+        }[lane]
+        # A packet pair that is also a projected group edge belongs to its
+        # group's lane, so it must not count here as well.
+        keys = sorted(open_round_pair_keys - projected_edge_keys)
+        if not keys:
+            return reserved
+        marks = ",".join("?" for _ in keys)
+        reserved += int(
+            cache.execute(
+                f"SELECT COUNT(*) FROM person_pair_suggestion "
+                f"WHERE ({lane_condition}) AND pair_key IN ({marks})",
+                keys,
+            ).fetchone()[0]
+        )
+        return reserved
+
+    reserved_for_labeling = reserved_for_labeling_count()
+
+    query = q.strip().lower()
+
+    def keep_preview(case: dict[str, Any]) -> bool:
+        case["status"] = _person_case_status(case, parent, distinct, latest)
+        if lane == "decided":
+            if case["status"] == "open":
+                return False
+        elif status != "All" and case["status"] != status:
+            return False
+        if priority_band != "All" and case.get("priority_band") != priority_band:
+            return False
+        if query and not (
+            query in " ".join(case.get("names") or []).lower()
+            or query in " ".join(str(value) for value in case.get("person_ids") or [])
+        ):
+            return False
+        return True
+
+    if lane == "labeling_round":
+        cases: list[dict[str, Any]] = []
+        packet_rows = _person_labeling_packet_rows()
+        packet_run_ids = {
+            str(row.get("run_id")) for row in packet_rows if row.get("run_id")
+        }
+        if packet_run_ids and packet_run_ids != {str(run["run_id"])}:
+            cache.close()
+            raise HTTPException(
+                status_code=409,
+                detail="The frozen labeling packet does not match this suggestion cache. Regenerate it before review.",
+            )
+        for packet_row in packet_rows:
+            pair_key_value = str(packet_row["pair_key"])
+            row = cache.execute(
+                "SELECT * FROM person_pair_suggestion WHERE pair_key=?",
+                (pair_key_value,),
+            ).fetchone()
+            if not row:
+                continue
+            pair = _decode_person_pair(row)
+            evidence = pair.get("evidence_json") or {}
+            # Built from scratch rather than by stripping the standard preview:
+            # a blacklist fails open the moment the preview grows a new scoring
+            # field, while a whitelist keeps it out until deliberately admitted.
+            preview = {
+                "case_id": pair["case_id"],
+                "lane": "labeling_round",
+                "person_ids": [int(pair["person_id_l"]), int(pair["person_id_r"])],
+                "names": [
+                    _person_name_from_evidence(evidence, "left"),
+                    _person_name_from_evidence(evidence, "right"),
+                ],
+                "career": pair.get("career_span_json") or {},
+            }
+            if keep_preview(preview):
+                preview["is_reviewed"] = preview["status"] != "open"
+                cases.append(preview)
+        cache.close()
+        return {
+            "available": True,
+            "run": run,
+            "stale": _person_cache_stale(run),
+            "total": len(cases),
+            "offset": offset,
+            "cases": cases[offset : offset + limit],
+            "blind_labeling": True,
+            "reserved_for_labeling": reserved_for_labeling,
+        }
+
+    if lane == "decided":
+        group_map = {group["case_id"]: group for group in groups}
+        split_map = {case["case_id"]: case for case in _person_split_previews()}
+        cases: list[dict[str, Any]] = []
+        for case_id in latest:
+            if case_id in group_map:
+                preview = _person_group_preview(group_map[case_id], pair_by_key)
+            elif case_id in split_map:
+                preview = split_map[case_id]
+            elif case_id.startswith("pair:"):
+                row = cache.execute(
+                    "SELECT * FROM person_pair_suggestion WHERE pair_key=?",
+                    (case_id.removeprefix("pair:"),),
+                ).fetchone()
+                if not row:
+                    continue
+                preview = _person_pair_preview(_decode_person_pair(row))
+            else:
+                continue
+            if keep_preview(preview):
+                cases.append(preview)
+        cache.close()
+        cases.sort(key=lambda case: tuple(case.get("person_ids") or []))
+        return {
+            "available": True,
+            "run": run,
+            "stale": _person_cache_stale(run),
+            "total": len(cases),
+            "offset": offset,
+            "cases": cases[offset : offset + limit],
+            "reserved_for_labeling": reserved_for_labeling,
+        }
+
+    group_cases: list[dict[str, Any]] = []
+    if lane == "likely_duplicates":
+        group_cases = [
+            preview
+            for preview in (
+                _person_group_preview(group, pair_by_key)
+                for group in clear_groups
+                if not group_in_open_round(group)
+            )
+            if keep_preview(preview)
+        ]
+    elif lane == "possible_splits":
+        group_cases = [case for case in _person_split_previews() if keep_preview(case)]
+        group_cases.extend(
+            preview
+            for preview in (
+                _person_group_preview(group, pair_by_key)
+                for group in model_groups
+                if not group_in_open_round(group)
+            )
+            if preview["lane"] == "possible_splits" and keep_preview(preview)
+        )
+    elif lane == "other_matches":
+        group_cases = [
+            preview
+            for preview in (
+                _person_group_preview(group, pair_by_key)
+                for group in model_groups
+                if not group_in_open_round(group)
+            )
+            if preview["lane"] == "other_matches" and keep_preview(preview)
+        ]
+    group_cases.sort(
+        key=lambda case: (
+            -(float(case.get("review_score") or -1)),
+            tuple(case.get("person_ids") or []),
+        )
+    )
+
+    if lane in {"likely_duplicates", "possible_splits"}:
+        cache.close()
+        return {
+            "available": True,
+            "run": run,
+            "stale": _person_cache_stale(run),
+            "total": len(group_cases),
+            "offset": offset,
+            "cases": group_cases[offset : offset + limit],
+            "reserved_for_labeling": reserved_for_labeling,
+        }
+
+    where: list[str] = []
+    params: list[Any] = []
+    if lane == "read_source":
+        where.append(
+            "deterministic_tier IN "
+            "('caution_coappearance','caution_posthumous_conflict','caution_gf_conflict')"
+        )
+    elif lane == "high_concordance":
+        where.append("high_concordance=1")
+    elif lane == "rule_exclusions":
+        where.append("deterministic_tier='distinct_strong'")
+    else:
+        where.append(
+            "(deterministic_tier='review' OR deterministic_tier IS NULL) "
+            "AND high_concordance=0"
+        )
+    if projected_edge_keys:
+        marks = ",".join("?" for _ in projected_edge_keys)
+        where.append(f"pair_key NOT IN ({marks})")
+        params.extend(sorted(projected_edge_keys))
+    if open_round_pair_keys:
+        marks = ",".join("?" for _ in open_round_pair_keys)
+        where.append(f"pair_key NOT IN ({marks})")
+        params.extend(sorted(open_round_pair_keys))
+    if priority_band != "All":
+        where.append("priority_band=?")
+        params.append(priority_band)
+    if query:
+        where.append(
+            "(lower(evidence_json) LIKE ? OR CAST(person_id_l AS TEXT)=? OR CAST(person_id_r AS TEXT)=?)"
+        )
+        params.extend([f"%{query}%", query, query])
+    decided_pair_keys = [
+        case_id.removeprefix("pair:")
+        for case_id, event in latest.items()
+        if case_id.startswith("pair:") and event.get("action") != "reopen"
+    ]
+    if status == "open" and decided_pair_keys:
+        marks = ",".join("?" for _ in decided_pair_keys)
+        where.append(f"pair_key NOT IN ({marks})")
+        params.extend(decided_pair_keys)
+    where_sql = " AND ".join(f"({fragment})" for fragment in where)
+    pair_total = int(
+        cache.execute(
+            f"SELECT COUNT(*) FROM person_pair_suggestion WHERE {where_sql}", params
+        ).fetchone()[0]
+    )
+    group_offset = min(offset, len(group_cases))
+    group_page = group_cases[group_offset : group_offset + limit]
+    remaining = limit - len(group_page)
+    pair_offset = max(0, offset - len(group_cases))
+    pair_cases: list[dict[str, Any]] = []
+    if remaining:
+        rows = cache.execute(
+            f"""
+            SELECT * FROM person_pair_suggestion
+            WHERE {where_sql}
+            ORDER BY review_score DESC, person_id_l, person_id_r
+            LIMIT ? OFFSET ?
+            """,
+            (*params, remaining, pair_offset),
+        ).fetchall()
+        pair_cases = [_person_pair_preview(_decode_person_pair(row)) for row in rows]
+        pair_cases = [case for case in pair_cases if keep_preview(case)]
+    cache.close()
+    return {
+        "available": True,
+        "run": run,
+        "stale": _person_cache_stale(run),
+        "total": len(group_cases) + pair_total,
+        "offset": offset,
+        "cases": group_page + pair_cases,
+        "reserved_for_labeling": reserved_for_labeling,
+    }
+
+
+def _person_card(connection: sqlite3.Connection, person_id: int) -> dict[str, Any]:
+    person = connection.execute(
+        "SELECT * FROM person WHERE person_id=?", (person_id,)
+    ).fetchone()
+    if not person:
+        return {
+            "person_id": person_id,
+            "display_name": f"Person {person_id} (no longer present)",
+            "fields": {
+                "first_name": None,
+                "father_mother": None,
+                "grandfather": None,
+                "last_name": None,
+                "nickname": None,
+                "is_woman": None,
+            },
+            "first_year": None,
+            "last_year": None,
+            "n_appearances": 0,
+            "appearances": [],
+            "role_profile": {"gp": 0, "lp": 0},
+            "context_profile": {
+                "professions": [],
+                "residences": [],
+                "origins": [],
+                "titles": [],
+                "father_mother_titles": [],
+                "grandfather_titles": [],
+                "husband_titles": [],
+                "economic_activities": [],
+            },
+            "unavailable": True,
+        }
+    data = dict(person)
+    appearances = connection.execute(
+        """
+        SELECT i.investor_id, i.contract_id, i.profession, i.heirs_of,
+               c.registration_date, c.firm_name, c.folder,
+               residence.place_name AS residence,
+               origin.place_name AS origin,
+               t.title_name AS title,
+               parent_title.title_name AS father_mother_title,
+               grandfather_title.title_name AS grandfather_title,
+               husband_title.title_name AS husband_title,
+               activity.activity AS economic_activity,
+               GROUP_CONCAT(DISTINCT inv.type) AS roles
+        FROM investor i
+        LEFT JOIN contract c ON c.contract_id=i.contract_id AND c.is_deleted=0
+        LEFT JOIN place residence ON residence.place_id=i.place_of_residence
+        LEFT JOIN place origin ON origin.place_id=i.place_of_origin
+        LEFT JOIN title t ON t.title_id=i.title
+        LEFT JOIN title parent_title ON parent_title.title_id=i.title_father_mother
+        LEFT JOIN title grandfather_title ON grandfather_title.title_id=i.title_grandfather
+        LEFT JOIN title husband_title ON husband_title.title_id=i.title_husband
+        LEFT JOIN economic_activity activity ON activity.ec_activity_id=c.economic_sector
+        LEFT JOIN investor_group ig ON ig.investor_id=i.investor_id AND ig.is_deleted=0
+        LEFT JOIN investment inv ON inv.investment_id=ig.investment_id AND inv.is_deleted=0
+        WHERE i.person_id=? AND i.is_deleted=0
+        GROUP BY i.investor_id
+        ORDER BY c.registration_date, i.contract_id
+        """,
+        (person_id,),
+    ).fetchall()
+    dated_living = [
+        int(str(row["registration_date"])[:4])
+        for row in appearances
+        if not row["heirs_of"]
+        and row["registration_date"] not in (None, "", "0000-00-00")
+    ]
+    role_profile = {"gp": 0, "lp": 0}
+    for row in appearances:
+        for role in str(row["roles"] or "").split(","):
+            if role.strip().lower() in role_profile:
+                role_profile[role.strip().lower()] += 1
+
+    def profile_values(column: str) -> list[str]:
+        return sorted(
+            {
+                str(row[column]).strip()
+                for row in appearances
+                if row[column] is not None and str(row[column]).strip()
+            },
+            key=str.casefold,
+        )
+
+    return {
+        "person_id": person_id,
+        "display_name": person_display_name(
+            data.get("first_name"),
+            data.get("last_name"),
+            data.get("nickname"),
+            data.get("father_mother"),
+            data.get("grandfather"),
+        ),
+        "fields": {
+            key: data.get(key)
+            for key in (
+                "first_name",
+                "father_mother",
+                "grandfather",
+                "last_name",
+                "nickname",
+                "is_woman",
+            )
+        },
+        "first_year": min(dated_living) if dated_living else None,
+        "last_year": max(dated_living) if dated_living else None,
+        "n_appearances": len(appearances),
+        "appearances": [dict(row) for row in appearances],
+        "role_profile": role_profile,
+        "context_profile": {
+            "professions": profile_values("profession"),
+            "residences": profile_values("residence"),
+            "origins": profile_values("origin"),
+            "titles": profile_values("title"),
+            "father_mother_titles": profile_values("father_mother_title"),
+            "grandfather_titles": profile_values("grandfather_title"),
+            "husband_titles": profile_values("husband_title"),
+            "economic_activities": profile_values("economic_activity"),
+        },
+        "unavailable": bool(data.get("is_deleted")),
+    }
+
+
+def _person_pair_by_key(cache: sqlite3.Connection, key: str) -> dict[str, Any]:
+    row = cache.execute(
+        "SELECT * FROM person_pair_suggestion WHERE pair_key=?", (key,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Person-linkage case not found.")
+    return _decode_person_pair(row)
+
+
+def _person_evidence_basis(
+    persons: list[dict[str, Any]],
+    pairs: list[dict[str, Any]],
+    group: dict[str, Any] | None,
+    contracts: list[dict[str, Any]],
+    run: dict[str, Any],
+    business_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "persons": [
+            {
+                "person_id": person["person_id"],
+                "fields": person["fields"],
+                "first_year": person["first_year"],
+                "last_year": person["last_year"],
+                "n_appearances": person["n_appearances"],
+                "appearances": person["appearances"],
+                "role_profile": person.get("role_profile"),
+                "context_profile": person.get("context_profile"),
+                "unavailable": person.get("unavailable", False),
+            }
+            for person in persons
+        ],
+        "group": group,
+        "pairs": [
+            {
+                "pair_key": pair.get("pair_key"),
+                "deterministic_tier": pair.get("deterministic_tier"),
+                "precedence_verdict": pair.get("precedence_verdict"),
+                "match_probability": pair.get("match_probability"),
+                "match_weight": pair.get("match_weight"),
+                "reasons": pair.get("reasons_json"),
+                "evidence": pair.get("evidence_json"),
+                "source_pointers": pair.get("source_pointers_json"),
+                "waterfall": pair.get("waterfall_contributions_json"),
+            }
+            for pair in pairs
+        ],
+        "provenance": run,
+        "business_context": business_context or {},
+        "shared_contracts": [
+            {
+                "contract_id": contract["contract_id"],
+                "document": contract.get("document"),
+                "document_sha256": hashlib.sha256(
+                    str(contract.get("document") or "").encode("utf-8")
+                ).hexdigest(),
+                "word_source_ids": [
+                    source.get("source_entry_id")
+                    for source in contract.get("word_sources") or []
+                ],
+            }
+            for contract in contracts
+        ],
+    }
+
+
+def _person_business_context(
+    connection: sqlite3.Connection,
+    person_ids: list[int],
+    persons: list[dict[str, Any]],
+    pairs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Resolve cached network ids/strings into reviewer-readable evidence."""
+    from workflows.person_features import normalize_name
+
+    shared_partner_ids = sorted(
+        {
+            int(partner_id)
+            for pair in pairs
+            for partner_id in pair.get("shared_partner_ids_json") or []
+        }
+    )
+    shared_words = sorted(
+        {
+            str(word)
+            for pair in pairs
+            for word in pair.get("shared_firm_words_json") or []
+        }
+    )
+    exact_firm_keys = sorted(
+        {
+            str(firm)
+            for pair in pairs
+            for firm in pair.get("shared_firms_json") or []
+        }
+    )
+
+    partners: list[dict[str, Any]] = []
+    for partner_id in shared_partner_ids:
+        partner = connection.execute(
+            """
+            SELECT person_id, first_name, father_mother, grandfather, last_name, nickname
+            FROM person WHERE person_id=?
+            """,
+            (partner_id,),
+        ).fetchone()
+        connections: dict[str, list[dict[str, Any]]] = {}
+        for subject_id in person_ids:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT c.contract_id, c.registration_date, c.firm_name
+                FROM investor subject
+                JOIN investor partner
+                  ON partner.contract_id=subject.contract_id
+                 AND partner.person_id=?
+                 AND partner.is_deleted=0
+                JOIN contract c
+                  ON c.contract_id=subject.contract_id AND c.is_deleted=0
+                WHERE subject.person_id=? AND subject.is_deleted=0
+                ORDER BY c.registration_date, c.contract_id
+                """,
+                (partner_id, subject_id),
+            ).fetchall()
+            connections[str(subject_id)] = [dict(row) for row in rows]
+        partners.append(
+            {
+                "person_id": partner_id,
+                "display_name": (
+                    person_display_name(
+                        partner["first_name"],
+                        partner["last_name"],
+                        partner["nickname"],
+                        partner["father_mother"],
+                        partner["grandfather"],
+                    )
+                    if partner
+                    else f"Person {partner_id}"
+                ),
+                "connections_by_person": connections,
+            }
+        )
+
+    exact_firms: list[dict[str, Any]] = []
+    for firm_key in exact_firm_keys:
+        by_person: dict[str, list[dict[str, Any]]] = {}
+        raw_names: list[str] = []
+        for person in persons:
+            matches = [
+                {
+                    "contract_id": appearance["contract_id"],
+                    "registration_date": appearance.get("registration_date"),
+                    "firm_name": appearance.get("firm_name"),
+                }
+                for appearance in person["appearances"]
+                if normalize_name(appearance.get("firm_name")) == firm_key
+            ]
+            by_person[str(person["person_id"])] = matches
+            raw_names.extend(
+                str(item["firm_name"]) for item in matches if item.get("firm_name")
+            )
+        exact_firms.append(
+            {
+                "normalized_name": firm_key,
+                "display_name": raw_names[0] if raw_names else firm_key,
+                "appearances_by_person": by_person,
+            }
+        )
+
+    firm_word_evidence = []
+    if shared_words and not exact_firms:
+        for person in persons:
+            matches = []
+            seen: set[tuple[int, str]] = set()
+            for appearance in person["appearances"]:
+                raw_name = str(appearance.get("firm_name") or "").strip()
+                normalized_tokens = set(normalize_name(raw_name).split())
+                matched = sorted(normalized_tokens & set(shared_words))
+                key = (int(appearance["contract_id"]), raw_name)
+                if raw_name and matched and key not in seen:
+                    seen.add(key)
+                    matches.append(
+                        {
+                            "contract_id": appearance["contract_id"],
+                            "registration_date": appearance.get("registration_date"),
+                            "firm_name": raw_name,
+                            "matched_words": matched,
+                        }
+                    )
+            firm_word_evidence.append(
+                {"person_id": person["person_id"], "firms": matches}
+            )
+
+    return {
+        "exact_firms": exact_firms,
+        "shared_partners": partners,
+        "shared_firm_words": shared_words,
+        "firm_word_evidence": firm_word_evidence,
+    }
+
+
+def _person_case_payload(case_id: str) -> dict[str, Any]:
+    if not person_linkage_enabled():
+        raise HTTPException(status_code=404, detail="Person identity review is not enabled.")
+    cache = open_person_cache()
+    try:
+        if case_id.startswith("pair:"):
+            pair = _person_pair_by_key(cache, case_id.removeprefix("pair:"))
+            ids = [int(pair["person_id_l"]), int(pair["person_id_r"])]
+            pair_rows = [pair]
+            group = None
+        elif case_id.startswith("group:"):
+            group_key = case_id.removeprefix("group:")
+            row = cache.execute(
+                "SELECT * FROM person_group_projection WHERE group_key=?", (group_key,)
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Person-linkage group not found.")
+            group = _decode_person_group(row)
+            ids = [int(value) for value in group["person_ids_json"]]
+            pair_rows = [
+                _person_pair_by_key(cache, key)
+                for key in group.get("edge_pair_keys_json") or []
+            ]
+        elif case_id.startswith("split:"):
+            ids = [int(case_id.removeprefix("split:"))]
+            pair_rows = []
+            group = None
+        else:
+            raise HTTPException(status_code=404, detail="Unknown person-linkage case.")
+        run = dict(cache.execute("SELECT * FROM cache_run LIMIT 1").fetchone())
+    finally:
+        cache.close()
+
+    connection = open_db()
+    try:
+        persons = [_person_card(connection, person_id) for person_id in ids]
+        business_context = _person_business_context(
+            connection, ids, persons, pair_rows
+        )
+        shared_contract_ids = sorted(
+            {
+                int(contract_id)
+                for pair in pair_rows
+                for contract_id in pair.get("shared_contract_ids_json") or []
+            }
+        )
+        contracts = []
+        for contract_id in shared_contract_ids:
+            contract = connection.execute(
+                """
+                SELECT contract_id, registration_date, firm_name, folio, document
+                FROM contract WHERE contract_id=? AND is_deleted=0
+                """,
+                (contract_id,),
+            ).fetchone()
+            if contract:
+                item = dict(contract)
+                item["document"] = clean_document(item.get("document"))
+                item["word_sources"] = linked_word_sources(f"contract:{contract_id}")
+                contracts.append(item)
+    finally:
+        connection.close()
+
+    clog = open_corrections()
+    try:
+        all_links, parent, distinct = _active_person_link_state(clog)
+        latest = _latest_person_events(clog)
+        links = [
+            link
+            for link in all_links
+            if int(link["from_id"]) in ids or int(link["to_id"]) in ids
+        ]
+        history = corrections_db.person_review_events(clog, case_id=case_id)
+        split_flagged_person_ids = [
+            person_id
+            for person_id in ids
+            if _person_split_flag(latest, person_id)
+        ]
+    finally:
+        clog.close()
+    case_status = _person_case_status(
+        {"case_id": case_id, "person_ids": ids}, parent, distinct, latest
+    )
+    probability_values = [
+        float(pair["match_probability"])
+        for pair in pair_rows
+        if pair.get("match_probability") is not None
+    ]
+    tier = (
+        pair_rows[0].get("deterministic_tier")
+        if len(pair_rows) == 1
+        else ("group" if pair_rows else "career_span")
+    )
+    latest_event = history[0] if history else None
+    evidence_basis = _person_evidence_basis(
+        persons, pair_rows, group, contracts, run, business_context
+    )
+    needs_recheck = bool(
+        latest_event
+        and person_cache.canonical_json(
+            {
+                key: (latest_event.get("evidence_snapshot") or {}).get(key)
+                for key in evidence_basis
+            }
+        )
+        != person_cache.canonical_json(evidence_basis)
+    )
+    if len(ids) == 1:
+        lane = "possible_splits"
+    elif group:
+        lane = _person_group_preview(
+            group, {str(pair["pair_key"]): pair for pair in pair_rows}
+        )["lane"]
+    else:
+        lane = _person_pair_lane(pair_rows[0])
+    return {
+        "case_id": case_id,
+        "kind": "group" if group else ("split" if len(ids) == 1 else "pair"),
+        "person_ids": ids,
+        "persons": persons,
+        "pairs": pair_rows,
+        "group": group,
+        "shared_contracts": contracts,
+        "business_context": business_context,
+        "split_flagged_person_ids": split_flagged_person_ids,
+        "active_links": links,
+        "history": history,
+        "status": case_status,
+        "latest_event_id": history[0]["event_id"] if history else None,
+        "tier": tier,
+        "lane": lane,
+        "match_probability": min(probability_values) if probability_values else None,
+        "run": run,
+        "stale": _person_cache_stale(run),
+        "needs_recheck": needs_recheck,
+        "evidence_basis": evidence_basis,
+    }
+
+
+def _person_blind_case_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Whitelist projection of a full case payload for the blind round.
+
+    Constructed from scratch rather than by deleting fields: a blacklist fails
+    open the moment the cache grows a new scoring column, while a whitelist
+    keeps any future addition invisible until it is deliberately admitted.
+    Only record-derived evidence survives — the labeler must judge from the
+    sources, never from the model's own routing.
+    """
+    persons = []
+    for person in payload["persons"]:
+        card = dict(person)
+        # The identity dashboard would reveal how many open cases the model
+        # routed to these rows, which is exactly the signal being labeled.
+        card.pop("identity_status", None)
+        persons.append(card)
+    pairs = [
+        {
+            "pair_key": pair.get("pair_key"),
+            "person_id_l": pair.get("person_id_l"),
+            "person_id_r": pair.get("person_id_r"),
+            "career_span_json": pair.get("career_span_json"),
+            "roles_json": pair.get("roles_json"),
+            "contract_pointers_json": pair.get("contract_pointers_json"),
+            "source_pointers_json": pair.get("source_pointers_json"),
+            "shared_contract_ids_json": pair.get("shared_contract_ids_json"),
+            "shared_firms_json": pair.get("shared_firms_json"),
+            "shared_firm_words_json": pair.get("shared_firm_words_json"),
+            "shared_partner_ids_json": pair.get("shared_partner_ids_json"),
+            "evidence_json": {
+                key: value
+                for key, value in (pair.get("evidence_json") or {}).items()
+                if key in _PERSON_BLIND_EVIDENCE_KEYS
+            },
+        }
+        for pair in payload["pairs"]
+    ]
+    # History events carry score-at-decision provenance (match_probability,
+    # model/cache hashes) and — for blind decisions — the labeling metadata
+    # whose stratum name encodes the sampling cell. A reopened case re-enters
+    # the round with its own prior decision in history, so events get the same
+    # whitelist treatment as pairs; only reviewer-authored content survives.
+    history = [
+        {
+            "event_id": event.get("event_id"),
+            "action": event.get("action"),
+            "person_ids": event.get("person_ids"),
+            "link_ids": event.get("link_ids"),
+            "rationale": event.get("rationale"),
+            "created_by": event.get("created_by"),
+            "created_at": event.get("created_at"),
+            "evidence_snapshot": {
+                key: value
+                for key, value in (event.get("evidence_snapshot") or {}).items()
+                if key == "citations"
+            },
+        }
+        for event in payload["history"]
+    ]
+    return {
+        "case_id": payload["case_id"],
+        # Case identity, not evidence: the decision dock reads person_ids and
+        # kind unconditionally (packet cases are always pairs), and the ids
+        # already appear on every person card and pair row.
+        "kind": payload["kind"],
+        "person_ids": payload["person_ids"],
+        "lane": "labeling_round",
+        "status": payload["status"],
+        # The bare event id carries no evidence; without it the client cannot
+        # send expected_event_id, and a reopened case could never be re-decided.
+        "latest_event_id": payload["latest_event_id"],
+        "persons": persons,
+        "pairs": pairs,
+        "shared_contracts": payload["shared_contracts"],
+        # Resolved partner names and dated firm co-appearances are main.db
+        # record evidence (built by _person_business_context from investor and
+        # contract rows) — the labeler is meant to weigh them; only the model's
+        # own routing stays hidden.
+        "business_context": payload["business_context"],
+        "history": history,
+    }
+
+
+@app.get("/api/person-linkage/cases/{case_id}")
+def person_linkage_case(case_id: str) -> dict[str, Any]:
+    payload = _person_case_payload(case_id)
+    clog = open_corrections()
+    try:
+        latest = _latest_person_events(clog)
+    finally:
+        clog.close()
+    if payload["case_id"] in _person_labeling_open_case_ids(payload["run"], latest):
+        return _person_blind_case_payload(payload)
+    return payload
+
+
+class PersonLinkageDecision(BaseModel):
+    reviewer: str = Field(min_length=1)
+    action: str
+    person_ids: list[int]
+    reason_code: str = ""
+    rationale: str = ""
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    expected_status: str
+    expected_event_id: str | None
+    review_mode: str = "standard"
+
+
+def _validate_person_decision_scope(case: dict[str, Any], ids: list[int], action: str) -> None:
+    expected = {int(value) for value in case["person_ids"]}
+    submitted = {int(value) for value in ids}
+    if not submitted or not submitted <= expected:
+        raise HTTPException(status_code=400, detail="Decision ids are outside this review case.")
+    if action in {"same_as", "distinct"} and len(submitted) < 2:
+        raise HTTPException(status_code=400, detail="This decision needs at least two people.")
+
+
+@app.post("/api/person-linkage/cases/{case_id}/decision")
+@serialized_write
+def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[str, Any]:
+    if not person_linkage_enabled():
+        raise HTTPException(status_code=403, detail="Person identity review is not enabled.")
+    if action.action not in {"same_as", "distinct", "defer", "reopen", "flag_split", "bulk_rule_ack"}:
+        raise HTTPException(status_code=400, detail="Unknown person identity decision.")
+    reviewer = action.reviewer.strip()
+    if not reviewer:
+        raise HTTPException(status_code=400, detail="Enter a reviewer before saving.")
+    if action.action == "defer" and not action.rationale.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Explain what evidence is still needed before deferring this case.",
+        )
+    case = _person_case_payload(case_id)
+    if action.review_mode != "blind_labeling":
+        clog = open_corrections()
+        try:
+            latest = _latest_person_events(clog)
+        finally:
+            clog.close()
+        if case_id in _person_labeling_open_case_ids(case["run"], latest):
+            # A standard decision would be made against the full payload and
+            # contaminate the blind label, so the round must be worked (or
+            # explicitly finished) before ordinary review resumes here.
+            raise HTTPException(
+                status_code=409,
+                detail="This case is in the frozen labeling round — decide it there, or finish the round first.",
+            )
+    if (
+        action.action == "same_as"
+        and case.get("lane") == "rule_exclusions"
+        and not action.rationale.strip()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Explain why the reviewed source overrides the career-conflict rule.",
+        )
+    if action.action != "bulk_rule_ack" and (
+        action.expected_status != case["status"]
+        or action.expected_event_id != case["latest_event_id"]
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="This case changed after you opened it. Reload before deciding.",
+        )
+    if action.action == "reopen":
+        if case["status"] not in {"defer", "flag_split", "revoked"}:
+            raise HTTPException(status_code=409, detail="Only a closed or deferred case can be reopened.")
+    elif action.action != "bulk_rule_ack" and case["status"] != "open":
+        raise HTTPException(
+            status_code=409,
+            detail="This case already has a decision. Undo or reopen it before deciding again.",
+        )
+    _validate_person_decision_scope(case, action.person_ids, action.action)
+    connection = open_db()
+    try:
+        from workflows.person_features import classify_entity_kind
+
+        for person_id in action.person_ids:
+            row = connection.execute(
+                "SELECT first_name,father_mother,grandfather,last_name,is_deleted "
+                "FROM person WHERE person_id=?",
+                (person_id,),
+            ).fetchone()
+            if not row or row["is_deleted"]:
+                raise HTTPException(status_code=409, detail=f"Person {person_id} is unavailable.")
+            if (
+                classify_entity_kind(
+                    row["first_name"],
+                    row["father_mother"],
+                    row["grandfather"],
+                    row["last_name"],
+                )
+                != "person"
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Record {person_id} is not classified as a person.",
+                )
+    finally:
+        connection.close()
+    citations = []
+    for citation in action.citations:
+        item = dict(citation)
+        quote = str(item.get("source_quote") or "")
+        if quote:
+            item["source_quote_sha256"] = hashlib.sha256(
+                quote.encode("utf-8")
+            ).hexdigest()
+        citations.append(item)
+    labeling_metadata = None
+    if action.review_mode == "blind_labeling":
+        labeling_metadata = _person_labeling_metadata(case_id)
+        if not labeling_metadata:
+            raise HTTPException(
+                status_code=400,
+                detail="This case is not in the active frozen labeling packet.",
+            )
+    snapshot = {
+        **case["evidence_basis"],
+        "case_id": case_id,
+        "reviewed_person_ids": sorted(action.person_ids),
+        "citations": citations,
+        "labeling": labeling_metadata,
+    }
+    clog = open_corrections()
+    try:
+        try:
+            result = corrections_db.record_person_review(
+                clog,
+                action=action.action,
+                person_ids=action.person_ids,
+                by=reviewer,
+                evidence_snapshot=snapshot,
+                case_id=(
+                    f"rule:{case.get('tier') or 'distinct_strong'}"
+                    if action.action == "bulk_rule_ack"
+                    else case_id
+                ),
+                reason_code=action.reason_code.strip() or None,
+                rationale=action.rationale.strip() or None,
+                source_tier=case.get("tier"),
+                model_sha256=case["run"].get("model_sha256"),
+                cache_run_id=case["run"].get("run_id"),
+                match_probability=case.get("match_probability"),
+            )
+        except corrections_db.PersonDecisionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, **result}
+    finally:
+        clog.close()
+
+
+@app.post("/api/person-linkage/links/{link_id}/revoke")
+@serialized_write
+def revoke_person_linkage(link_id: str, action: ReviewerOnly) -> dict[str, Any]:
+    if not person_linkage_enabled():
+        raise HTTPException(status_code=403, detail="Person identity review is not enabled.")
+    reviewer = action.reviewer.strip()
+    if not reviewer:
+        raise HTTPException(status_code=400, detail="Enter a reviewer before undoing this link.")
+    clog = open_corrections()
+    try:
+        result = corrections_db.revoke_person_reference_link(
+            clog,
+            link_id=link_id,
+            by=reviewer,
+            rationale=action.reason.strip() or None,
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="No active person link with that id.")
+        return {"ok": True, "event_id": result["event_id"]}
+    finally:
+        clog.close()
+
+
+@app.post("/api/person-linkage/events/{event_id}/revoke")
+@serialized_write
+def revoke_person_decision(event_id: str, action: ReviewerOnly) -> dict[str, Any]:
+    """Undo all links created by one person-review decision atomically."""
+    if not person_linkage_enabled():
+        raise HTTPException(status_code=403, detail="Person identity review is not enabled.")
+    reviewer = action.reviewer.strip()
+    if not reviewer:
+        raise HTTPException(status_code=400, detail="Enter a reviewer before undoing this decision.")
+    clog = open_corrections()
+    try:
+        result = corrections_db.revoke_person_review_event(
+            clog,
+            event_id=event_id,
+            by=reviewer,
+            rationale=action.reason.strip() or None,
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="No active person decision with that id.")
+        return {"ok": True, **result}
+    finally:
+        clog.close()
+
+
+@app.get("/api/person-linkage/groups/{group_id}")
+def person_linkage_group(group_id: str) -> dict[str, Any]:
+    return _person_case_payload(f"group:{group_id}")
 
 
 # ---- Analysis: read-only query execution (builder / library / console) ----
@@ -3333,12 +5369,16 @@ ANALYSIS_GROUPS: dict[str, tuple[set[str], str, str, str, str, bool]] = {
 def build_analysis_sql(
     spec: dict[str, Any],
     currency_links: tuple[dict[str, str], dict[str, list[str]]] | None = None,
+    person_links: dict[int, int] | None = None,
+    excluded_person_ids: list[int] | None = None,
 ) -> tuple[str, list[Any], str]:
     # Human-confirmed currency same_as links (Reference worklist): canon_of maps a
     # variant phrase to its canonical, family_of maps any member to the full family.
     # Both empty until links are confirmed — every behavior below then reduces to
     # the plain per-phrase form.
     canon_of, family_of = currency_links or ({}, {})
+    person_canon = person_links or {}
+    excluded_people = sorted({int(value) for value in (excluded_person_ids or [])})
     subject = spec.get("subject")
     if subject not in ANALYSIS_SUBJECTS:
         raise HTTPException(status_code=400, detail="Unknown subject.")
@@ -3348,6 +5388,7 @@ def build_analysis_sql(
     from_parts = [sub["from"]]
     where = list(sub["where"])
     params: list[Any] = []
+    person_params: list[Any] = []
     has_currency_filter = False
 
     for entry in spec.get("filters") or []:
@@ -3424,6 +5465,28 @@ def build_analysis_sql(
             raise HTTPException(status_code=400, detail="Capital measures apply to contracts only.")
         where.append("c.total GLOB '[0-9]*'")
 
+    if measure in ("distinct_people_entered", "distinct_people_reviewed"):
+        if subject != "investors":
+            raise HTTPException(status_code=400, detail="Distinct-person measures apply to investors only.")
+        sensitive = {
+            entry.get("field")
+            for entry in spec.get("filters") or []
+        } & {"gender_women", "gender_men", "jewish", "title_contains"}
+        if measure == "distinct_people_reviewed" and (group == "gender" or sensitive):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Reviewed identity families cannot yet be combined with gender, title, or "
+                    "Jewish-attribution groupings: linked rows may disagree on those attributes. "
+                    "Use entered person ids for this question."
+                ),
+            )
+        if excluded_people:
+            where.append(
+                "i.person_id NOT IN (" + ",".join("?" for _ in excluded_people) + ")"
+            )
+            params.extend(excluded_people)
+
     from_clause = " ".join(from_parts)
     where_clause = " AND ".join(f"({w})" for w in where)
 
@@ -3443,6 +5506,28 @@ def build_analysis_sql(
             # the group expression appears (textually) before the WHERE params
             return sql, group_params + params, chart
         return f"SELECT {m_expr} AS total_capital, COUNT(*) AS contracts FROM {from_clause} WHERE {where_clause}", params, "none"
+
+    if measure in ("distinct_people_entered", "distinct_people_reviewed"):
+        person_expr = "i.person_id"
+        if measure == "distinct_people_reviewed" and person_canon:
+            cases = " ".join("WHEN ? THEN ?" for _ in person_canon)
+            person_expr = f"CASE i.person_id {cases} ELSE i.person_id END"
+            for member in sorted(person_canon):
+                person_params.extend([member, person_canon[member]])
+        if group:
+            order = f"{group_label} ASC" if dimension_order else "people DESC"
+            sql = (
+                f"SELECT {group_expr} AS {group_label}, "
+                f"COUNT(DISTINCT {person_expr}) AS people "
+                f"FROM {from_clause} WHERE {where_clause} GROUP BY 1 ORDER BY {order}"
+            )
+            return sql, group_params + person_params + params, chart
+        return (
+            f"SELECT COUNT(DISTINCT {person_expr}) AS people "
+            f"FROM {from_clause} WHERE {where_clause}",
+            person_params + params,
+            "none",
+        )
 
     # count
     if group:
@@ -3495,14 +5580,91 @@ def currency_link_maps(connection: sqlite3.Connection) -> tuple[dict[str, str], 
     return canon_of, family_of
 
 
+def person_link_maps(connection: sqlite3.Connection) -> dict[int, int]:
+    """Map active reviewed same-person families to a deterministic read-time id."""
+    clog = open_corrections()
+    try:
+        links = [
+            link
+            for link in corrections_db.active_reference_links(clog, "person")
+            if link["rel"] == "same_as"
+        ]
+    finally:
+        clog.close()
+    if not links:
+        return {}
+    live = {
+        int(row["person_id"])
+        for row in connection.execute("SELECT person_id FROM person WHERE is_deleted=0")
+    }
+    parent: dict[int, int] = {}
+
+    def root(value: int) -> int:
+        parent.setdefault(value, value)
+        if parent[value] != value:
+            parent[value] = root(parent[value])
+        return parent[value]
+
+    for link in links:
+        left, right = int(link["from_id"]), int(link["to_id"])
+        a, b = root(left), root(right)
+        if a != b:
+            low, high = sorted((a, b))
+            parent[high] = low
+    return {
+        person_id: root(person_id)
+        for person_id in list(parent)
+        if person_id in live and root(person_id) != person_id
+    }
+
+
+def non_person_ids(connection: sqlite3.Connection) -> list[int]:
+    """Entered person-table rows that are institutions, estates, or placeholders."""
+    from workflows.person_features import classify_entity_kind
+
+    result: list[int] = []
+    for row in connection.execute(
+        """
+        SELECT person_id,first_name,father_mother,grandfather,last_name
+        FROM person WHERE is_deleted=0
+        """
+    ):
+        if (
+            classify_entity_kind(
+                row["first_name"],
+                row["father_mother"],
+                row["grandfather"],
+                row["last_name"],
+            )
+            != "person"
+        ):
+            result.append(int(row["person_id"]))
+    return result
+
+
 @app.post("/api/analysis/build")
 def analysis_build(payload: dict[str, Any]) -> dict[str, Any]:
+    if (
+        payload.get("measure") == "distinct_people_reviewed"
+        and not person_linkage_enabled()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Reviewed person identities are not enabled in this pilot.",
+        )
     connection = open_db()
     try:
-        links = currency_link_maps(connection)
+        currency_links = currency_link_maps(connection)
+        person_links = person_link_maps(connection)
+        excluded_people = non_person_ids(connection)
     finally:
         connection.close()
-    sql, params, chart = build_analysis_sql(payload, currency_links=links)
+    sql, params, chart = build_analysis_sql(
+        payload,
+        currency_links=currency_links,
+        person_links=person_links,
+        excluded_person_ids=excluded_people,
+    )
     result = run_readonly_sql(sql, tuple(params))
     return {**result, "sql": sql, "chart": chart}
 
@@ -4668,17 +6830,19 @@ def person_search(q: str = "", limit: int = Query(default=12, ge=1, le=50)) -> d
     finally:
         connection.close()
     return {
-        "results": [
-            {
-                "person_id": str(r["person_id"]),
-                "display_name": person_display_name(r["first_name"], r["last_name"], r["nickname"]),
-                "father_mother": (r["father_mother"] or "").strip(),
-                "residences": (r["residences"] or "").replace(",", ", "),
-                "appearances": r["appearances"],
-                "is_woman": bool(r["is_woman"]),
-            }
-            for r in rows
-        ]
+        "results": _person_hits_with_identity(
+            [
+                {
+                    "person_id": str(r["person_id"]),
+                    "display_name": person_display_name(r["first_name"], r["last_name"], r["nickname"]),
+                    "father_mother": (r["father_mother"] or "").strip(),
+                    "residences": (r["residences"] or "").replace(",", ", "),
+                    "appearances": r["appearances"],
+                    "is_woman": bool(r["is_woman"]),
+                }
+                for r in rows
+            ]
+        )
     }
 
 
@@ -4716,7 +6880,7 @@ def same_surname(last_name: str = "") -> dict[str, Any]:
         if _lookup_norm(r["last_name"]) == needle
     ]
     hits.sort(key=lambda h: (-h["appearances"], h["display_name"]))
-    return {"results": hits[:12]}
+    return {"results": _person_hits_with_identity(hits[:12])}
 
 
 @app.get("/api/db/contract-investments/{contract_id}")
@@ -5030,6 +7194,10 @@ def contract_persons(contract_id: str) -> dict[str, Any]:
                 "first_name": r["first_name"] or "",
                 "last_name": r["last_name"] or "",
             })
+        identity = person_identity_statuses([int(person["person_id"]) for person in persons])
+        for person in persons:
+            status = identity[int(person["person_id"])]
+            person["identity_hint"] = _person_identity_hint(status)
         return {
             "contract_id": str(contract_id),
             "contract_title": contract["firm_name"] or f"Contract {contract_id}",

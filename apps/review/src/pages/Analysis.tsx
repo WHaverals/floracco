@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { loadAnalysisLibrary, runAnalysisBuild, runAnalysisLibrary } from "../api";
 import { useLatest } from "../utils/latest";
 import type { AnalysisChart, AnalysisQuery, AnalysisResult } from "../types";
+import { isToolHidden } from "../features";
 
 /* Analysis tab — the named query library + a visual guided builder. Both run on
  * the read-only executor (SELECT-only, capped, timed). The builder sends a
@@ -26,8 +27,10 @@ const MEASURES: Record<Subject, { key: string; label: string }[]> = {
     { key: "avg_total", label: "Average total capital" },
   ],
   investors: [
-    { key: "count", label: "Count" },
-    { key: "list", label: "List the records" },
+    { key: "count", label: "Count investor appearances" },
+    { key: "distinct_people_reviewed", label: "Count people using reviewed identities" },
+    { key: "distinct_people_entered", label: "Count entered person IDs (audit mode)" },
+    { key: "list", label: "List the appearances" },
   ],
 };
 type FilterDef = { key: string; label: string; value: "text" | "number" | null };
@@ -479,11 +482,13 @@ export default function Analysis() {
               <div className="an-sentence">
                 <span>Show</span>
                 <select value={measure} onChange={(e) => setMeasure(e.target.value)}>
-                  {MEASURES[subject].map((m) => (
-                    <option key={m.key} value={m.key}>
-                      {m.label}
-                    </option>
-                  ))}
+                  {MEASURES[subject]
+                    .filter((m) => m.key !== "distinct_people_reviewed" || !isToolHidden("people"))
+                    .map((m) => (
+                      <option key={m.key} value={m.key}>
+                        {m.label}
+                      </option>
+                    ))}
                 </select>
                 <span>of</span>
                 <select value={subject} onChange={(e) => switchSubject(e.target.value as Subject)}>

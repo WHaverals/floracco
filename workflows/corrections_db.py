@@ -92,16 +92,16 @@ CREATE TABLE IF NOT EXISTS change_event (
 CREATE INDEX IF NOT EXISTS ix_request_target ON change_request(db_table, pk);
 CREATE INDEX IF NOT EXISTS ix_event_request  ON change_event(request_id);
 
--- Interpretive vocabulary links (Reference tab). A reviewed judgement that two
--- lookup terms are the same money/place/etc., or explicitly NOT the same. This
+-- Interpretive reference and identity links. A reviewed judgement that two
+-- lookup terms or entered person rows are the same, or explicitly NOT the same. This
 -- is ADDITIVE annotation: it never mutates or deletes either term in main.db,
 -- so it lives only here and survives a reseed. Reversible via status='revoked'.
 CREATE TABLE IF NOT EXISTS reference_link (
   link_id     TEXT PRIMARY KEY,
-  kind        TEXT NOT NULL,        -- place | title | currency | economic_activity
+  kind        TEXT NOT NULL,        -- place | title | currency | economic_activity | person
   rel         TEXT NOT NULL CHECK (rel IN ('same_as','variant_of','distinct')),
-  from_id     INTEGER NOT NULL,     -- the variant term
-  to_id       INTEGER NOT NULL,     -- the canonical term (for 'distinct', the other term)
+  from_id     INTEGER NOT NULL,
+  to_id       INTEGER NOT NULL,
   status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
   reason      TEXT,
   created_by  TEXT NOT NULL,
@@ -110,6 +110,30 @@ CREATE TABLE IF NOT EXISTS reference_link (
   revoked_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_reflink_kind ON reference_link(kind, status);
+
+-- Immutable history for person-identity review. `reference_link` is the active
+-- projection; this records exactly what a reviewer did and what evidence they
+-- saw, including deferrals and split flags that are not links.
+CREATE TABLE IF NOT EXISTS person_review_event (
+  event_id          TEXT PRIMARY KEY,
+  action            TEXT NOT NULL CHECK (
+    action IN ('same_as','distinct','defer','reopen','flag_split','revoke','bulk_rule_ack')
+  ),
+  case_id           TEXT,
+  person_ids        TEXT NOT NULL,
+  link_ids          TEXT,
+  reason_code       TEXT,
+  rationale         TEXT,
+  source_tier       TEXT,
+  model_sha256      TEXT,
+  cache_run_id      TEXT,
+  match_probability REAL,
+  evidence_snapshot TEXT NOT NULL,
+  created_by        TEXT NOT NULL,
+  created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_person_event_case ON person_review_event(case_id, created_at);
+CREATE INDEX IF NOT EXISTS ix_person_event_action ON person_review_event(action, created_at);
 """
 
 
@@ -303,6 +327,29 @@ def applied_operations(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 # --- Reference links (interpretive vocabulary curation) ---------------------
 
+
+def insert_reference_link(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    rel: str,
+    from_id: int,
+    to_id: int,
+    by: str,
+    reason: str | None = None,
+    link_id: str | None = None,
+) -> str:
+    """Insert a link into the caller's transaction."""
+    link_id = link_id or str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO reference_link
+           (link_id, kind, rel, from_id, to_id, status, reason, created_by, created_at)
+           VALUES (?,?,?,?,?, 'active', ?,?,?)""",
+        (link_id, kind, rel, int(from_id), int(to_id), reason, by, now_iso()),
+    )
+    return link_id
+
+
 def add_reference_link(
     conn: sqlite3.Connection,
     *,
@@ -318,25 +365,46 @@ def add_reference_link(
     A pair is ordered so (a,b) and (b,a) collapse, except for same_as/variant_of
     where direction (variant -> canonical) is meaningful and preserved as given.
     """
-    link_id = str(uuid.uuid4())
     with conn:
-        conn.execute(
-            """INSERT INTO reference_link
-               (link_id, kind, rel, from_id, to_id, status, reason, created_by, created_at)
-               VALUES (?,?,?,?,?, 'active', ?,?,?)""",
-            (link_id, kind, rel, int(from_id), int(to_id), reason, by, now_iso()),
+        link_id = insert_reference_link(
+            conn,
+            kind=kind,
+            rel=rel,
+            from_id=from_id,
+            to_id=to_id,
+            by=by,
+            reason=reason,
         )
     return link_id
 
 
+def reference_link_by_id(conn: sqlite3.Connection, link_id: str) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM reference_link WHERE link_id=?", (link_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def set_reference_link_revoked(
+    conn: sqlite3.Connection,
+    link_id: str,
+    *,
+    by: str,
+    expected_kind: str | None = None,
+) -> bool:
+    """Revoke one active link inside the caller's transaction."""
+    sql = (
+        "UPDATE reference_link SET status='revoked', revoked_by=?, revoked_at=? "
+        "WHERE link_id=? AND status='active'"
+    )
+    params: list[Any] = [by, now_iso(), link_id]
+    if expected_kind is not None:
+        sql += " AND kind=?"
+        params.append(expected_kind)
+    return conn.execute(sql, params).rowcount > 0
+
+
 def revoke_reference_link(conn: sqlite3.Connection, link_id: str, by: str) -> bool:
     with conn:
-        cur = conn.execute(
-            "UPDATE reference_link SET status='revoked', revoked_by=?, revoked_at=? "
-            "WHERE link_id=? AND status='active'",
-            (by, now_iso(), link_id),
-        )
-    return cur.rowcount > 0
+        return set_reference_link_revoked(conn, link_id, by=by)
 
 
 def active_reference_links(conn: sqlite3.Connection, kind: str) -> list[dict[str, Any]]:
@@ -357,6 +425,334 @@ def decided_pairs(conn: sqlite3.Connection, kind: str) -> set[frozenset[int]]:
     ):
         out.add(frozenset((int(r["from_id"]), int(r["to_id"]))))
     return out
+
+
+def append_person_review_event(
+    conn: sqlite3.Connection,
+    *,
+    action: str,
+    person_ids: list[int],
+    by: str,
+    evidence_snapshot: dict[str, Any],
+    case_id: str | None = None,
+    link_ids: list[str] | None = None,
+    reason_code: str | None = None,
+    rationale: str | None = None,
+    source_tier: str | None = None,
+    model_sha256: str | None = None,
+    cache_run_id: str | None = None,
+    match_probability: float | None = None,
+    event_id: str | None = None,
+) -> str:
+    """Append one immutable person-review event in the caller's transaction."""
+    event_id = event_id or str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO person_review_event
+           (event_id, action, case_id, person_ids, link_ids, reason_code, rationale,
+            source_tier, model_sha256, cache_run_id, match_probability,
+            evidence_snapshot, created_by, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            event_id,
+            action,
+            case_id,
+            json.dumps(sorted({int(value) for value in person_ids}), separators=(",", ":")),
+            json.dumps(link_ids or [], separators=(",", ":")),
+            reason_code,
+            rationale,
+            source_tier,
+            model_sha256,
+            cache_run_id,
+            match_probability,
+            json.dumps(evidence_snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            by,
+            now_iso(),
+        ),
+    )
+    return event_id
+
+
+def person_review_events(
+    conn: sqlite3.Connection, *, case_id: str | None = None
+) -> list[dict[str, Any]]:
+    sql = "SELECT * FROM person_review_event"
+    params: tuple[Any, ...] = ()
+    if case_id is not None:
+        sql += " WHERE case_id=?"
+        params = (case_id,)
+    sql += " ORDER BY created_at DESC, event_id DESC"
+    rows = conn.execute(sql, params).fetchall()
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["person_ids"] = json.loads(item["person_ids"])
+        item["link_ids"] = json.loads(item["link_ids"] or "[]")
+        item["evidence_snapshot"] = json.loads(item["evidence_snapshot"])
+        result.append(item)
+    return result
+
+
+class PersonDecisionConflict(ValueError):
+    """A proposed identity decision contradicts active reviewed links."""
+
+
+def _person_link_state(
+    conn: sqlite3.Connection,
+) -> tuple[list[dict[str, Any]], dict[int, int], list[tuple[int, int]]]:
+    links = active_reference_links(conn, "person")
+    parent: dict[int, int] = {}
+
+    def find(value: int) -> int:
+        parent.setdefault(value, value)
+        if parent[value] != value:
+            parent[value] = find(parent[value])
+        return parent[value]
+
+    def union(left: int, right: int) -> None:
+        a, b = find(left), find(right)
+        if a != b:
+            low, high = sorted((a, b))
+            parent[high] = low
+
+    distinct: list[tuple[int, int]] = []
+    for link in links:
+        left, right = int(link["from_id"]), int(link["to_id"])
+        if link["rel"] == "same_as":
+            union(left, right)
+        elif link["rel"] == "distinct":
+            distinct.append(tuple(sorted((left, right))))
+    for value in list(parent):
+        parent[value] = find(value)
+    return links, parent, distinct
+
+
+def record_person_review(
+    conn: sqlite3.Connection,
+    *,
+    action: str,
+    person_ids: list[int],
+    by: str,
+    evidence_snapshot: dict[str, Any],
+    case_id: str | None = None,
+    reason_code: str | None = None,
+    rationale: str | None = None,
+    source_tier: str | None = None,
+    model_sha256: str | None = None,
+    cache_run_id: str | None = None,
+    match_probability: float | None = None,
+) -> dict[str, Any]:
+    """Atomically update person-link state and append its immutable event."""
+    ids = sorted({int(value) for value in person_ids})
+    if not ids:
+        raise ValueError("A person review decision needs at least one person id.")
+    if action in {"same_as", "distinct"} and len(ids) < 2:
+        raise ValueError(f"{action} needs at least two person ids.")
+    if action not in {
+        "same_as",
+        "distinct",
+        "defer",
+        "reopen",
+        "flag_split",
+        "bulk_rule_ack",
+    }:
+        raise ValueError(f"Unknown person review action: {action}")
+
+    link_ids: list[str] = []
+    with conn:
+        links, parent, distinct_pairs = _person_link_state(conn)
+
+        def root(value: int) -> int:
+            while parent.get(value, value) != value:
+                value = parent[value]
+            return value
+
+        active_pair: dict[frozenset[int], dict[str, Any]] = {
+            frozenset((int(link["from_id"]), int(link["to_id"]))): link
+            for link in links
+        }
+        if action == "same_as":
+            proposed_roots = {root(value) for value in ids}
+            merged_members = {
+                value
+                for value in set(parent) | set(ids)
+                if root(value) in proposed_roots
+            }
+            for left, right in distinct_pairs:
+                if left in merged_members and right in merged_members:
+                    raise PersonDecisionConflict(
+                        f"Person {left} and person {right} are already reviewed as different."
+                    )
+            anchor = min(ids)
+            for other in ids:
+                if other == anchor or root(other) == root(anchor):
+                    continue
+                pair = frozenset((anchor, other))
+                existing = active_pair.get(pair)
+                if existing:
+                    raise PersonDecisionConflict(
+                        "These person records already have an active contradictory decision."
+                    )
+                low, high = sorted((anchor, other))
+                link_ids.append(
+                    insert_reference_link(
+                        conn,
+                        kind="person",
+                        rel="same_as",
+                        from_id=low,
+                        to_id=high,
+                        by=by,
+                        reason=rationale,
+                    )
+                )
+                parent[root(high)] = root(low)
+        elif action == "distinct":
+            import itertools
+
+            reviewed_distinct = {
+                frozenset((root(left), root(right))) for left, right in distinct_pairs
+            }
+            for left, right in itertools.combinations(ids, 2):
+                if root(left) == root(right):
+                    raise PersonDecisionConflict(
+                        f"Person {left} and person {right} are already linked as the same person."
+                    )
+                if frozenset((root(left), root(right))) in reviewed_distinct:
+                    continue
+                pair = frozenset((left, right))
+                existing = active_pair.get(pair)
+                if existing:
+                    if existing["rel"] == "distinct":
+                        continue
+                    raise PersonDecisionConflict(
+                        "These person records already have an active contradictory decision."
+                    )
+                link_ids.append(
+                    insert_reference_link(
+                        conn,
+                        kind="person",
+                        rel="distinct",
+                        from_id=left,
+                        to_id=right,
+                        by=by,
+                        reason=rationale,
+                    )
+                )
+        if action in {"same_as", "distinct"} and not link_ids:
+            raise PersonDecisionConflict("This identity decision is already active.")
+        event_id = append_person_review_event(
+            conn,
+            action=action,
+            person_ids=ids,
+            by=by,
+            evidence_snapshot=evidence_snapshot,
+            case_id=case_id,
+            link_ids=link_ids,
+            reason_code=reason_code,
+            rationale=rationale,
+            source_tier=source_tier,
+            model_sha256=model_sha256,
+            cache_run_id=cache_run_id,
+            match_probability=match_probability,
+        )
+    return {"event_id": event_id, "link_ids": link_ids}
+
+
+def revoke_person_reference_link(
+    conn: sqlite3.Connection,
+    *,
+    link_id: str,
+    by: str,
+    rationale: str | None = None,
+) -> dict[str, Any]:
+    """Atomically revoke a person link and append exactly one immutable event."""
+    with conn:
+        link = reference_link_by_id(conn, link_id)
+        if not link or link.get("kind") != "person" or link.get("status") != "active":
+            return {}
+        origin = next(
+            (
+                event
+                for event in person_review_events(conn)
+                if link_id in event.get("link_ids", [])
+                and event.get("action") in {"same_as", "distinct"}
+            ),
+            None,
+        )
+        if not set_reference_link_revoked(conn, link_id, by=by, expected_kind="person"):
+            return {}
+        event_id = append_person_review_event(
+            conn,
+            action="revoke",
+            person_ids=[int(link["from_id"]), int(link["to_id"])],
+            by=by,
+            evidence_snapshot={
+                "revoked_link": link,
+                "original_event_id": (origin or {}).get("event_id"),
+            },
+            case_id=(origin or {}).get("case_id"),
+            link_ids=[link_id],
+            rationale=rationale,
+            source_tier=(origin or {}).get("source_tier"),
+            model_sha256=(origin or {}).get("model_sha256"),
+            cache_run_id=(origin or {}).get("cache_run_id"),
+            match_probability=(origin or {}).get("match_probability"),
+        )
+    return {"event_id": event_id, "link": link}
+
+
+def revoke_person_review_event(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str,
+    by: str,
+    rationale: str | None = None,
+) -> dict[str, Any]:
+    """Atomically revoke every still-active link created by one review event."""
+    origin = next(
+        (event for event in person_review_events(conn) if event["event_id"] == event_id),
+        None,
+    )
+    if not origin or origin.get("action") not in {"same_as", "distinct"}:
+        return {}
+    link_ids = list(origin.get("link_ids") or [])
+    with conn:
+        active_links = [
+            link
+            for link_id in link_ids
+            if (link := reference_link_by_id(conn, link_id))
+            and link.get("kind") == "person"
+            and link.get("status") == "active"
+        ]
+        if not active_links:
+            return {}
+        for link in active_links:
+            if not set_reference_link_revoked(
+                conn, str(link["link_id"]), by=by, expected_kind="person"
+            ):
+                raise RuntimeError("Person decision changed while it was being undone.")
+        revoke_event_id = append_person_review_event(
+            conn,
+            action="revoke",
+            person_ids=origin["person_ids"],
+            by=by,
+            evidence_snapshot={
+                "original_event_id": event_id,
+                "revoked_links": active_links,
+                "undo_scope": "whole_decision",
+            },
+            case_id=origin.get("case_id"),
+            link_ids=[str(link["link_id"]) for link in active_links],
+            rationale=rationale,
+            source_tier=origin.get("source_tier"),
+            model_sha256=origin.get("model_sha256"),
+            cache_run_id=origin.get("cache_run_id"),
+            match_probability=origin.get("match_probability"),
+        )
+    return {
+        "event_id": revoke_event_id,
+        "original_event_id": event_id,
+        "revoked_link_ids": [str(link["link_id"]) for link in active_links],
+    }
 
 
 def _enc(value: Any) -> str | None:

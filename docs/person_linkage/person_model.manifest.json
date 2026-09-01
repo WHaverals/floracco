@@ -1,0 +1,11 @@
+{
+  "comparison_rule_version": "person-linkage-comparisons-v1",
+  "manifest_version": 1,
+  "max_pairs": 64178785.0,
+  "model_sha256": "17e49ecc9651de8783c28a9c5fd541fd4277faca335b3c6f16f22af0cf7e8179",
+  "origin": "trained",
+  "recall": 0.5,
+  "seed": 7,
+  "source_input_fingerprint": "sha256:b6a2f2cef783fc02862014bffe3081d9646e8b1ca20c745329be4cf800bc408a",
+  "training_timestamp": "2026-08-28T18:02:51.738666+00:00"
+}

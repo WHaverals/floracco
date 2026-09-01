@@ -10,9 +10,13 @@ import TrackedText from "./TrackedText";
 export default function WordSourceDrawer({
   sourceEntryId,
   onClose,
+  onUseEvidence,
+  evidenceSelected = false,
 }: {
   sourceEntryId: string;
   onClose: () => void;
+  onUseEvidence?: (entry: WordEntryDetail) => void;
+  evidenceSelected?: boolean;
 }) {
   const [entry, setEntry] = useState<WordEntryDetail | null>(null);
   const [error, setError] = useState("");
@@ -75,6 +79,15 @@ export default function WordSourceDrawer({
 
         {loading && <p className="muted">Loading Word entry…</p>}
         {error && !loading && <p className="error-text">{error}</p>}
+        {entry && onUseEvidence ? (
+          <button
+            className={evidenceSelected ? "word-evidence-button is-selected" : "word-evidence-button"}
+            onClick={() => onUseEvidence(entry)}
+            type="button"
+          >
+            {evidenceSelected ? "✓ Attached to this decision" : "Use this summary as decision evidence"}
+          </button>
+        ) : null}
 
         {entry && !loading && (
           <div className="word-drawer-body">

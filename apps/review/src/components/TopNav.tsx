@@ -5,6 +5,7 @@ import { isToolHidden } from "../features";
 const LINKS = [
   { to: "/reconcile", label: "Reconcile", key: "reconcile" },
   { to: "/database", label: "Database", key: "database" },
+  { to: "/people", label: "People", key: "people" },
   { to: "/reference", label: "Reference", key: "reference" },
   { to: "/analysis", label: "Analysis", key: "analysis" },
 ];

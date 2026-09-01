@@ -158,6 +158,22 @@ export type DbSearchResult = {
   row_id: string;
   title: string;
   meta: string;
+  identity_hint?: PersonIdentityHint;
+};
+
+export type PersonIdentityHint = {
+  open_count: number;
+  linked_count: number;
+  case_id: string | null;
+  split_flagged?: boolean;
+};
+
+export type PersonSplitFlag = {
+  person_id: number;
+  case_id: string;
+  created_by: string;
+  created_at: string;
+  rationale: string | null;
 };
 
 export type DbSearchResponse = {
@@ -236,6 +252,252 @@ export type ReferenceDuplicatesResponse = {
   cautions: ReferenceCaution[];
   links: ReferenceLink[];
   note?: string;
+};
+
+export type PersonLinkageLane =
+  | "labeling_round"
+  | "likely_duplicates"
+  | "high_concordance"
+  | "read_source"
+  | "other_matches"
+  | "possible_splits"
+  | "decided"
+  | "rule_exclusions";
+
+export type PersonLinkageStale = {
+  stale: boolean;
+  model_changed?: boolean;
+  comparison_rules_changed?: boolean;
+  deterministic_rules_changed?: boolean;
+  source_pointers_changed?: boolean;
+  database_newer_than_cache?: boolean;
+};
+
+export type PersonLinkageSummary = {
+  available: boolean;
+  run?: Record<string, string | number>;
+  stale: PersonLinkageStale;
+  lanes: Record<string, number>;
+  // Blind labeling round: whether the frozen packet file is deployed, and
+  // whether it was built against an older suggestion cache (stale → unusable).
+  labeling_packet_available?: boolean;
+  labeling_packet_stale?: boolean;
+  decisions?: {
+    active_links: number;
+    same_as: number;
+    distinct: number;
+    events: number;
+    deferred: number;
+    split_flags: number;
+  };
+};
+
+export type PersonLinkagePreview = {
+  case_id: string;
+  kind: "pair" | "group" | "split";
+  person_ids: number[];
+  names: string[];
+  lane: PersonLinkageLane;
+  tier: string | null;
+  source: "rule" | "splink";
+  score_band: string | null;
+  priority_band?: string | null;
+  review_rank?: number | null;
+  review_percentile?: number | null;
+  review_score?: number | null;
+  match_probability: number | null;
+  career: {
+    first_year?: number | null;
+    last_year?: number | null;
+    combined_span_years?: number | null;
+    left?: { first_year: number | null; last_year: number | null };
+    right?: { first_year: number | null; last_year: number | null };
+  };
+  reasons: string[];
+  status: "open" | "same_as" | "distinct" | "defer" | "flag_split" | "revoked";
+  guard_status?: string;
+};
+
+export type PersonLinkageCasesResponse = {
+  available: boolean;
+  run: Record<string, string | number>;
+  stale: PersonLinkageStale;
+  total: number;
+  offset: number;
+  cases: PersonLinkagePreview[];
+  /** Open-round cases whose natural lane is this one — frozen in the blind
+   * labeling round, hidden from the listing but still counted by the badge. */
+  reserved_for_labeling?: number;
+};
+
+export type PersonAppearance = {
+  investor_id: number;
+  contract_id: number;
+  profession: string | null;
+  heirs_of: number;
+  registration_date: string | null;
+  firm_name: string | null;
+  folder: string | null;
+  roles: string | null;
+  residence?: string | null;
+  origin?: string | null;
+  title?: string | null;
+  economic_activity?: string | null;
+};
+
+export type PersonLinkagePerson = {
+  person_id: number;
+  display_name: string;
+  fields: {
+    first_name: string | null;
+    father_mother: string | null;
+    grandfather: string | null;
+    last_name: string | null;
+    nickname: string | null;
+    is_woman: number | null;
+  };
+  first_year: number | null;
+  last_year: number | null;
+  n_appearances: number;
+  appearances: PersonAppearance[];
+  role_profile: { gp: number; lp: number };
+  context_profile: {
+    professions: string[];
+    residences: string[];
+    origins: string[];
+    titles: string[];
+    father_mother_titles: string[];
+    grandfather_titles: string[];
+    husband_titles: string[];
+    economic_activities: string[];
+  };
+};
+
+export type WaterfallContribution = {
+  kind: "prior" | "comparison" | "residual";
+  comparison: string;
+  comparison_label?: string;
+  label: string;
+  weight_bits: number;
+  cumulative_weight_bits: number;
+  direction: "supports" | "against" | "none";
+};
+
+export type PersonPairSuggestion = {
+  pair_key: string;
+  person_id_l: number;
+  person_id_r: number;
+  // The fields below are optional because the blind labeling-round payload
+  // omits every model output and priority signal — their absence is the
+  // contract, not a data problem, so readers must tolerate undefined.
+  deterministic_tier?: string | null;
+  precedence_verdict?: string;
+  source?: "rule" | "splink";
+  match_probability?: number | null;
+  match_weight?: number | null;
+  review_score?: number | null;
+  review_rank?: number | null;
+  review_percentile?: number | null;
+  priority_band?: string | null;
+  high_concordance?: number;
+  concordance_reasons_json?: string[];
+  network_diagnostics_json?: Record<string, unknown>;
+  firm_token_diagnostics_json?: Record<string, unknown>;
+  score_band?: string;
+  reasons_json?: string[];
+  evidence_json: Record<string, unknown>;
+  shared_contract_ids_json: number[];
+  shared_firms_json: string[];
+  shared_firm_words_json: string[];
+  shared_partner_ids_json: number[];
+  roles_json: { left?: string | null; right?: string | null };
+  career_span_json: Record<string, unknown>;
+  source_pointers_json: Array<Record<string, string | number>>;
+  waterfall_contributions_json?: WaterfallContribution[];
+};
+
+export type PersonReviewEvent = {
+  event_id: string;
+  action: string;
+  case_id: string | null;
+  person_ids: number[];
+  link_ids: string[];
+  reason_code: string | null;
+  rationale: string | null;
+  created_by: string;
+  created_at: string;
+  evidence_snapshot?: {
+    citations?: Array<Record<string, unknown>>;
+  };
+};
+
+export type PersonReferenceLink = {
+  link_id: string;
+  kind: "person";
+  rel: "same_as" | "distinct";
+  from_id: number;
+  to_id: number;
+  reason: string | null;
+  created_by: string;
+  created_at: string;
+};
+
+export type PersonLinkageCase = {
+  case_id: string;
+  kind: "pair" | "group" | "split";
+  person_ids: number[];
+  persons: PersonLinkagePerson[];
+  pairs: PersonPairSuggestion[];
+  group?: Record<string, unknown> | null;
+  shared_contracts: Array<{
+    contract_id: number;
+    registration_date: string | null;
+    firm_name: string | null;
+    folio: string | null;
+    document: string | null;
+    word_sources: DbWordSource[];
+  }>;
+  business_context: {
+    exact_firms: Array<{
+      normalized_name: string;
+      display_name: string;
+      appearances_by_person: Record<string, Array<{
+        contract_id: number;
+        registration_date: string | null;
+        firm_name: string | null;
+      }>>;
+    }>;
+    shared_partners: Array<{
+      person_id: number;
+      display_name: string;
+      connections_by_person: Record<string, Array<{
+        contract_id: number;
+        registration_date: string | null;
+        firm_name: string | null;
+      }>>;
+    }>;
+    shared_firm_words: string[];
+    firm_word_evidence: Array<{
+      person_id: number;
+      firms: Array<{
+        contract_id: number;
+        registration_date: string | null;
+        firm_name: string;
+        matched_words: string[];
+      }>;
+    }>;
+  };
+  split_flagged_person_ids?: number[];
+  active_links?: PersonReferenceLink[];
+  history: PersonReviewEvent[];
+  tier?: string | null;
+  lane: PersonLinkageLane;
+  match_probability?: number | null;
+  run?: Record<string, string | number>;
+  stale?: PersonLinkageStale;
+  needs_recheck?: boolean;
+  status: PersonLinkagePreview["status"];
+  latest_event_id: string | null;
 };
 
 export type PlaceMapPoint = {
@@ -578,6 +840,14 @@ export type DbRecord = {
   is_deleted?: boolean;
   dependents?: Record<string, number>;
   change_history?: ChangeHistoryItem[];
+  identity_status?: {
+    available: boolean;
+    person_ids: number[];
+    active_links: PersonReferenceLink[];
+    open_cases: string[];
+    open_count: number;
+    split_flags?: PersonSplitFlag[];
+  };
 };
 
 export type CorrectionStatus =
@@ -731,6 +1001,7 @@ export type ContractPerson = {
   appears_on_contracts: number;
   first_name: string;
   last_name: string;
+  identity_hint?: PersonIdentityHint;
 };
 
 export type ContractPersonsResponse = {
@@ -797,6 +1068,7 @@ export type PersonHit = {
   residences: string;
   appearances: number;
   is_woman?: boolean;
+  identity_hint?: PersonIdentityHint;
 };
 
 export type ContractInvestment = {

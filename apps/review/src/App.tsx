@@ -9,6 +9,7 @@ import Analysis from "./pages/Analysis";
 import Database from "./pages/Database";
 import Explore from "./pages/Explore";
 import Hub from "./pages/Hub";
+import People from "./pages/People";
 import Reference from "./pages/Reference";
 import Reconcile from "./pages/Reconcile";
 
@@ -80,6 +81,8 @@ export default function App() {
           <Route path="/database" element={<Database />} />
           <Route path="/database/:table" element={<Database />} />
           <Route path="/database/:table/:id" element={<Database />} />
+          <Route path="/people" element={isToolHidden("people") ? NOT_IN_PILOT : <People />} />
+          <Route path="/people/:caseId" element={isToolHidden("people") ? NOT_IN_PILOT : <People />} />
           <Route path="/reference" element={isToolHidden("reference") ? NOT_IN_PILOT : <Reference />} />
           <Route path="/analysis" element={isToolHidden("analysis") ? NOT_IN_PILOT : <Analysis />} />
           <Route path="*" element={<ComingSoon title="Page not found" blurb="That route does not exist." />} />

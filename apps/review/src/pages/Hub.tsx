@@ -19,6 +19,12 @@ const TOOLS = [
     blurb: "Records beside their Word summaries and manuscript pages.",
   },
   {
+    to: "/people",
+    key: "people",
+    title: "Review people",
+    blurb: "Decide when separate records describe the same historical person.",
+  },
+  {
     to: "/reference",
     key: "reference",
     title: "Reference",

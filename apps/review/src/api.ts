@@ -147,6 +147,71 @@ export function revokeReferenceLink(
   });
 }
 
+export function loadPersonLinkageSummary(): Promise<import("./types").PersonLinkageSummary> {
+  return request("/api/person-linkage/summary");
+}
+
+export function loadPersonLinkageCases(opts: {
+  lane: import("./types").PersonLinkageLane;
+  status?: string;
+  priorityBand?: string;
+  q?: string;
+  offset?: number;
+  limit?: number;
+}): Promise<import("./types").PersonLinkageCasesResponse> {
+  const params = new URLSearchParams({ lane: opts.lane });
+  if (opts.status) params.set("status", opts.status);
+  if (opts.priorityBand) params.set("priority_band", opts.priorityBand);
+  if (opts.q) params.set("q", opts.q);
+  if (opts.offset) params.set("offset", String(opts.offset));
+  if (opts.limit) params.set("limit", String(opts.limit));
+  return request(`/api/person-linkage/cases?${params.toString()}`);
+}
+
+export function loadPersonLinkageCase(caseId: string): Promise<import("./types").PersonLinkageCase> {
+  return request(`/api/person-linkage/cases/${encodeURIComponent(caseId)}`);
+}
+
+export function decidePersonLinkage(
+  caseId: string,
+  body: {
+    reviewer: string;
+    action: "same_as" | "distinct" | "defer" | "reopen" | "flag_split" | "bulk_rule_ack";
+    person_ids: number[];
+    reason_code?: string;
+    rationale?: string;
+    citations?: Array<Record<string, unknown>>;
+    expected_status: import("./types").PersonLinkagePreview["status"];
+    expected_event_id: string | null;
+    review_mode?: "standard" | "blind_labeling";
+  },
+): Promise<{ ok: boolean; event_id: string; link_ids: string[] }> {
+  return request(`/api/person-linkage/cases/${encodeURIComponent(caseId)}/decision`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function revokePersonLink(
+  linkId: string,
+  body: { reviewer: string; reason?: string },
+): Promise<{ ok: boolean; event_id: string }> {
+  return request(`/api/person-linkage/links/${encodeURIComponent(linkId)}/revoke`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function revokePersonDecision(
+  eventId: string,
+  body: { reviewer: string; reason?: string },
+): Promise<{ ok: boolean; event_id: string; revoked_link_ids: string[] }> {
+  return request(`/api/person-linkage/events/${encodeURIComponent(eventId)}/revoke`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function loadPlaceMap(): Promise<import("./types").PlaceMapResponse> {
   return request("/api/db/reference/place/map");
 }

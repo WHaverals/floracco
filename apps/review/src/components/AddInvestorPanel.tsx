@@ -3,6 +3,7 @@ import { createInvestor, loadContractInvestments, sameSurname, searchPersonsRich
 import { useLatest } from "../utils/latest";
 import type { ContractInvestment, PersonHit } from "../types";
 import LookupCombobox from "./LookupCombobox";
+import IdentityHintLines from "./person-linkage/IdentityHintLines";
 
 /* Add a person to a contract — person + role + capital, one audited save.
  *
@@ -252,6 +253,16 @@ export default function AddInvestorPanel({
               · {pickedPerson.residences || "no residence recorded"} · appears on {pickedPerson.appearances}{" "}
               contract{pickedPerson.appearances === 1 ? "" : "s"}
             </span>
+            {pickedPerson.identity_hint?.split_flagged ? (
+              <div className="pl-identity-split">
+                <p>
+                  Flagged as possibly containing several people — attaching another appearance would make a fused
+                  row worse.
+                </p>
+              </div>
+            ) : (
+              <IdentityHintLines hint={pickedPerson.identity_hint} />
+            )}
             <button type="button" className="field-fix" onClick={resetWho}>
               change
             </button>
@@ -301,6 +312,7 @@ export default function AddInvestorPanel({
                       <span className="muted">
                         · {hit.residences || "—"} · {hit.appearances} contract{hit.appearances === 1 ? "" : "s"}
                       </span>
+                      <IdentityHintLines hint={hit.identity_hint} />
                     </li>
                   ))}
                 </ul>
@@ -327,14 +339,17 @@ export default function AddInvestorPanel({
                 {personHits.map((hit) => (
                   <li key={hit.person_id}>
                     <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setPickedPerson(hit)}>
-                      <span className="lookup-value">
-                        {hit.display_name}
-                        {hit.father_mother ? <span className="muted"> di {hit.father_mother}</span> : null}
+                      <span className="lookup-hit-main">
+                        <span className="lookup-value">
+                          {hit.display_name}
+                          {hit.father_mother ? <span className="muted"> di {hit.father_mother}</span> : null}
+                        </span>
+                        <span className="lookup-used muted">
+                          {hit.residences ? `${hit.residences} · ` : ""}
+                          {hit.appearances} contr.
+                        </span>
                       </span>
-                      <span className="lookup-used muted">
-                        {hit.residences ? `${hit.residences} · ` : ""}
-                        {hit.appearances} contr.
-                      </span>
+                      <IdentityHintLines hint={hit.identity_hint} />
                     </button>
                   </li>
                 ))}

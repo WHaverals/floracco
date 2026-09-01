@@ -62,6 +62,7 @@ TIERS = (
     "same_as_strong",      # same_as: full chain + compatible careers
     "distinct_strong",     # distinct: the temporal veto, explicit elder/younger
     "caution_coappearance",# human only: they share a contract
+    "caution_posthumous_conflict", # human only: heirs precede later living activity
     "caution_gf_conflict", # human only: contradictory grandfathers
     "review",              # the gray middle → the probabilistic stage
 )
@@ -99,6 +100,23 @@ def combined_span(a: Any, b: Any) -> float | None:
     if wa is None or wb is None:
         return None
     return max(wa[1], wb[1]) - min(wa[0], wb[0])
+
+
+def posthumous_conflict(a: Any, b: Any) -> tuple[int, int] | None:
+    """Return (heirs year, later living year) when the records contradict.
+
+    `heirs_of` is strong chronology but still a transcribed field, so this
+    routes to source review rather than deciding that the people differ.
+    """
+    candidates: list[tuple[int, int]] = []
+    for deceased, living in ((a, b), (b, a)):
+        heirs_year = getattr(deceased, "first_posthumous_year", None)
+        living_last = getattr(living, "last_year", None)
+        if pd.isna(heirs_year) or pd.isna(living_last):
+            continue
+        if float(heirs_year) < float(living_last):
+            candidates.append((int(heirs_year), int(living_last)))
+    return min(candidates) if candidates else None
 
 
 def _chain(row: Any) -> tuple[str, str, str, str]:
@@ -223,6 +241,22 @@ def classify_pair(a: Any, b: Any, shared_contracts: Iterable[int] = (),
                             "life; the naming custom repeats whole chains every second "
                             "generation"],
                 "shared_contracts": []}
+
+    posthumous = posthumous_conflict(a, b)
+    if posthumous:
+        heirs_year, later_living_year = posthumous
+        return {
+            "tier": "caution_posthumous_conflict",
+            "gap_years": gap,
+            "combined_span": span,
+            "reasons": [
+                f"one record's heirs appear in {heirs_year}, before the other "
+                f"record's living activity through {later_living_year}",
+                "verify the acts: heirs-of chronology is strong evidence, but "
+                "a transcribed field never decides identity by itself",
+            ],
+            "shared_contracts": [],
+        }
 
     if gf_conflict:
         return {"tier": "caution_gf_conflict", "gap_years": gap, "combined_span": span,

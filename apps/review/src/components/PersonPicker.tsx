@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { loadContractPersons, searchPersons } from "../api";
 import { useEscapeLayer } from "../utils/escapeLayers";
 import type { ContractPerson, DbSearchResult } from "../types";
+import IdentityHintLines from "./person-linkage/IdentityHintLines";
 
 export type PersonPick = { row_id: string; display_name: string; last_name: string };
 
@@ -97,6 +98,7 @@ export default function PersonPicker({
                     {p.detail ? `${p.detail} · ` : ""}#{p.person_id} · on {p.appears_on_contracts} contract
                     {p.appears_on_contracts === 1 ? "" : "s"}
                   </span>
+                  <IdentityHintLines hint={p.identity_hint} />
                 </button>
               </li>
             ))}
@@ -123,6 +125,7 @@ export default function PersonPicker({
                     >
                       <span className="picker-name">{r.title}</span>
                       <span className="picker-detail">{r.meta}</span>
+                      <IdentityHintLines hint={r.identity_hint} />
                     </button>
                   </li>
                 ))}

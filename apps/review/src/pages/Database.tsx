@@ -29,6 +29,7 @@ import WordSourceDrawer from "../components/WordSourceDrawer";
 import WordSummaryInline from "../components/WordSummaryInline";
 import { manuscriptImageCaption } from "../utils/manuscriptImages";
 import { useLatest } from "../utils/latest";
+import { isToolHidden } from "../features";
 import type {
   ChangeHistoryItem,
   DbBrowseTable,
@@ -45,6 +46,7 @@ import type {
   WordDateCheck,
   DbRelink,
   DbSearchResult,
+  PersonIdentityHint,
 } from "../types";
 
 // Word summaries are frozen provenance attached to DB records; the statuses
@@ -63,6 +65,26 @@ const TABS: { id: DbBrowseTable; label: string }[] = [
 
 function isBrowseTable(value: string | undefined): value is DbBrowseTable {
   return value === "contract" || value === "sub_contract" || value === "person";
+}
+
+function identityHintKind(hint?: PersonIdentityHint): "split" | "family" | "waiting" | null {
+  if (!hint) return null;
+  if (hint.split_flagged) return "split";
+  if (hint.linked_count > 1) return "family";
+  if (hint.open_count > 0) return "waiting";
+  return null;
+}
+
+function identityHintLabel(kind: ReturnType<typeof identityHintKind>): string {
+  if (kind === "split") return "Flagged as possibly containing several people";
+  if (kind === "family") return "Reviewed identity family";
+  if (kind === "waiting") return "Possible related records awaiting review";
+  return "";
+}
+
+function formatIdentityWhen(iso: string): string {
+  if (!iso) return "";
+  return iso.slice(0, 16).replace("T", " ");
 }
 
 export default function Database() {
@@ -523,18 +545,34 @@ export default function Database() {
           </div>
         ) : (
         <ul className="db-results">
-          {results.map((item) => (
-            <li key={item.row_id}>
-              <button
-                type="button"
-                className={item.id === routeId && table === routeTable ? "db-result is-active" : "db-result"}
-                onClick={() => openRecord(table, item.id)}
-              >
-                <span className="db-result-title">{item.title}</span>
-                <span className="db-result-meta">{item.meta || `#${item.id}`}</span>
-              </button>
-            </li>
-          ))}
+          {results.map((item) => {
+            const hintKind =
+              table === "person" && !isToolHidden("people")
+                ? identityHintKind(item.identity_hint)
+                : null;
+            return (
+              <li key={item.row_id}>
+                <button
+                  type="button"
+                  className={item.id === routeId && table === routeTable ? "db-result is-active" : "db-result"}
+                  onClick={() => openRecord(table, item.id)}
+                >
+                  <span className="db-result-title-row">
+                    <span className="db-result-title">{item.title}</span>
+                    {hintKind ? (
+                      <span
+                        className="db-identity-mark"
+                        role="img"
+                        title={identityHintLabel(hintKind)}
+                        aria-label={identityHintLabel(hintKind)}
+                      />
+                    ) : null}
+                  </span>
+                  <span className="db-result-meta">{item.meta || `#${item.id}`}</span>
+                </button>
+              </li>
+            );
+          })}
           {results.length === 0 && !listError && (
             <li className="db-empty muted">No records match.</li>
           )}
@@ -578,6 +616,7 @@ export default function Database() {
             onOpenSource={setOpenSourceId}
             onRefresh={refreshRecord}
             onOpenCreateAct={(id) => navigate(`/database/sub_contract/new?parent=${id}`)}
+            onOpenIdentity={(caseId) => navigate(`/people/${encodeURIComponent(caseId)}`)}
             onCorrectName={record.table === "contract" ? () => setPickerOpen(true) : undefined}
             reviewer={reviewer}
             onReviewerChange={setReviewer}
@@ -1610,6 +1649,7 @@ function RecordDetail({
   onOpenSource,
   onRefresh,
   onOpenCreateAct,
+  onOpenIdentity,
   onCorrectName,
   reviewer,
   onReviewerChange,
@@ -1627,6 +1667,7 @@ function RecordDetail({
   onOpenSource: (sourceEntryId: string) => void;
   onRefresh: () => void;
   onOpenCreateAct: (contractId: string) => void;
+  onOpenIdentity: (caseId: string) => void;
   onCorrectName?: () => void;
   reviewer: string;
   onReviewerChange: (value: string) => void;
@@ -1687,10 +1728,10 @@ function RecordDetail({
   // scalar editor's own save (closeAndRefresh) closes it.
   const refreshRecordOnly = () => onRefresh();
 
-  // In-page jump chips, built from what this record actually renders, in
-  // on-page order (structured claims first, then the evidence below the
-  // divider). Buttons scroll rather than #hash anchors so the router URL —
-  // which carries ?review/?fix state — is never touched.
+  // In-page jump chips for long contract records (partners, places, acts,
+  // narrative). Person pages are short enough to scan; chips there only
+  // repeated the section titles. Buttons scroll rather than #hash anchors so
+  // the router URL — which carries ?review/?fix state — is never touched.
   const relatedSection = record.sections[0] ?? null;
   const jumpChips: { id: string; label: string }[] = [
     { id: "rec-details", label: "Details" },
@@ -1785,7 +1826,7 @@ function RecordDetail({
         </div>
       )}
 
-      {jumpChips.length > 2 && (
+      {record.table !== "person" && jumpChips.length > 2 && (
         <nav className="db-jumpnav" aria-label="Jump to a section of this record">
           {jumpChips.map((chip) => (
             <button
@@ -1857,6 +1898,73 @@ function RecordDetail({
           </div>
         ))}
       </dl>
+
+      {record.table === "person" && record.identity_status && !isToolHidden("people") && (
+        <section className="db-block pl-identity-status" id="rec-identity">
+          <div className="db-block-head">
+            <h3>Reviewed identity</h3>
+            {record.identity_status.split_flags && record.identity_status.split_flags.length > 0 ? (
+              <span className="status-chip status-review">Possibly several people</span>
+            ) : record.identity_status.person_ids.length > 1 ? (
+              <span className="status-chip status-strong">
+                {record.identity_status.person_ids.length} entered records linked
+              </span>
+            ) : null}
+          </div>
+          {(record.identity_status.split_flags ?? []).map((flag) => (
+            <div className="pl-identity-split" key={flag.case_id}>
+              <p>
+                Flagged as possibly containing several people
+                {flag.created_by || flag.created_at ? " — " : ""}
+                {[flag.created_by, formatIdentityWhen(flag.created_at)].filter(Boolean).join(", ")}
+                {flag.rationale ? `: ${flag.rationale}` : ""}
+                {flag.rationale && flag.rationale.endsWith(".") ? "" : "."}
+              </p>
+              <button
+                type="button"
+                className="pill-button"
+                onClick={() => onOpenIdentity(flag.case_id)}
+              >
+                Review this record in People →
+              </button>
+            </div>
+          ))}
+          {record.identity_status.person_ids.length > 1 ? (
+            <p>
+              This record belongs to a reviewed identity family with{" "}
+              {record.identity_status.person_ids.map((id, index) => (
+                <Fragment key={id}>
+                  {index > 0 ? ", " : null}
+                  {String(id) === record.id ? (
+                    <>#{id}</>
+                  ) : (
+                    <button
+                      type="button"
+                      className="pl-identity-id"
+                      onClick={() => onOpen("person", String(id))}
+                    >
+                      #{id}
+                    </button>
+                  )}
+                </Fragment>
+              ))}
+              . The entered rows remain unchanged.
+            </p>
+          ) : (
+            <p className="muted">No reviewer has linked this row to another person record.</p>
+          )}
+          {record.identity_status.open_count > 0 && (
+            <button
+              type="button"
+              className="pill-button is-primary"
+              onClick={() => onOpenIdentity(record.identity_status!.open_cases[0])}
+            >
+              Review {record.identity_status.open_count} possible related record
+              {record.identity_status.open_count === 1 ? "" : "s"} →
+            </button>
+          )}
+        </section>
+      )}
 
       {record.table === "contract" && (
         <div id="rec-partners">
