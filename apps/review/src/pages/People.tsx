@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   decidePersonLinkage,
@@ -8,6 +8,7 @@ import {
   revokePersonDecision,
 } from "../api";
 import CareerSpanRibbon from "../components/person-linkage/CareerSpanRibbon";
+import PersonLinkagePrimer from "../components/person-linkage/PersonLinkagePrimer";
 import ModelWaterfall from "../components/person-linkage/ModelWaterfall";
 import WordSourceDrawer from "../components/WordSourceDrawer";
 import { useEscapeLayer } from "../utils/escapeLayers";
@@ -28,7 +29,7 @@ const LANES: Array<{ id: PersonLinkageLane; label: string; note: string }> = [
   { id: "high_concordance", label: "High-concordance variants", note: "Name variation with aligned lineage, time, or business context" },
   { id: "read_source", label: "Read the source", note: "The structured fields cannot decide" },
   { id: "other_matches", label: "Other possible matches", note: "Ranked evidence; the human decides" },
-  { id: "possible_splits", label: "Possible combined identities", note: "One entered record may contain several people" },
+  { id: "possible_splits", label: "Possible combined identities", note: "One entry may contain several people" },
   { id: "decided", label: "Decided", note: "Reviewed links, refusals, and deferrals" },
   { id: "rule_exclusions", label: "Rule-based exclusions", note: "Impossible careers and explicit generations" },
 ];
@@ -59,26 +60,26 @@ function fieldStatus(persons: PersonLinkagePerson[], key: keyof PersonLinkagePer
 function fieldStatusLabel(status: string): string {
   if (status === "same") return "same recorded value";
   if (status === "different") return "different";
-  if (status === "missing") return "missing on some records";
+  if (status === "missing") return "missing on some entries";
   return "not recorded";
 }
 
 function laneQuestion(detail: PersonLinkageCase): string {
   // The labeling round asks the same neutral question for every case:
   // tier-specific phrasing would leak which stratum a blind case came from.
-  if (detail.lane === "labeling_round") return "Do these database records describe the same historical person?";
-  if (detail.kind === "split") return "Might this entered record contain more than one historical person?";
+  if (detail.lane === "labeling_round") return "Do these entries describe the same historical person?";
+  if (detail.kind === "split") return "Might this entry contain more than one historical person?";
   const tiers = detail.pairs.map((pair) => pair.deterministic_tier);
   if (tiers.includes("caution_coappearance")) {
-    return "These records occur in the same act — does it describe one person entered twice, or different people?";
+    return "These entries occur in the same contract. Is that one person entered twice, or two different people?";
   }
   if (tiers.includes("caution_gf_conflict")) {
     return "The recorded grandfathers differ — do the sources still describe one person?";
   }
   if (tiers.includes("caution_posthumous_conflict")) {
-    return "One record’s heirs appear before the other record’s later living activity — what do the acts show?";
+    return "One entry’s heirs appear in a contract before the other entry is last seen alive. What do the contracts show?";
   }
-  return "Do these database records describe the same historical person?";
+  return "Do these entries describe the same historical person?";
 }
 
 function PersonMatrix({
@@ -107,8 +108,8 @@ function PersonMatrix({
     <section className="pl-records" aria-labelledby="pl-name-heading">
       <div className="pl-section-head">
         <div>
-          <p className="eyebrow">Entered records</p>
-          <h2 id="pl-name-heading">Compare the records</h2>
+          <p className="eyebrow">Entries</p>
+          <h2 id="pl-name-heading">Compare the entries</h2>
         </div>
       </div>
       <div className="pl-matrix-scroll">
@@ -129,7 +130,7 @@ function PersonMatrix({
                   </span>
                   <span className="pl-record-actions">
                     <Link className="pl-record-button" to={`/database/person/${person.person_id}`}>
-                      View database record
+                      View database entry
                     </Link>
                     {splitFlaggedPersonIds.includes(person.person_id) ? (
                       <span className="pl-split-status">Flagged for split review</span>
@@ -206,10 +207,10 @@ function GroupPairMatrix({
   return (
     <section className="pl-section" aria-labelledby="pl-pair-matrix-heading">
       <p className="eyebrow">Whole-group check</p>
-      <h2 id="pl-pair-matrix-heading">How the records are connected</h2>
+      <h2 id="pl-pair-matrix-heading">How the entries are connected</h2>
       <p className="muted">
         A group can be held together by only some pair suggestions. Choose whether the next decision covers every
-        record, or only one pair.
+        entry, or only one pair.
       </p>
       <ul className="pl-pair-matrix">
         <li>
@@ -218,7 +219,7 @@ function GroupPairMatrix({
             onClick={() => onSelectScope("all")}
             type="button"
           >
-            <span>All {detail.persons.length} records</span>
+            <span>All {detail.persons.length} entries</span>
             <strong>Decision covers the whole group</strong>
           </button>
         </li>
@@ -277,7 +278,7 @@ function SharedOverlapPanel({ detail }: { detail: PersonLinkageCase }) {
       <p className="eyebrow">Business context</p>
       <h2 id="pl-overlap-heading">Shared connections</h2>
       <p className="pl-context-intro">
-        These records occur in some of the same business settings. That is context—not proof that they describe one
+        These entries occur in some of the same business settings. That is context—not proof that they describe one
         person.
       </p>
 
@@ -451,7 +452,7 @@ function AppearanceTables({ persons }: { persons: PersonLinkagePerson[] }) {
                   </tbody>
                 </table>
               </div>
-            ) : <p className="muted">This entered record is not attached to an investor appearance.</p>}
+            ) : <p className="muted">This entry does not appear in any contract.</p>}
           </div>
         ))}
       </div>
@@ -496,7 +497,7 @@ function EvidenceDrawer({
   const titles: Record<EvidenceDrawerKind, string> = {
     contracts: "Contract appearances",
     business: "Business context",
-    sources: "Source records",
+    sources: "Sources",
     history: "Review history",
   };
   return (
@@ -556,7 +557,7 @@ function EvidenceDrawer({
               {relatedSources.length ? (
                 <section className="pl-drawer-source-list">
                   <p className="muted">
-                    Word summaries from contracts where one of these records appears. Context, not a direct
+                    Word summaries from contracts where one of these entries appears. Context, not a direct
                     person-to-document link.
                   </p>
                   {detail.persons.map((person) => {
@@ -661,6 +662,14 @@ export default function People() {
   const [reservedForLabeling, setReservedForLabeling] = useState(0);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState(caseId ?? "");
+  // The primer shows by INTENT, never by absence: on arrival with no case in
+  // the URL, and whenever "How this works" asks for it. Deriving it from
+  // "no case selected" flashed the primer during lane switches (one render
+  // before the loader picks the first case) — intent state cannot flash.
+  // While intended, the loader also skips auto-selecting a first case.
+  const [showPrimer, setShowPrimer] = useState(!caseId);
+  const showPrimerRef = useRef(showPrimer);
+  showPrimerRef.current = showPrimer;
   const [detail, setDetail] = useState<PersonLinkageCase | null>(null);
   const [query, setQuery] = useState("");
   const [priorityBand, setPriorityBand] = useState("All");
@@ -693,6 +702,8 @@ export default function People() {
     setStranded(false);
     setStrandedAll(false);
     setOffset(0);
+    setShowPrimer(false);
+    setLoading(true);
     setSelected("");
     setDetail(null);
     setEvidenceDrawer(null);
@@ -724,7 +735,9 @@ export default function People() {
       setTotal(nextCases.total);
       setReservedForLabeling(nextCases.reserved_for_labeling ?? 0);
       setError("");
-      if (!selected || (!caseId && !nextCases.cases.some((item) => item.case_id === selected))) {
+      if (showPrimerRef.current) {
+        // The reader stays on the primer; the rail updates around them.
+      } else if (!selected || (!caseId && !nextCases.cases.some((item) => item.case_id === selected))) {
         const first = nextCases.cases[0]?.case_id ?? "";
         setSelected(first);
         if (first) navigate(`/people/${encodeURIComponent(first)}`, { replace: true });
@@ -783,6 +796,7 @@ export default function People() {
     setEvidenceDrawer(null);
     setSelectedCitations([]);
     setMobileQueueOpen(false);
+    setShowPrimer(false);
     navigate(`/people/${encodeURIComponent(id)}`);
   }, [navigate]);
 
@@ -845,8 +859,8 @@ export default function People() {
         ["same_as", "distinct"].includes(action) ? saved.event_id : null,
       );
       setMessage(
-        action === "same_as" ? "Linked as the same person. Both entered records remain unchanged."
-          : action === "distinct" ? "Recorded as different people. No entered record changed."
+        action === "same_as" ? "Linked as the same person. Both entries remain unchanged."
+          : action === "distinct" ? "Recorded as different people. No entry changed."
             : action === "flag_split" ? (
               secondarySplit
                 ? `Flagged person #${ids[0]} for split review. Please still decide this identity case.`
@@ -885,7 +899,7 @@ export default function People() {
   const confirmDecision = () => {
     if (!pendingDecision) return;
     if (["same_as", "distinct"].includes(pendingDecision) && scopedIds.length < 2) {
-      setError("Choose which records this decision covers.");
+      setError("Choose which entries this decision covers.");
       return;
     }
     if (pendingDecision === "same_as" && lane === "rule_exclusions" && !rationale.trim()) {
@@ -893,7 +907,7 @@ export default function People() {
       return;
     }
     if (pendingDecision === "flag_split" && splitPersonId === null) {
-      setError("Choose which entered record may contain several people.");
+      setError("Choose which entry may contain several people.");
       return;
     }
     const ids = pendingDecision === "flag_split" ? [splitPersonId!] : scopedIds;
@@ -966,7 +980,21 @@ export default function People() {
         <div className="db-rail-head">
           <p className="eyebrow">Person identity</p>
           <h1>Review people</h1>
-          <p>Decide when separate records describe the same historical person.</p>
+          <p>
+            Decide when separate entries describe the same historical person.{" "}
+            <button
+              type="button"
+              className="pl-primer-link"
+              onClick={() => {
+                setShowPrimer(true);
+                setSelected("");
+                setDetail(null);
+                navigate("/people");
+              }}
+            >
+              How does this work?
+            </button>
+          </p>
           <div className="pl-mobile-people-toolbar">
             <select
               aria-label="Person review lane"
@@ -1042,7 +1070,7 @@ export default function People() {
                   Stranded entries
                 </button>
                 <small className="pl-stranded-help">
-                  One side never appears in a contract. Ghost-tier groups stay in Likely duplicates.
+                  One side never appears in a contract. These groups also stay in Likely duplicates.
                 </small>
                 {stranded ? (
                   <label className="pl-stranded-scope">
@@ -1112,7 +1140,7 @@ export default function People() {
                   title={lane === "labeling_round" ? undefined : item.reasons?.[0] || undefined}
                 >
                   <span className="pl-case-tag">{queueTag}</span>
-                  <strong>{names.join(" ↔ ") || "Unnamed records"}</strong>
+                  <strong>{names.join(" ↔ ") || "Unnamed entries"}</strong>
                   <small>
                     {item.person_ids.map((id) => `#${id}`).join(" · ")}
                     {item.career.combined_span_years != null
@@ -1161,8 +1189,12 @@ export default function People() {
                 <h2>Labeling round unavailable</h2>
                 <p>The labeling packet was built against an older suggestion cache — regenerate it before labeling.</p>
               </>
+            ) : loading ? (
+              <h2>Loading people…</h2>
+            ) : showPrimer ? (
+              <PersonLinkagePrimer />
             ) : (
-              <h2>{loading ? "Loading people…" : "Choose a person-identity case"}</h2>
+              <h2>Choose a person-identity case</h2>
             )}
             {error ? <p className="error-text">{error}</p> : null}
           </div>
@@ -1174,10 +1206,10 @@ export default function People() {
                 <p className="case-bar-question">{laneQuestion(detail)}</p>
                 <p className="case-bar-context">
                   {detail.persons.length === 1
-                    ? "This entered record remains unchanged."
+                    ? "This entry remains unchanged."
                     : detail.persons.length === 2
-                      ? "Both entered records remain unchanged."
-                      : `All ${detail.persons.length} entered records remain unchanged.`}
+                      ? "Both entries remain unchanged."
+                      : `All ${detail.persons.length} entries remain unchanged.`}
                   {" "}Decisions are logged and reversible.
                 </p>
               </div>
@@ -1240,7 +1272,7 @@ export default function People() {
               ) : detail.lane === "labeling_round" ? (
                 <section className="pl-blind-labeling-note">
                   <strong>Model output is hidden for this labeling round.</strong>
-                  <span>Your decision should be based on the records and source evidence. Model ordering appears after review.</span>
+                  <span>Base your decision on the entries and the sources. Model ordering appears after review.</span>
                 </section>
               ) : detail.persons.length >= 3 ? (
                 <section className="pl-blind-labeling-note">
@@ -1282,7 +1314,7 @@ export default function People() {
                 >
                   <span className="pl-evidence-icon" aria-hidden="true">¶</span>
                   <span>
-                    <strong>Source records</strong>
+                    <strong>Sources</strong>
                     <small>
                       {detail.lane === "read_source"
                         ? "Required for this case"
@@ -1301,13 +1333,13 @@ export default function People() {
               </nav>
 
               <p className="pl-impact-note">
-                <strong>{scopedIds.length} entered record{scopedIds.length === 1 ? "" : "s"}</strong>
+                <strong>{scopedIds.length} {scopedIds.length === 1 ? "entry" : "entries"}</strong>
                 {scopedIds.length > 1 ? " → 1 reviewed identity if linked" : ""}
                 {" · "}{scopedAppearanceCount} appearance{scopedAppearanceCount === 1 ? " remains" : "s remain"} unchanged
               </p>
             </div>
 
-            <section className="pl-decision-bar" aria-label="Record identity decision">
+            <section className="pl-decision-bar" aria-label="Identity decision">
               {pendingDecision ? (
                 <div className="pl-decision-confirm">
                   <div className="pl-decision-confirm-head">
@@ -1316,9 +1348,9 @@ export default function People() {
                       <strong>
                         {pendingDecision === "same_as" ? (
                           lane === "rule_exclusions"
-                            ? `Override rule: link ${scopedIds.length} records`
-                            : `Link ${scopedIds.length} records as one reviewed identity`
-                        ) : pendingDecision === "distinct" ? `Keep ${scopedIds.length} records different`
+                            ? `Override rule: link ${scopedIds.length} entries`
+                            : `Link ${scopedIds.length} entries as one reviewed identity`
+                        ) : pendingDecision === "distinct" ? `Keep ${scopedIds.length} entries different`
                           : pendingDecision === "defer" ? "Not enough evidence"
                             : pendingDecision === "flag_split" ? "Possible combined identity"
                               : "Record inspected rule sample"}
@@ -1336,7 +1368,7 @@ export default function People() {
                     </button>
                   </div>
                   {pendingDecision === "flag_split" && detail.persons.length > 1 ? (
-                    <div className="pl-split-choices" role="group" aria-label="Record that may contain several people">
+                    <div className="pl-split-choices" role="group" aria-label="Entry that may contain several people">
                       {detail.persons.map((person) => (
                         <button
                           className={splitPersonId === person.person_id ? "is-selected" : ""}
@@ -1399,7 +1431,7 @@ export default function People() {
                       type="button"
                     >
                       {busy ? "Saving…" : pendingDecision === "flag_split" && detail.kind !== "split"
-                        ? "Flag record"
+                        ? "Flag entry"
                         : pendingDecision === "flag_split"
                           ? "Flag and continue"
                           : pendingDecision === "bulk_rule_ack"
@@ -1416,10 +1448,10 @@ export default function People() {
                     <span>Your decision</span>
                     <strong>
                       {detail.person_ids.length > 1
-                        ? "Do these records describe the same historical person?"
-                        : "Does this entered record contain more than one historical person?"}
+                        ? "Do these entries describe the same historical person?"
+                        : "Does this entry contain more than one historical person?"}
                     </strong>
-                    <small>Original rows remain unchanged · every decision can be undone</small>
+                    <small>The entries themselves stay unchanged · every decision can be undone</small>
                   </div>
                   <div className="pl-decision-action-area">
                     {needsGroupScope ? (
@@ -1456,7 +1488,7 @@ export default function People() {
                         onClick={() => chooseDecision("flag_split")}
                         type="button"
                       >
-                        Flag one record as possibly containing multiple people…
+                        Flag one entry as possibly containing multiple people…
                       </button>
                     ) : null}
                   </div>

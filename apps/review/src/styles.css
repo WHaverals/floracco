@@ -5196,7 +5196,6 @@ progress {
 }
 
 
-
 /* --- Record page: full-width narrative, inline compare, inline editing ------ */
 .db-block-head {
   align-items: baseline;
@@ -8059,3 +8058,1500 @@ progress {
     margin-left: 0;
   }
 }
+
+
+/* ---- Person-identity primer: the empty workspace teaches the tool.
+   Deliberately not a popup — read on arrival, back whenever nothing is
+   selected. Left-aligned reading column inside the centered empty pane. ---- */
+
+/* The workspace clips overflow (the case view scrolls via pl-review-body);
+   the People empty pane must scroll on its own or a tall primer is cut off. */
+.pl-workspace > .db-detail-empty {
+  flex: 1;
+  /* the shared empty-pane rule caps width at 560px — the primer brings its
+     own 640px column, so the People pane lifts the cap and lets the primer
+     center itself */
+  max-width: none;
+  min-height: 0;
+  overflow-y: auto;
+  padding-left: 22px;
+  padding-right: 22px;
+  padding-top: 22px;
+}
+
+.pl-primer {
+  margin: 0 auto;
+  min-width: 0;
+  width: 100%;
+  /* wide stage for the figures — cards, charts, the network, the table —
+     while paragraphs below cap their own measure at 70ch so prose never
+     stretches with the pane */
+  max-width: 920px;
+  padding: 34px 8px 60px;
+  text-align: left;
+}
+
+.pl-primer > p,
+.pl-primer-panel > p,
+.pl-primer-principle,
+.pl-primer-note,
+.pl-pg-features {
+  max-width: 800px;
+}
+
+.pl-primer h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.55rem;
+  font-weight: 500;
+  margin: 4px 0 12px;
+}
+
+.pl-primer h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 26px 0 8px;
+}
+
+.pl-primer p,
+.pl-primer li,
+.pl-primer figcaption,
+.pl-primer td {
+  color: #4d4033;
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.pl-primer p {
+  margin: 0 0 10px;
+}
+
+.pl-primer ul {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.pl-primer li {
+  margin-bottom: 7px;
+}
+
+.pl-primer-principle {
+  border-left: 3px solid #b07a47;
+  color: #684313;
+  font-weight: 600;
+  margin: 14px 0;
+  padding: 2px 0 2px 12px;
+}
+
+/* The case page's evidence chart, shown in the primer under a caption. */
+.pl-primer-tool {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 12px;
+  margin: 12px 0 16px;
+  padding: 10px 14px 8px;
+}
+
+.pl-primer-tool .pl-waterfall {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.pl-primer-tool > figcaption {
+  color: #806f62;
+  font-size: 0.78rem;
+  margin-top: 8px;
+}
+
+.pl-primer-tool .pl-no-evidence {
+  margin-top: 8px;
+}
+
+/* The ladder of outcomes for one comparison: a spine with a rung per
+   outcome and the rung this pair stands on filled. No bars, so it cannot be
+   read as a result chart. */
+.pl-ladder {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 10px;
+  margin: 10px 0;
+  padding: 10px 14px 8px;
+}
+
+.pl-ladder > figcaption {
+  color: #806f62;
+  font-size: 0.74rem;
+  margin-bottom: 8px;
+}
+
+.pl-ladder ol {
+  border-left: 2px solid #e4d8c7;
+  list-style: none;
+  margin: 0 0 0 6px;
+  padding: 0;
+}
+
+.pl-ladder li {
+  align-items: baseline;
+  color: #4d4033;
+  display: grid;
+  font-size: 0.86rem;
+  gap: 10px;
+  grid-template-columns: 1fr 44px auto;
+  margin: 0;
+  padding: 5px 10px 5px 16px;
+  position: relative;
+}
+
+.pl-ladder li::before {
+  background: #fffaf3;
+  border: 2px solid #b5a692;
+  border-radius: 50%;
+  content: "";
+  height: 8px;
+  left: -7px;
+  position: absolute;
+  top: 10px;
+  width: 8px;
+}
+
+.pl-ladder li b {
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.pl-ladder li em {
+  color: #2f5127;
+  font-size: 0.72rem;
+}
+
+.pl-ladder li.is-chosen {
+  background: rgba(125, 154, 104, 0.13);
+  border-radius: 0 6px 6px 0;
+  color: #241d18;
+  font-weight: 600;
+}
+
+.pl-ladder li.is-chosen::before {
+  background: #627f50;
+  border-color: #627f50;
+}
+
+.pl-ladder li.is-null {
+  color: #9a8a78;
+  font-style: italic;
+}
+
+.pl-ladder li.is-null::before {
+  border-style: dashed;
+}
+
+.pl-ladder-note {
+  border-top: 1px dashed #e4d8c7;
+  color: #806f62;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  margin: 8px 0 0;
+  padding-top: 6px;
+}
+
+.pl-primer-note {
+  color: #806f62;
+  font-size: 0.74rem;
+}
+
+/* The way into the primer: a quiet amber link at the end of the rail's
+   description sentence, set in that sentence's own type. */
+.pl-primer-link {
+  background: none;
+  border: none;
+  color: #d6aa7d;
+  cursor: pointer;
+  display: inline;
+  font: inherit;
+  margin: 0;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.pl-primer-link:hover {
+  color: #e8c9a3;
+}
+
+.pl-primer-link:focus-visible {
+  outline: 2px solid #b58a61;
+  outline-offset: 2px;
+}
+
+/* Panels: one idea each, separated by a hairline. */
+.pl-primer-panel {
+  border-top: 1px solid #eadfcc;
+  margin-top: 20px;
+  padding-top: 14px;
+}
+
+.pl-primer-panel h3 {
+  margin: 0 0 10px;
+}
+
+/* The introduction: prose across the stage at the homepage's reading
+   scale, with the worked example in the flow of the text. */
+.pl-primer-intro p {
+  color: #2e2620;
+  font-size: 1.02rem;
+  line-height: 1.72;
+  margin: 0 0 14px;
+  max-width: none;
+}
+
+.pl-primer-intro .term {
+  border-bottom: 1.5px solid #d8b48a;
+  font-weight: 500;
+}
+
+/* The example: six records in three braced pairs. */
+/* Every figure on the primer is one box with its caption inside it, so the
+   caption reads as part of the figure and nothing sits loose on the page. */
+.pl-ex {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 12px;
+  margin: 4px 0 16px;
+  padding: 10px 14px 8px;
+}
+
+.pl-ex-scroll {
+  box-sizing: border-box;
+  min-width: 100%;
+  overflow-x: auto;
+  width: 0;
+}
+
+.pl-ex-head,
+.pl-ex-group {
+  align-items: stretch;
+  display: grid;
+  gap: 0 12px;
+  grid-template-columns: minmax(600px, 1fr) 12px 230px;
+}
+
+/* Narrow panes: the brace goes, and each pair's label sits beneath it. */
+@media (max-width: 1250px) {
+  .pl-ex-head,
+  .pl-ex-group {
+    grid-template-columns: 1fr;
+  }
+
+  .pl-ex-brace {
+    display: none;
+  }
+
+  .pl-ex-label {
+    padding: 0 0 8px 72px;
+  }
+}
+
+.pl-ex-row {
+  align-items: baseline;
+  display: grid;
+  gap: 0 10px;
+  grid-template-columns: 62px 1fr 1.25fr 1fr 1fr 92px 40px;
+  padding: 5px 0;
+}
+
+.pl-ex-head .pl-ex-row {
+  border-bottom: 1px solid #eadfcc;
+  padding-bottom: 6px;
+}
+
+.pl-ex-head .pl-ex-row > span {
+  color: #806f62;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pl-ex-group + .pl-ex-group .pl-ex-rows {
+  border-top: 1px solid #efe6d6;
+}
+
+.pl-ex-rows {
+  padding: 4px 0;
+}
+
+.pl-ex-row > span {
+  color: #241d18;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pl-ex-id {
+  color: #806f62;
+  font-size: 0.8rem;
+}
+
+.pl-ex-acts {
+  text-align: right;
+}
+
+.pl-ex-row > span.is-blank {
+  color: #b5a692;
+}
+
+.pl-ex-row > span.is-key {
+  background: #f3ecdf;
+  border-radius: 4px;
+  margin-left: -5px;
+  padding: 0 5px;
+}
+
+/* The letter that sets two spellings apart: rust, with a small dot beneath
+   it. Nothing is painted behind the letter, so its neighbours stay clear. */
+.pl-ex-diff {
+  color: #7c3b2b;
+  font-weight: 700;
+  position: relative;
+}
+
+.pl-ex-diff::after {
+  background: #c2694f;
+  border-radius: 50%;
+  bottom: -5px;
+  content: "";
+  height: 4px;
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+  width: 4px;
+}
+
+.pl-ex-brace {
+  border: 1.5px solid #c9b899;
+  border-left: none;
+  border-radius: 0 7px 7px 0;
+  display: block;
+  margin: 9px 0;
+}
+
+.pl-ex-label {
+  align-self: center;
+  color: #5a4632;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.92rem;
+  font-style: italic;
+  line-height: 1.35;
+}
+
+.pl-ex > figcaption {
+  color: #806f62;
+  font-size: 0.78rem;
+  margin-top: 8px;
+}
+
+/* The pair panel's record comparison: fields down, two records across,
+   the shape of the case page's "Compare the records" panel. */
+.pl-cmp {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 12px;
+  margin: 4px 0 16px;
+  padding: 10px 16px 8px;
+}
+
+.pl-cmp-grid {
+  display: grid;
+  gap: 0 16px;
+  grid-template-columns: 150px 1fr 1fr;
+}
+
+.pl-cmp-grid > span {
+  border-top: 1px solid #efe6d6;
+  color: #241d18;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  padding: 5px 0;
+}
+
+.pl-cmp-grid > .pl-cmp-head {
+  border-top: none;
+  color: #806f62;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.pl-cmp-grid > .pl-cmp-field {
+  color: #806f62;
+}
+
+.pl-cmp-grid > .is-blank {
+  color: #9a8a78;
+  font-style: italic;
+}
+
+.pl-cmp-grid > .is-span {
+  grid-column: 2 / 4;
+}
+
+.pl-cmp > figcaption {
+  color: #806f62;
+  font-size: 0.78rem;
+  margin-top: 8px;
+}
+
+@media (max-width: 700px) {
+  .pl-cmp-grid {
+    grid-template-columns: 110px 1fr 1fr;
+  }
+}
+
+/* The pair's business circle: a force layout in the site's palette, with a
+   dark balloon on hover (the same balloon as the framework term). */
+.pl-circle {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 12px;
+  margin: 4px 0 16px;
+  padding: 6px 8px 8px;
+}
+
+.pl-circle-stage {
+  overflow: visible;
+  position: relative;
+}
+
+.pl-circle-stage svg {
+  display: block;
+  width: 100%;
+}
+
+.pl-circle-link {
+  stroke: #ddcfbb;
+  stroke-linecap: round;
+  transition: opacity 120ms ease;
+}
+
+.pl-circle-link.is-shared {
+  stroke: #8fa883;
+}
+
+.pl-circle-link.is-firm {
+  stroke: #b07a47;
+}
+
+.pl-circle-link.is-active {
+  stroke: #627f50;
+}
+
+.pl-circle-link.is-active.is-firm {
+  stroke: #8c6239;
+}
+
+.pl-circle-link.is-dim {
+  opacity: 0.25;
+}
+
+.pl-circle-hit {
+  cursor: help;
+  stroke: transparent;
+  stroke-width: 12;
+}
+
+.pl-circle-node {
+  cursor: help;
+  outline: none;
+  transition: opacity 120ms ease;
+}
+
+.pl-circle-node circle {
+  fill: #fff;
+  stroke: #c9b899;
+  stroke-width: 1.5;
+}
+
+.pl-circle-node.is-shared circle {
+  fill: #627f50;
+  stroke: #4c6440;
+}
+
+.pl-circle-node.is-candidate circle {
+  fill: #efe6d6;
+  stroke: #8c6239;
+  stroke-width: 2;
+}
+
+.pl-circle-node.is-dim {
+  opacity: 0.3;
+}
+
+.pl-circle-node:focus-visible circle {
+  stroke: #2d2118;
+  stroke-width: 3;
+}
+
+.pl-circle-label {
+  fill: #4d4033;
+  font-size: 9.5px;
+  pointer-events: none;
+}
+
+/* Every label wears a halo in the stage colour, so it stays legible where a
+   line passes beneath it. */
+.pl-circle-label,
+.pl-circle-cand-label,
+.pl-circle-cand-name {
+  paint-order: stroke;
+  stroke: #fffaf3;
+  stroke-linejoin: round;
+  stroke-width: 4px;
+}
+
+.pl-circle-cand-label {
+  fill: #806f62;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  text-transform: uppercase;
+}
+
+.pl-circle-cand-name {
+  fill: #241d18;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px;
+  font-style: italic;
+  pointer-events: none;
+}
+
+.pl-circle-tip {
+  background: #302720;
+  border-radius: 9px;
+  box-shadow: 0 3px 14px rgba(40, 25, 15, 0.25);
+  color: #efe4d5;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.74rem;
+  gap: 3px;
+  line-height: 1.4;
+  max-width: 320px;
+  padding: 9px 11px;
+  pointer-events: none;
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 10px));
+  /* max-content: size by the text, not by the room left of the container's
+     edge, which would squeeze a tooltip placed near the right side. */
+  width: max-content;
+  z-index: 30;
+}
+
+.pl-circle-tip.is-below {
+  transform: translate(-50%, 10px);
+}
+
+.pl-circle-tip.is-left {
+  transform: translate(-12px, calc(-100% - 10px));
+}
+
+.pl-circle-tip.is-left.is-below {
+  transform: translate(-12px, 10px);
+}
+
+.pl-circle-tip.is-right {
+  transform: translate(calc(-100% + 12px), calc(-100% - 10px));
+}
+
+.pl-circle-tip.is-right.is-below {
+  transform: translate(calc(-100% + 12px), 10px);
+}
+
+.pl-circle-tip strong {
+  color: #fff;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+
+.pl-circle-tip-id {
+  color: #c9b899;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+
+/* What matters in a balloon: identifiers in the site's amber, years bold,
+   the renewed firm in green wherever it appears. */
+.pl-circle-tip-ref {
+  color: #d6aa7d;
+  font-weight: 600;
+}
+
+.pl-circle-tip-year {
+  color: #fff;
+  font-weight: 600;
+}
+
+.pl-circle-tip-firm {
+  color: #d9ccb9;
+  font-style: italic;
+}
+
+.pl-circle-tip-firm.is-shared {
+  color: #a8bd97;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.pl-circle > figcaption {
+  align-items: center;
+  color: #806f62;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  gap: 6px 14px;
+  margin: 8px 6px 0;
+}
+
+.pl-circle > figcaption span {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+}
+
+.pl-circle-caption {
+  flex-basis: 100%;
+}
+
+.pl-circle-key {
+  background: #fff;
+  border: 1.5px solid #c9b899;
+  border-radius: 50%;
+  display: inline-block;
+  height: 9px;
+  width: 9px;
+}
+
+.pl-circle-key.is-shared {
+  background: #627f50;
+  border-color: #4c6440;
+}
+
+.pl-circle-key-line {
+  border-top: 2.5px solid #b07a47;
+  display: inline-block;
+  height: 0;
+  width: 18px;
+}
+
+/* Panel 1: the three shapes, abstract. A figure is a person, a card is a
+   record, a bracket is "was entered as". */
+.pl-pg-faces {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 10px 0 8px;
+}
+
+@media (max-width: 900px) {
+  .pl-pg-faces {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pl-pg-face {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 10px;
+  margin: 0;
+  padding: 14px 14px 10px;
+}
+
+.pl-pg-face svg {
+  display: block;
+  margin: 0 auto;
+  max-width: 250px;
+  width: 100%;
+}
+
+.pl-pg-face figcaption {
+  color: #4d4033;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  margin-top: 10px;
+  text-align: center;
+}
+
+.pl-pg-face figcaption strong {
+  color: #241d18;
+}
+
+.pl-pg-person circle,
+.pl-pg-person path {
+  fill: #8c6239;
+}
+
+.pl-pg-bracket {
+  fill: none;
+  stroke: #c9b899;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.pl-pg-record > rect:first-child {
+  fill: #fff;
+  stroke: #d8c7ac;
+  stroke-width: 1.2;
+}
+
+.pl-pg-record-line {
+  fill: #e4d8c7;
+}
+
+.pl-pg-record.is-ghost > rect:first-child {
+  fill: none;
+  stroke-dasharray: 3 3;
+}
+
+.pl-pg-record.is-ghost .pl-pg-record-line {
+  fill: #efe6d6;
+}
+
+/* Panel 2: the naming custom on a timeline, then the minimal pairs. */
+.pl-primer-body > p {
+  color: #2e2620;
+  font-size: 1.02rem;
+  line-height: 1.72;
+  margin: 0 0 14px;
+  max-width: none;
+}
+
+/* Endnotes. A small amber number in the text; the notes at the foot of the
+   primer, numbered in the margin of their own list, each with a return
+   link. The arrival point of a jump flashes for a moment. */
+/* Weights in bits inside the prose: tabular figures, a sign, and the
+   colour of the bar they correspond to in the charts. */
+.pl-bits {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pl-bits.is-for {
+  color: #4f6b3e;
+}
+
+.pl-bits.is-against {
+  color: #99503e;
+}
+
+.pl-bits.is-sum {
+  color: #241d18;
+}
+
+.pl-fn-ref {
+  font-size: 0.68em;
+  line-height: 0;
+  margin-left: 1px;
+  vertical-align: super;
+}
+
+.pl-fn-ref a {
+  color: #b07a47;
+  font-weight: 700;
+  padding: 0 2px;
+  text-decoration: none;
+}
+
+.pl-fn-ref a:hover,
+.pl-fn-ref a:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pl-fn-ref.is-flash a {
+  background: #f3e3c9;
+  border-radius: 3px;
+}
+
+.pl-primer-notes ol {
+  counter-reset: endnote;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pl-primer-notes li {
+  border-radius: 6px;
+  color: #4d4033;
+  counter-increment: endnote;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  margin: 0 0 9px;
+  padding: 3px 8px 3px 40px;
+  position: relative;
+  transition: background 600ms ease;
+}
+
+.pl-primer-notes li::before {
+  color: #b07a47;
+  content: counter(endnote);
+  font-size: 0.74rem;
+  font-weight: 700;
+  left: 12px;
+  position: absolute;
+  top: 6px;
+}
+
+.pl-primer-notes li.is-flash {
+  background: #f7efe0;
+}
+
+/* An inline jump to a figure, and the figure's brief flash on arrival. */
+.pl-primer-jump {
+  color: #9d7355;
+  text-decoration: underline;
+  text-decoration-color: #d8c7ac;
+  text-underline-offset: 2px;
+}
+
+.pl-primer-jump:hover {
+  color: #7c3b2b;
+}
+
+.pl-ruler.is-flash {
+  box-shadow: 0 0 0 3px #f3e3c9;
+  transition: box-shadow 600ms ease;
+}
+
+.pl-primer-notes a {
+  color: #9d7355;
+}
+
+.pl-fn-back {
+  color: #b07a47;
+  display: inline-block;
+  font-size: 0.82rem;
+  line-height: 1;
+  margin-left: 4px;
+  padding: 0 3px;
+  text-decoration: none;
+  vertical-align: baseline;
+}
+
+.pl-fn-back:hover,
+.pl-fn-back:focus-visible {
+  color: #7a5533;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pl-primer-notes sub,
+.pl-primer-notes sup {
+  font-size: 0.7em;
+}
+
+/* The bits ruler: two framed cases on one compact scale. */
+.pl-ruler {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 12px;
+  margin: 4px 0 16px;
+  overflow-x: auto;
+  padding: 10px 12px 8px;
+}
+
+.pl-ruler svg {
+  display: block;
+  min-width: 640px;
+  width: 100%;
+}
+
+.pl-ruler-axis,
+.pl-ruler-tick {
+  stroke: #c9b899;
+  stroke-width: 1;
+}
+
+.pl-ruler-bits {
+  fill: #241d18;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-ruler-odds {
+  fill: #806f62;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 9.5px;
+  font-style: italic;
+}
+
+.pl-ruler-odds.is-against {
+  fill: #99503e;
+}
+
+.pl-ruler-case {
+  fill: #fffdf9;
+  stroke: #e4d8c7;
+  stroke-width: 1;
+}
+
+.pl-ruler-title {
+  fill: #241d18;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pl-ruler-subtitle {
+  fill: #806f62;
+  font-size: 10px;
+}
+
+.pl-ruler-head-rule {
+  stroke: #eadfcc;
+  stroke-width: 1;
+}
+
+.pl-ruler-hole {
+  fill: #f3e4d8;
+  opacity: 0.55;
+}
+
+.pl-ruler-even {
+  stroke: #cdbfab;
+  stroke-width: 1;
+}
+
+.pl-ruler-line {
+  stroke: #627f50;
+  stroke-dasharray: 4 4;
+  stroke-width: 1.3;
+}
+
+.pl-ruler-linelabel {
+  fill: #4c6440;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 10px;
+  font-style: italic;
+}
+
+.pl-ruler-evenlabel {
+  fill: #a08877;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 9.5px;
+  font-style: italic;
+}
+
+.pl-ruler-doubt {
+  fill: #d9a693;
+}
+
+.pl-ruler-gain {
+  fill: #8fa883;
+}
+
+.pl-ruler-join {
+  stroke: #b8a68f;
+  stroke-dasharray: 2 3;
+  stroke-width: 1;
+}
+
+.pl-ruler-step {
+  fill: #241d18;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-ruler-step-word {
+  fill: #6d5d4e;
+  font-size: 10px;
+}
+
+.pl-ruler-total {
+  fill: #2f5127;
+  font-size: 11.5px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: #fffdf9;
+  stroke-linejoin: round;
+  stroke-width: 4px;
+}
+
+.pl-ruler > figcaption {
+  color: #806f62;
+  font-size: 0.78rem;
+  margin-top: 7px;
+}
+
+/* The lanes of the rail explained: one boxed table in the rail's own
+   order, the lane's name in the left column and what to do there on the
+   right, a hairline between rows. */
+.pl-lanes-table {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 12px;
+  margin: 10px 0 16px;
+  padding: 4px 16px 8px;
+}
+
+.pl-lanes-table dl {
+  margin: 0;
+}
+
+.pl-lanes-table dl > div {
+  border-top: 1px solid #eadfcc;
+  display: grid;
+  gap: 0 20px;
+  grid-template-columns: 236px minmax(0, 1fr);
+  padding: 9px 0;
+}
+
+.pl-lanes-table dl > div:first-child {
+  border-top: 0;
+}
+
+.pl-lanes-table dt {
+  color: #241d18;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: 0;
+  text-transform: none;
+}
+
+.pl-lanes-table dd {
+  color: #4d4033;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.pl-lanes-table > figcaption {
+  border-top: 1px solid #eadfcc;
+  color: #806f62;
+  font-size: 0.78rem;
+  margin-top: 2px;
+  padding-top: 8px;
+}
+
+@media (max-width: 700px) {
+  .pl-lanes-table dl > div {
+    grid-template-columns: 1fr;
+    gap: 3px 0;
+  }
+}
+
+
+.pl-tl {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 12px;
+  margin: 4px 0 16px;
+  overflow-x: auto;
+  padding: 10px 12px 8px;
+}
+
+.pl-tl svg {
+  display: block;
+  min-width: 640px;
+  width: 100%;
+}
+
+.pl-tl-chain {
+  fill: #4d4033;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.pl-tl-chip {
+  fill: #fff;
+  stroke: #d8c7ac;
+  stroke-width: 1.2;
+}
+
+.pl-tl-chip-text {
+  fill: #4d4033;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.pl-tl-measure {
+  stroke: #9a8a78;
+  stroke-width: 1;
+}
+
+.pl-tl-note {
+  fill: #806f62;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 10px;
+  font-style: italic;
+}
+
+/* Green marks what the two entries share, as in the circle figure below:
+   the two contracts of the renewed firm and the connector between them. */
+.pl-tl-ring {
+  fill: #a8bd97;
+  stroke: #627f50;
+  stroke-width: 2;
+}
+
+.pl-tl-link {
+  fill: none;
+  stroke: #627f50;
+  stroke-dasharray: 3 4;
+  stroke-width: 1.3;
+}
+
+.pl-tl-link-label {
+  fill: #2f5127;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 10px;
+  font-style: italic;
+}
+
+.pl-tl-year {
+  fill: #806f62;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-tl > figcaption {
+  color: #806f62;
+  font-size: 0.78rem;
+  margin-top: 6px;
+}
+
+/* Panel 3: the five chips */
+/* Panel 4: the two charts side by side */
+/* Panel 5: the dock as it appears on a case (non-interactive replica,
+   reusing the dock's own classes so it follows any restyle), then one plain
+   line per answer. */
+.pl-primer-dock {
+  margin: 6px 0 12px;
+  pointer-events: none;
+}
+
+.pl-primer-dock .pl-decision-bar {
+  margin: 0;
+}
+
+.pl-pg-answers {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.pl-pg-answers li {
+  color: #2e2620;
+  font-size: 0.98rem;
+  line-height: 1.55;
+  margin: 0 0 6px;
+  max-width: 76ch;
+}
+
+.pl-pg-answers strong {
+  color: #241d18;
+}
+
+
+/* ---- Primer: the score, expanded — the equation, the framework balloon,
+   partial-level strip; and the business-circle network panel. ---- */
+
+.pl-pg-eqn {
+  align-items: center;
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  justify-content: center;
+  margin: 10px 0;
+  padding: 12px 10px;
+}
+
+.pl-pg-eqn-term {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 46px;
+}
+
+.pl-pg-eqn-term i {
+  color: #806f62;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.7rem;
+  font-style: italic;
+  white-space: nowrap;
+}
+
+.pl-pg-eqn-term b {
+  font-size: 0.98rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-pg-eqn-term.is-for b {
+  color: #627f50;
+}
+
+.pl-pg-eqn-term.is-against b {
+  color: #99503e;
+}
+
+.pl-pg-eqn-term.is-final b {
+  color: #241d18;
+}
+
+.pl-pg-eqn-op {
+  color: #9a8a78;
+  font-size: 0.95rem;
+}
+
+/* The framework term with its info balloon (hover or keyboard focus). */
+.pl-pg-term {
+  position: relative;
+  white-space: nowrap;
+}
+
+.pl-pg-info {
+  align-items: center;
+  background: none;
+  border: 1px solid #cbbdab;
+  border-radius: 50%;
+  color: #786959;
+  cursor: help;
+  display: inline-flex;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.62rem;
+  height: 15px;
+  justify-content: center;
+  margin-left: 4px;
+  padding: 0;
+  vertical-align: 2px;
+  width: 15px;
+}
+
+.pl-pg-info:focus-visible {
+  outline: 2px solid #b58a61;
+  outline-offset: 1px;
+}
+
+.pl-pg-balloon {
+  background: #302720;
+  border-radius: 9px;
+  bottom: calc(100% + 8px);
+  box-shadow: 0 3px 14px rgba(40, 25, 15, 0.25);
+  color: #efe4d5;
+  display: none;
+  font-size: 0.74rem;
+  left: 50%;
+  line-height: 1.45;
+  padding: 9px 11px;
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: normal;
+  width: 270px;
+  z-index: 30;
+}
+
+.pl-pg-term:hover .pl-pg-balloon,
+.pl-pg-info:focus-visible + .pl-pg-balloon,
+.pl-pg-info:focus + .pl-pg-balloon {
+  display: block;
+}
+
+/* Partial-agreement strip: one comparison, three levels, three weights. */
+.pl-pg-levels {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 10px;
+  display: grid;
+  gap: 5px;
+  margin: 10px 0;
+  padding: 10px 14px;
+}
+
+.pl-pg-levels-title {
+  color: #806f62;
+  font-size: 0.74rem;
+  margin-bottom: 2px;
+}
+
+.pl-pg-level {
+  align-items: center;
+  color: #4d4033;
+  display: grid;
+  font-size: 0.84rem;
+  gap: 10px;
+  grid-template-columns: minmax(120px, 34%) 1fr 34px;
+}
+
+.pl-pg-level i {
+  border-radius: 999px;
+  display: block;
+  height: 8px;
+}
+
+.pl-pg-level i.is-for {
+  background: linear-gradient(90deg, #a8bd97, #627f50);
+}
+
+.pl-pg-level i.is-against {
+  background: linear-gradient(90deg, #99503e, #d59b8c);
+}
+
+.pl-pg-level b {
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.pl-pg-level.is-null {
+  color: #9a8a78;
+  font-style: italic;
+}
+
+.pl-pg-level.is-null i {
+  background: none;
+  border-top: 1px dashed #d8c7ac;
+  height: 0;
+}
+
+.pl-pg-eqn-term i b {
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-style: normal;
+  font-weight: 600;
+}
+
+/* The business-circle network. */
+.pl-pg-net {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 10px;
+  margin: 10px 0;
+  padding: 10px 14px;
+}
+
+.pl-pg-net svg {
+  display: block;
+  margin: 0 auto;
+  max-width: 480px;
+  width: 100%;
+}
+
+.pl-pg-net line {
+  stroke: #c9b899;
+  stroke-width: 1.5;
+}
+
+.pl-pg-net circle {
+  fill: #fff;
+  stroke: #c9b899;
+  stroke-width: 1.5;
+}
+
+.pl-pg-net .pl-pg-net-cand {
+  fill: #efe6d6;
+  stroke: #8c6239;
+}
+
+.pl-pg-net .pl-pg-net-shared {
+  fill: #627f50;
+  stroke: #4c6440;
+}
+
+.pl-pg-net line.is-shared {
+  stroke: #627f50;
+  stroke-width: 2;
+}
+
+.pl-pg-net .pl-pg-net-sub {
+  fill: #4d4033;
+  font-family: inherit;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.pl-pg-net .pl-pg-net-tiny {
+  fill: #9a8a78;
+  font-family: inherit;
+  font-size: 8px;
+}
+
+.pl-pg-for {
+  color: #627f50;
+  font-weight: 600;
+}
+
+.pl-pg-net text {
+  fill: #4d4033;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px;
+  text-anchor: middle;
+}
+
+.pl-pg-net .pl-pg-net-note {
+  fill: #806f62;
+  font-family: inherit;
+  font-size: 9px;
+  font-style: italic;
+}
+
+.pl-pg-net figcaption {
+  margin-top: 8px;
+}
+
+
+/* Primer: the five-feature table — plain terms, no chips. */
+.pl-pg-features {
+  border-collapse: collapse;
+  margin: 10px 0 4px;
+  width: 100%;
+}
+
+.pl-pg-features th {
+  color: #241d18;
+  font-size: 0.84rem;
+  padding: 7px 14px 7px 0;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.pl-pg-features td {
+  padding: 7px 0;
+}
+
+.pl-pg-features tr + tr th,
+.pl-pg-features tr + tr td {
+  border-top: 1px solid #eadfcc;
+}
+
+/* Private edges are dashed: present, but not evidence. */
+.pl-pg-net line.is-private {
+  stroke-dasharray: 4 4;
+}
+
+.pl-pg-levels-note {
+  border-top: 1px dashed #e4d8c7;
+  color: #806f62;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+
