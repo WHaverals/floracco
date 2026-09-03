@@ -18,7 +18,8 @@ FROM python:3.12-slim AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
-    FLORACCO_SERVE_STATIC=1
+    FLORACCO_SERVE_STATIC=1 \
+    FLORACCO_ENABLE_PERSON_LINKAGE=1
 WORKDIR /app
 # rsync: needed to upload the corpus onto the disk (receiving end) and by
 # deploy/reset_demo.sh. Not in python:slim by default.
