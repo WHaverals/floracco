@@ -31,6 +31,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends rsync \
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 COPY workflows/ ./workflows/
+# The saved person model and its manifest travel with the code: the server
+# compares the suggestion cache against them and flags the cache as stale
+# when they are absent. (.dockerignore lets exactly these two files through.)
+COPY docs/person_linkage/person_model.json docs/person_linkage/person_model.manifest.json ./docs/person_linkage/
 COPY --from=frontend /app/apps/review/dist ./apps/review/dist
 EXPOSE 8000
 # Bind the port the host assigns (Render sets $PORT; defaults to 8000 locally).

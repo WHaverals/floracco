@@ -16,6 +16,8 @@ apps/review/dist/
 **/*.pyc
 .pytest_cache/
 docs/
+!docs/person_linkage/person_model.json
+!docs/person_linkage/person_model.manifest.json
 notebooks/
 tests/
 *.bak
