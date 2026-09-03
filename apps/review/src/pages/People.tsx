@@ -119,7 +119,7 @@ function PersonMatrix({
               <th>Field</th>
               {persons.map((person) => (
                 <th key={person.person_id}>
-                  <span className="pl-record-id">Person #{person.person_id}</span>
+                  <span className="pl-record-id">Entry #{person.person_id}</span>
                   <strong className="pl-record-name">{person.display_name}</strong>
                   <span className="pl-record-meta">
                     {person.first_year == null ? "No dated living appearance" : `${person.first_year}–${person.last_year}`}
@@ -393,7 +393,7 @@ function ContextProfiles({ persons }: { persons: PersonLinkagePerson[] }) {
           <thead>
             <tr>
               <th>Context</th>
-              {persons.map((person) => <th key={person.person_id}>Person #{person.person_id}</th>)}
+              {persons.map((person) => <th key={person.person_id}>Entry #{person.person_id}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -1204,14 +1204,6 @@ export default function People() {
               <div>
                 <p className="eyebrow">{detail.kind === "split" ? "Possible combined identity" : "Identity review"}</p>
                 <p className="case-bar-question">{laneQuestion(detail)}</p>
-                <p className="case-bar-context">
-                  {detail.persons.length === 1
-                    ? "This entry remains unchanged."
-                    : detail.persons.length === 2
-                      ? "Both entries remain unchanged."
-                      : `All ${detail.persons.length} entries remain unchanged.`}
-                  {" "}Decisions are logged and reversible.
-                </p>
               </div>
               <span className="pl-case-position">{selectedIndex >= 0 ? `${selectedIndex + 1} / ${cases.length}` : ""}</span>
             </header>

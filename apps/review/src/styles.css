@@ -2003,6 +2003,12 @@ progress {
   background: #dcebd3;
 }
 
+.notice.warning {
+  background: #f7efe0;
+  border: 1px solid #eadfcc;
+  color: #4d4033;
+}
+
 .empty-state.large {
   align-items: center;
   background: #fffaf3;
