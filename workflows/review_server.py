@@ -5499,11 +5499,13 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "funding_composition",
         "group": "Capital & currency",
         "title": "How capital was itemized (cash vs non-cash)",
-        "description": "Adds up each contract's cash contributions and compares them with its stated "
-        "capital. The buckets also say whether the record mentions a non-cash contribution — goods, "
-        "a shop, receivables — sometimes valued inside the cash sum itself. A shortfall of cash can "
-        "mean several things: a contribution in goods, capital supplied as credit, the rounding of "
-        "old fractional money, or a share the clerk never itemized — only the act says which. Every "
+        "description": "Each contract's cash contributions against its stated capital, and whether a "
+        "non-cash contribution is recorded.",
+        # Reading notes live beside the chart, not in the menu (UI review 2026-09-10).
+        "notes": "The buckets say whether the record mentions a non-cash contribution — goods, a shop, "
+        "receivables — sometimes valued inside the cash sum itself. A shortfall of cash can mean "
+        "several things: a contribution in goods, capital supplied as credit, the rounding of old "
+        "fractional money, or a share the clerk never itemized — only the act says which. Every "
         "comparison stays inside one contract, so currencies never mix.",
         "chart": "bar",
         # The buckets are ARITHMETIC (cash vs stated total) crossed with whether the

@@ -543,6 +543,8 @@ export type AnalysisQuery = {
   group: string;
   title: string;
   description: string;
+  /** Longer reading notes, shown on the result page only (never in the menu). */
+  notes?: string;
   chart: AnalysisChart;
   sql: string;
 };

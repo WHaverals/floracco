@@ -172,24 +172,14 @@ export default function Explore() {
         </div>
       ) : (
         <div className="hub-grid">
-          {TOOLS.map((tool) =>
-            isToolHidden(tool.key) ? (
-              <div className="hub-card is-disabled" key={tool.to} aria-disabled="true">
-                <div className="hub-card-top">
-                  <h2>{tool.title}</h2>
-                  <span className="hub-soon-tag">Coming soon</span>
-                </div>
-                <p>{tool.blurb}</p>
+          {TOOLS.filter((tool) => !isToolHidden(tool.key)).map((tool) => (
+            <Link className="hub-card" key={tool.to} to={tool.to}>
+              <div className="hub-card-top">
+                <h2>{tool.title}</h2>
               </div>
-            ) : (
-              <Link className="hub-card" key={tool.to} to={tool.to}>
-                <div className="hub-card-top">
-                  <h2>{tool.title}</h2>
-                </div>
-                <p>{tool.blurb}</p>
-              </Link>
-            ),
-          )}
+              <p>{tool.blurb}</p>
+            </Link>
+          ))}
         </div>
       )}
     </div>

@@ -79,7 +79,7 @@ GROUP_META: dict[str, dict[str, str]] = {
         "label": "Jewish — name-based conjecture (no textual attestation)",
         "severity": "low",
         "explanation": (
-            "Machine-suggested from name and context only — the documents do not state it, and "
+            "Suggested by the computer from name and context only — the documents do not state it, and "
             "each item names its basis. Set “stated in the act” ONLY if you find textual "
             "attestation on the record; otherwise dismiss. Confirming without attestation would "
             "repeat the 2010s unrecorded-basis mistake this review exists to untangle."

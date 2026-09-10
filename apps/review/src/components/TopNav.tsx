@@ -65,29 +65,27 @@ export default function TopNav({ identityEmail }: { identityEmail?: string | nul
         </form>
       )}
       <ul>
-        {LINKS.map((link) =>
-          isToolHidden(link.key) ? (
-            <li key={link.to}>
-              <span className="top-nav-soon" title="In development — not in this pilot yet">
-                {link.label}
-                <em>soon</em>
-              </span>
-            </li>
-          ) : (
-            <li key={link.to}>
-              <NavLink to={link.to} className={({ isActive }) => (isActive ? "is-active" : "")}>
-                {link.label}
-              </NavLink>
-            </li>
-          ),
-        )}
+        {/* Tools not in the pilot are left out entirely: a greyed "soon" item is
+            the first thing a new user clicks, and it answers with a placeholder.
+            The home page names them in one line instead. */}
+        {LINKS.filter((link) => !isToolHidden(link.key)).map((link) => (
+          <li key={link.to}>
+            <NavLink to={link.to} className={({ isActive }) => (isActive ? "is-active" : "")}>
+              {link.label}
+            </NavLink>
+          </li>
+        ))}
       </ul>
       {identityEmail ? (
         <span
           className="top-nav-identity"
-          title="Signed in via Cloudflare Access — your edits are attributed to this account"
+          title={`${identityEmail} — signed in via Cloudflare Access; your edits are attributed to this account`}
         >
-          {identityEmail}
+          {/* the domain gives way first on narrow windows (see styles.css) */}
+          <span>{identityEmail.includes("@") ? identityEmail.slice(0, identityEmail.indexOf("@")) : identityEmail}</span>
+          {identityEmail.includes("@") && (
+            <span className="top-nav-identity-domain">{identityEmail.slice(identityEmail.indexOf("@"))}</span>
+          )}
         </span>
       ) : null}
     </nav>

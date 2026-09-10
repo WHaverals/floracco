@@ -328,7 +328,7 @@ _PLACE_NOTE = (
     "Montelione=Monteleone) that spelling rules can’t find, and look-alikes here "
     "are usually different towns (Lucca/Lecce). Below are only exact normalized "
     "matches; the reviewed historic-name pass adds knowledge-based suggestions "
-    "(clearly marked as machine-proposed) for a human to confirm."
+    "(clearly marked as suggested by the computer) for a human to confirm."
 )
 
 

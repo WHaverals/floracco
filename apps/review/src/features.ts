@@ -2,9 +2,12 @@
  *
  * Dev-aware on purpose: in `npm run dev` (import.meta.env.DEV === true) NOTHING
  * is hidden, so you keep developing all tools normally. In the built/deployed
- * app (DEV === false) the listed tools are greyed-out in the nav AND their
- * routes render the "not in this pilot" placeholder, so they can't be reached —
- * even by typing the URL.
+ * app (DEV === false) the listed tools are left out of the nav and of the tool
+ * grids on the home and Explore pages (the home page names them in one
+ * "in development" line), AND their routes render the "not in this pilot"
+ * placeholder, so they can't be reached — even by typing the URL. To see the
+ * built state locally: `npm run build && npm run preview` (the preview proxies
+ * /api to the local server like dev does).
  *
  * To bring a tool into the pilot, delete its key here and push (Render
  * auto-redeploys). No other change needed.

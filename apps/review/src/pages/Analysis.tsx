@@ -468,6 +468,7 @@ export default function Analysis() {
               <p className="eyebrow">{selected.group}</p>
               <h2>{selected.title}</h2>
               <p className="muted an-note">{selected.description}</p>
+              {selected.notes && <p className="an-notes">{selected.notes}</p>}
               {error && <p className="error-text">{error}</p>}
               {libRunning && <p className="muted">Running…</p>}
               {libResult && !libRunning && (

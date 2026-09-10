@@ -23,15 +23,18 @@ import type {
 
 const REVIEWER_KEY = "floracco_reviewer";
 
+// Lane names and notes in the reviewer's words (the primer's glossary table
+// repeats them in the same order; keep the two in step). The ids are the
+// server's and never change.
 const LANES: Array<{ id: PersonLinkageLane; label: string; note: string }> = [
-  { id: "labeling_round", label: "Labeling round", note: "Frozen, randomized cases with model output hidden" },
-  { id: "likely_duplicates", label: "Likely duplicates", note: "Transparent data-entry patterns to confirm" },
-  { id: "high_concordance", label: "High-concordance variants", note: "Name variation with aligned lineage, time, or business context" },
-  { id: "read_source", label: "Read the source", note: "The structured fields cannot decide" },
-  { id: "other_matches", label: "Other possible matches", note: "Ranked evidence; the human decides" },
-  { id: "possible_splits", label: "Possible combined identities", note: "One entry may contain several people" },
-  { id: "decided", label: "Decided", note: "Reviewed links, refusals, and deferrals" },
-  { id: "rule_exclusions", label: "Rule-based exclusions", note: "Impossible careers and explicit generations" },
+  { id: "labeling_round", label: "Judge blind", note: "Cases chosen to cover every kind of evidence; the scores stay hidden until you answer" },
+  { id: "likely_duplicates", label: "Likely duplicates", note: "The same name typed twice, or the same full name with one plausible working life" },
+  { id: "high_concordance", label: "Spelling variants", note: "Names that differ slightly while everything else agrees" },
+  { id: "read_source", label: "Check the contract", note: "The fields cannot settle it; the act itself decides" },
+  { id: "other_matches", label: "Other possible matches", note: "Every pair the model ranks, best first" },
+  { id: "possible_splits", label: "One entry, two people?", note: "An entry that may hold two different people" },
+  { id: "decided", label: "Decided", note: "What has been answered, with its history and an undo" },
+  { id: "rule_exclusions", label: "Ruled out by the rules", note: "Refused by the sixty-year rule or by an explicit generation marker" },
 ];
 
 const FIELD_LABELS: Array<[keyof PersonLinkagePerson["fields"], string]> = [
@@ -1003,7 +1006,7 @@ export default function People() {
             >
               {LANES.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.label} ({summary?.lanes?.[item.id] ?? "…"})
+                  {item.label} ({summary?.lanes?.[item.id]?.toLocaleString() ?? "…"})
                 </option>
               ))}
             </select>
@@ -1025,7 +1028,7 @@ export default function People() {
                 aria-pressed={lane === item.id}
               >
                 <span>{item.label}</span>
-                <strong>{summary?.lanes?.[item.id] ?? 0}</strong>
+                <strong>{(summary?.lanes?.[item.id] ?? 0).toLocaleString()}</strong>
                 <small>{item.note}</small>
               </button>
             ))}
@@ -1096,8 +1099,8 @@ export default function People() {
                     ? "The labeling packet was built against an older suggestion cache — regenerate it before labeling."
                     : reservedForLabeling > 0
                       ? reservedForLabeling === 1
-                        ? "The only case in this lane is part of the open labeling round. Decide it there, or finish the round to review it here."
-                        : `All ${reservedForLabeling} cases in this lane are part of the open labeling round. Decide them there, or finish the round to review them here.`
+                        ? "The only case in this lane is part of the open labeling round. Decide it under Judge blind, or finish the round to review it here."
+                        : `All ${reservedForLabeling} cases in this lane are part of the open labeling round. Decide them under Judge blind, or finish the round to review them here.`
                       : "No open cases"}
           </p>
           {!loading && total > 0 && reservedForLabeling > 0 ? (
@@ -1181,12 +1184,12 @@ export default function People() {
           <div className="db-detail-empty">
             {!loading && !total && lane === "labeling_round" && summary?.labeling_packet_available === false ? (
               <>
-                <h2>Labeling round unavailable</h2>
+                <h2>Judge blind is unavailable</h2>
                 <p>The labeling packet is not deployed on this server.</p>
               </>
             ) : !loading && !total && lane === "labeling_round" && summary?.labeling_packet_stale ? (
               <>
-                <h2>Labeling round unavailable</h2>
+                <h2>Judge blind is unavailable</h2>
                 <p>The labeling packet was built against an older suggestion cache — regenerate it before labeling.</p>
               </>
             ) : loading ? (

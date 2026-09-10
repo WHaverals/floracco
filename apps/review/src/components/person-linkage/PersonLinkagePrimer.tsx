@@ -1347,7 +1347,7 @@ export default function PersonLinkagePrimer() {
         <figure className="pl-lanes-table">
           <dl>
             <div>
-              <dt>Labeling round</dt>
+              <dt>Judge blind</dt>
               <dd>150 cases chosen to cover every kind of evidence, judged with the scores hidden. The model will be re-estimated on these decisions.</dd>
             </div>
             <div>
@@ -1355,11 +1355,11 @@ export default function PersonLinkagePrimer() {
               <dd>The duplicates created by the typing, and pairs with the same full name and a plausible combined working life. Confirm them one by one.</dd>
             </div>
             <div>
-              <dt>High-concordance variants</dt>
+              <dt>Spelling variants</dt>
               <dd>Names that differ slightly while everything else agrees. These need a human eye; the tool never claims a match here on its own.</dd>
             </div>
             <div>
-              <dt>Read the source</dt>
+              <dt>Check the contract</dt>
               <dd>The pairs marked as needing a reading of the contract. The contract itself decides.</dd>
             </div>
             <div>
@@ -1367,7 +1367,7 @@ export default function PersonLinkagePrimer() {
               <dd>Every pair the model ranks, best first. The filter called Stranded entries collects the pairs in which one entry has no contracts.</dd>
             </div>
             <div>
-              <dt>Possible combined identities</dt>
+              <dt>One entry, two people?</dt>
               <dd>Entries that may hold two people. They can be flagged, not split.</dd>
             </div>
             <div>
@@ -1375,7 +1375,7 @@ export default function PersonLinkagePrimer() {
               <dd>What has been answered, with its history and an undo.</dd>
             </div>
             <div>
-              <dt>Rule-based exclusions</dt>
+              <dt>Ruled out by the rules</dt>
               <dd>Pairs the sixty-year rule refuses. Check a sample and approve the rule, rather than each pair.</dd>
             </div>
           </dl>

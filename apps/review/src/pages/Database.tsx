@@ -108,7 +108,17 @@ export default function Database() {
   const [facets, setFacets] = useState<DbFacets | null>(null);
   // Open by default: register and years are the main way through 4,866 rows.
   // A reviewer who collapses the panel stays collapsed (remembered in this browser).
+  // Where there is no room the panel starts closed whatever the remembered
+  // preference: in the stacked layout (below 800 px) the rail sits above the
+  // record, and in a short window (an iPad, a 768 px laptop) the open panel
+  // leaves the list two rows tall. Wider and taller than that, it opens.
   const [filtersOpen, setFiltersOpen] = useState(() => {
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 800px), (max-height: 820px)").matches
+    ) {
+      return false;
+    }
     try {
       return localStorage.getItem("floracco_db_filters_open") !== "0";
     } catch {
@@ -398,7 +408,7 @@ export default function Database() {
       <aside className="db-rail">
         <div className="db-rail-head">
           <p className="eyebrow">Database</p>
-          <div className="db-tabs">
+          <div className="db-tabs db-tabs-grid">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
@@ -579,6 +589,7 @@ export default function Database() {
                 <button
                   type="button"
                   className={item.id === routeId && table === routeTable ? "db-result is-active" : "db-result"}
+                  aria-current={item.id === routeId && table === routeTable ? "true" : undefined}
                   onClick={() => openRecord(table, item.id)}
                 >
                   <span className="db-result-title-row">

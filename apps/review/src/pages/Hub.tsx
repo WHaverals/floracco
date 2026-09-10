@@ -150,25 +150,27 @@ export default function Hub() {
             Press Enter to search the full corpus · words combine with AND · "quotes" for exact phrases.
           </p>
           <div className="hub-grid home-explore-grid">
-            {TOOLS.map((tool) =>
-              isToolHidden(tool.key) ? (
-                <div className="hub-card is-disabled" key={tool.to} aria-disabled="true">
-                  <div className="hub-card-top">
-                    <h2>{tool.title}</h2>
-                    <span className="hub-soon-tag">Coming soon</span>
-                  </div>
-                  <p>{tool.blurb}</p>
+            {TOOLS.filter((tool) => !isToolHidden(tool.key)).map((tool) => (
+              <Link className="hub-card" key={tool.to} to={tool.to}>
+                <div className="hub-card-top">
+                  <h2>{tool.title}</h2>
                 </div>
-              ) : (
-                <Link className="hub-card" key={tool.to} to={tool.to}>
-                  <div className="hub-card-top">
-                    <h2>{tool.title}</h2>
-                  </div>
-                  <p>{tool.blurb}</p>
-                </Link>
-              ),
-            )}
+                <p>{tool.blurb}</p>
+              </Link>
+            ))}
           </div>
+          {/* Tools kept out of the pilot get one quiet line here, not a dead card
+              or a greyed nav item: the home page is where the project describes
+              itself, so a roadmap note belongs on it and nowhere else. */}
+          {TOOLS.some((tool) => isToolHidden(tool.key)) && (
+            <p className="hub-roadmap muted">
+              In development, not yet in this pilot:{" "}
+              {TOOLS.filter((tool) => isToolHidden(tool.key))
+                .map((tool) => tool.title)
+                .join(", ")}
+              .
+            </p>
+          )}
         </section>
 
         <article className="home-essay">

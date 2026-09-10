@@ -644,10 +644,6 @@ a.hub-card:hover {
   transform: translateY(-2px);
 }
 
-.hub-card.is-disabled {
-  opacity: 0.6;
-}
-
 .hub-card-top {
   align-items: baseline;
   display: flex;
@@ -4720,15 +4716,20 @@ progress {
 }
 
 @media (max-width: 1200px) {
-  .db-browser {
-    grid-template-columns: 1fr;
-    height: auto;
-    overflow: visible;
+  /* Two columns down to 800 px on a narrower rail (People does the same with
+     its own rail). Stacking here left the list 16 px tall once the rail head
+     held tabs, search, sort and the open filter panel; the stack now lives in
+     the 800 px block at the end of this file. */
+  .db-browser:not(.pl-browser) {
+    grid-template-columns: 270px minmax(0, 1fr);
   }
 
-  .db-rail {
-    height: auto;
-    max-height: 50vh;
+  .db-browser:not(.pl-browser) .db-rail-head {
+    padding: 14px 14px 12px;
+  }
+
+  .db-browser:not(.pl-browser) .db-detail {
+    padding: 20px 22px;
   }
 
   .app-shell,
@@ -5602,7 +5603,7 @@ progress {
 }
 .search-empty p { margin: 0 0 4px; }
 
-.top-nav-search { flex: 1; margin: 0 14px; max-width: 340px; }
+.top-nav-search { flex: 1; margin: 0 14px; max-width: 340px; min-width: 170px; }
 .top-nav-search input {
   background: rgba(255, 252, 244, 0.12);
   border: 1px solid rgba(214, 197, 165, 0.4);
@@ -5691,37 +5692,12 @@ progress {
   white-space: nowrap;
 }
 
-/* --- Pilot: tools kept in the code but not shipped (see src/features.ts) ----- */
-/* Greyed, non-clickable nav item with a small "soon" badge. */
-.top-nav-soon {
-  align-items: center;
-  color: #9b9486;
-  cursor: default;
-  display: inline-flex;
-  gap: 6px;
-  opacity: 0.6;
-  user-select: none;
-}
-.top-nav-soon em {
-  background: #efe6d6;
-  border-radius: 999px;
-  color: #8a7c63;
-  font-size: 0.62rem;
-  font-style: normal;
-  letter-spacing: 0.04em;
-  padding: 1px 6px;
-  text-transform: uppercase;
-}
-/* "Coming soon" tag on a disabled hub card (card greying reuses .is-disabled). */
-.hub-soon-tag {
-  background: #efe6d6;
-  border-radius: 999px;
-  color: #8a7c63;
-  font-size: 0.68rem;
-  letter-spacing: 0.04em;
-  padding: 2px 8px;
-  text-transform: uppercase;
-  white-space: nowrap;
+/* --- Pilot: tools kept in the code but not shipped (see src/features.ts) are
+   left out of the nav and the tool grids; the home page names them in this
+   one line. --- */
+.hub-roadmap {
+  font-size: 0.86rem;
+  margin: 12px 0 0;
 }
 .hub-card.is-disabled {
   cursor: default;
@@ -9658,4 +9634,80 @@ progress {
   letter-spacing: 0.08em;
   margin: 0 0 4px;
   text-transform: uppercase;
+}
+
+/* --- Narrow windows: the rail stacks above the record only below 800 px, and
+   then the LIST keeps a height of its own (the rail head is never clipped);
+   the whole browser scrolls as one page inside the route area. People keeps
+   its own stacking rules. --- */
+@media (max-width: 800px) {
+  .db-browser:not(.pl-browser) {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: auto;
+  }
+
+  .db-browser:not(.pl-browser) .db-rail {
+    flex: none;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .db-browser:not(.pl-browser) .db-results {
+    flex: none;
+    max-height: 40vh;
+    min-height: 200px;
+    overflow: auto;
+  }
+
+  .db-browser:not(.pl-browser) .db-detail {
+    flex: none;
+    height: auto;
+    overflow: visible;
+  }
+}
+
+/* The Database rail's four tabs as a two-by-two grid: "Sub-contracts" and
+   "Needs review" no longer break mid-word, at any rail width. */
+.db-tabs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.db-tabs-grid .db-tab-review {
+  margin-left: 0;
+}
+
+/* --- Top bar at narrow widths: the search box keeps a usable width, the
+   signed-in address gives way first (domain hidden, full address on hover),
+   and below 820 px the bar wraps with the search on its own line. --- */
+@media (max-width: 1100px) {
+  .top-nav-identity-domain {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .top-nav {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .top-nav-search {
+    flex-basis: 100%;
+    margin: 0 0 10px;
+    max-width: none;
+    order: 3;
+  }
+}
+
+/* Reading notes for a library query: beside the chart, never in the menu. */
+.an-notes {
+  color: #4a3b2c;
+  font-size: 0.92rem;
+  line-height: 1.55;
+  margin: 0 0 14px;
+  max-width: 64ch;
 }

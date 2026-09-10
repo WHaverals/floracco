@@ -207,9 +207,9 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
       <li key={fam.signature} className="ref-fam">
         {fam.source === "llm" && (
           <p className="ref-fam-llm">
-            <span className="ref-fam-llm-tag">machine-suggested</span>
+            <span className="ref-fam-llm-tag">suggested by the computer</span>
             {typeof fam.confidence === "number" && (
-              <span className="ref-fam-conf">{Math.round(fam.confidence * 100)}% confident</span>
+              <span className="ref-fam-conf">{Math.round(fam.confidence * 100)}% sure</span>
             )}
             {fam.rationale}
           </p>
@@ -220,14 +220,18 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
               key={t.id}
               type="button"
               className={t.id === canonId ? "ref-fam-term is-canon" : "ref-fam-term"}
-              title={t.id === canonId ? "Canonical (keep)" : "Click to keep this spelling as canonical"}
+              title={
+                t.id === canonId
+                  ? "The spelling the others will point to"
+                  : "Click to make this the kept spelling"
+              }
               onClick={() => setCanonical((c) => ({ ...c, [fam.signature]: t.id }))}
             >
               <span className="ref-fam-value">{t.value}</span>
               <span className="ref-fam-count muted">
                 {t.count > 0 ? `${t.count.toLocaleString()}×` : "unused"}
               </span>
-              {t.id === canonId && <span className="ref-fam-badge">canonical</span>}
+              {t.id === canonId && <span className="ref-fam-badge">kept spelling</span>}
             </button>
           ))}
         </div>
@@ -235,7 +239,8 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
           <button
             type="button"
             className="pill-button is-primary"
-            disabled={busy}
+            disabled={busy || !reviewer.trim()}
+            title={reviewer.trim() ? undefined : "Type your initials above first"}
             onClick={() => linkFamily(fam.terms, canonId, "same_as")}
           >
             Link as same
@@ -243,9 +248,13 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
           <button
             type="button"
             className="pill-button"
-            disabled={busy}
+            disabled={busy || !reviewer.trim()}
             onClick={() => linkFamily(fam.terms, canonId, "distinct")}
-            title="Record that these are NOT the same — stops resurfacing them"
+            title={
+              reviewer.trim()
+                ? "Record that these are NOT the same — stops resurfacing them"
+                : "Type your initials above first"
+            }
           >
             Not the same
           </button>
@@ -271,7 +280,7 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
   return (
     <div className="ref-dupes">
       <p className="eyebrow">Review duplicates</p>
-      <h2>{label} — same-as candidates</h2>
+      <h2>{label} — possibly the same</h2>
       <p className="muted ref-note">
         {kind === "place"
           ? "Exact matches plus reviewed machine suggestions for historic/variant spellings — never a different place or administrative scope (città ≠ contado)."
@@ -287,7 +296,7 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
       </p>
 
       <label className="ref-reviewer">
-        <span className="db-sort-label">Reviewer</span>
+        <span className="db-sort-label">Your initials, needed before linking</span>
         <input
           type="text"
           placeholder="initials"
@@ -319,7 +328,7 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
             <>
               <p className="ref-block-label">Needs your eye ({data.uncertain.length})</p>
               <p className="muted ref-note ref-uncertain-note">
-                Lower-confidence machine suggestions — look before linking.
+                Suggestions the computer is less sure about — look before linking.
               </p>
               <ul className="ref-fam-list">{data.uncertain.map(renderFamily)}</ul>
             </>
@@ -656,7 +665,7 @@ export default function Reference() {
             {detail?.resolution && (
               <div className="ref-resolution">
                 <p className="ref-block-label">
-                  Resolved <span className="ref-fam-llm-tag">machine</span>
+                  Resolved <span className="ref-fam-llm-tag">by the computer</span>
                 </p>
                 <p className="ref-resolution-main">
                   {detail.resolution.modern_name}
@@ -665,7 +674,7 @@ export default function Reference() {
                     {detail.resolution.country ? ` · ${detail.resolution.country}` : ""}
                   </span>
                   <span className="ref-fam-conf">
-                    {Math.round(detail.resolution.confidence * 100)}% confident
+                    {Math.round(detail.resolution.confidence * 100)}% sure
                   </span>
                 </p>
                 {detail.resolution.note && (
@@ -686,7 +695,7 @@ export default function Reference() {
                   </p>
                 )}
                 <p className="muted ref-resolution-foot">
-                  Machine-suggested from the verbatim string — not authoritative; the original term stands.
+                  Suggested by the computer from the spelling as written — not authoritative; the original term stands.
                 </p>
               </div>
             )}
