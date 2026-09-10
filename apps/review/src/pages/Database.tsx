@@ -140,6 +140,9 @@ export default function Database() {
   const [gender, setGender] = useState("");
   const [record, setRecord] = useState<DbRecord | null>(null);
   const [listError, setListError] = useState("");
+  // True while a list request is in flight, so the count line can say
+  // "Searching…" instead of leaving the old list up with no sign of life.
+  const [searching, setSearching] = useState(false);
   const [recordError, setRecordError] = useState("");
   const [loadingRecord, setLoadingRecord] = useState(false);
   const [openSourceId, setOpenSourceId] = useState<string | null>(null);
@@ -210,6 +213,7 @@ export default function Database() {
 
   const runSearch = useCallback((args: typeof searchArgs, nextOffset: number) => {
     const fresh = beginList();
+    setSearching(true);
     searchDb(args.table, args.q, { ...args, offset: nextOffset })
       .then((response) => {
         if (!fresh()) return; // a stale Load-more must not append under a newer query
@@ -218,7 +222,8 @@ export default function Database() {
         setTotal(response.total);
         setListError("");
       })
-      .catch((err: Error) => fresh() && setListError(err.message));
+      .catch((err: Error) => fresh() && setListError(err.message))
+      .finally(() => fresh() && setSearching(false));
   }, [beginList]);
 
   // Facet values for the filters: registers/dates/types for contracts & sub-
@@ -381,13 +386,15 @@ export default function Database() {
           { value: "id_desc", label: "Id ↓" },
         ];
   // The rail box filters THIS list; the nav box searches everything and leaves
-  // the page. The label above the box and the placeholders say which is which.
+  // the page. The label above the box says so, and the placeholder shows by
+  // example what the box matches (a name, a trade, a folio, a number) in the
+  // ~30 characters the rail can show without clipping.
   const searchPlaceholder =
     table === "person"
-      ? "name, nickname or number"
+      ? "e.g. Rucellai, Bicci or 134"
       : table === "contract"
-        ? "firm, partner, activity, folio or number"
-        : "firm, folio or number";
+        ? "e.g. Rucellai, lana, 7r or 1558"
+        : "e.g. a firm, 25v or 3641";
 
   // Filters: register/date/type on contract & sub-contract; gender on people.
   const showFilters =
@@ -471,12 +478,14 @@ export default function Database() {
                   Show hidden
                 </label>
               </div>
-              <p className="db-count muted">
+              <p className="db-count muted" aria-live="polite">
                 {listError
                   ? listError
-                  : total === 0
-                    ? "No records"
-                    : `Showing 1–${results.length.toLocaleString()} of ${total.toLocaleString()}`}
+                  : searching
+                    ? "Searching…"
+                    : total === 0
+                      ? "No records match"
+                      : `Showing 1–${results.length.toLocaleString()} of ${total.toLocaleString()}`}
               </p>
               {showFilters && (
                 <div className="db-filter-bar">

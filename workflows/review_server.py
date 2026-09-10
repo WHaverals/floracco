@@ -2321,15 +2321,19 @@ def db_search(
         if table == "contract":
             # Contracts also match a partner's name (investor → person) and the
             # economic-activity text, so a historian can find a firm by who is in it
-            # or what trade it ran — not only the firm_name string.
+            # or what trade it ran — not only the firm_name string. The two lookups
+            # are plain IN-subqueries, evaluated once per search: as correlated
+            # EXISTS clauses they re-scanned the unindexed investor table for each
+            # of the 4,866 rows and every keystroke cost six seconds (UI review
+            # 2026-09-10), which read as "the search does nothing".
             conditions.append(
                 "(firm_name LIKE ? OR folio LIKE ? OR CAST(contract_id AS TEXT) LIKE ? "
-                "OR EXISTS (SELECT 1 FROM investor iv JOIN person p ON p.person_id = iv.person_id "
-                "  WHERE iv.contract_id = contract.contract_id AND iv.is_deleted = 0 AND p.is_deleted = 0 "
+                "OR contract_id IN (SELECT iv.contract_id FROM investor iv "
+                "  JOIN person p ON p.person_id = iv.person_id "
+                "  WHERE iv.is_deleted = 0 AND p.is_deleted = 0 "
                 "  AND (p.first_name LIKE ? OR p.last_name LIKE ? OR p.nickname LIKE ?)) "
-                "OR EXISTS (SELECT 1 FROM economic_activity ea "
-                "  WHERE CAST(ea.ec_activity_id AS TEXT) = CAST(contract.economic_sector AS TEXT) "
-                "  AND ea.activity LIKE ?))"
+                "OR CAST(economic_sector AS TEXT) IN (SELECT CAST(ea.ec_activity_id AS TEXT) "
+                "  FROM economic_activity ea WHERE ea.activity LIKE ?))"
             )
             params += [like, like, like, like, like, like, like]
         elif table == "sub_contract":
