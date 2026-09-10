@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   decidePersonLinkage,
@@ -36,6 +36,8 @@ const LANES: Array<{ id: PersonLinkageLane; label: string; note: string }> = [
   { id: "decided", label: "Decided", note: "What has been answered, with its history and an undo" },
   { id: "rule_exclusions", label: "Ruled out by the rules", note: "Refused by the sixty-year rule or by an explicit generation marker" },
 ];
+
+const LANE_LABEL: Record<string, string> = Object.fromEntries(LANES.map((entry) => [entry.id, entry.label]));
 
 const FIELD_LABELS: Array<[keyof PersonLinkagePerson["fields"], string]> = [
   ["first_name", "Given name"],
@@ -696,6 +698,14 @@ export default function People() {
   const [mobileQueueOpen, setMobileQueueOpen] = useState(false);
   const [lastDecisionEventId, setLastDecisionEventId] = useState<string | null>(null);
   const beginDetailLoad = useLatest();
+  // Queue loads overlap while someone types; only the latest reply may land.
+  const beginListLoad = useLatest();
+  // With a query the queue searches every lane at once (results grouped under
+  // lane headings); without one it browses the selected lane, as before.
+  const searching = query.trim().length > 0;
+  const [laneCounts, setLaneCounts] = useState<Record<string, number>>({});
+  // The query the queue last searched for (the live-search effect below).
+  const lastQueryRef = useRef("");
   const reviewerLocked = reviewer.includes("@");
 
   const changeLane = (nextLane: PersonLinkageLane) => {
@@ -713,46 +723,86 @@ export default function People() {
     setMobileQueueOpen(false);
     setMessage("");
     setLastDecisionEventId(null);
+    // Picking a lane means "show me this lane": a running search ends here.
+    lastQueryRef.current = "";
+    setQuery("");
     navigate("/people");
   };
 
+  // Opening a search result selects its lane without disturbing the query or
+  // the selection (the lane's own defaults for band and facets still apply).
+  const adoptLane = (nextLane: PersonLinkageLane) => {
+    if (nextLane === lane) return;
+    beginDetailLoad();
+    setLane(nextLane);
+    setPriorityBand(nextLane === "other_matches" ? "priority_1" : "All");
+    setStranded(false);
+    setStrandedAll(false);
+    setOffset(0);
+  };
+
   const reload = useCallback(async () => {
+    const fresh = beginListLoad();
     setLoading(true);
+    const searchingAll = query.trim().length > 0;
     try {
-      const pageSize = lane === "rule_exclusions" ? 25 : 100;
+      const pageSize = searchingAll ? 200 : lane === "rule_exclusions" ? 25 : 100;
       const [nextSummary, nextCases] = await Promise.all([
         loadPersonLinkageSummary(),
-        loadPersonLinkageCases({
-          lane,
-          status: lane === "decided" ? "All" : "open",
-          priorityBand,
-          q: query,
-          offset,
-          limit: pageSize,
-          stranded: lane === "other_matches" && stranded,
-          strandedScope: lane === "other_matches" && stranded && strandedAll ? "all" : undefined,
-        }),
+        loadPersonLinkageCases(
+          searchingAll
+            ? { lane: "all", q: query, offset, limit: pageSize }
+            : {
+                lane,
+                status: lane === "decided" ? "All" : "open",
+                priorityBand,
+                offset,
+                limit: pageSize,
+                stranded: lane === "other_matches" && stranded,
+                strandedScope: lane === "other_matches" && stranded && strandedAll ? "all" : undefined,
+              },
+        ),
       ]);
+      if (!fresh()) return;
       setSummary(nextSummary);
       setCases(nextCases.cases);
       setTotal(nextCases.total);
+      setLaneCounts(nextCases.lane_counts ?? {});
       setReservedForLabeling(nextCases.reserved_for_labeling ?? 0);
       setError("");
-      if (showPrimerRef.current) {
-        // The reader stays on the primer; the rail updates around them.
+      if (showPrimerRef.current || searchingAll) {
+        // The reader stays on the primer; the rail updates around them. A
+        // search never opens a result by itself either: opening one selects
+        // its lane, and that is the reader's choice to make.
       } else if (!selected || (!caseId && !nextCases.cases.some((item) => item.case_id === selected))) {
         const first = nextCases.cases[0]?.case_id ?? "";
         setSelected(first);
         if (first) navigate(`/people/${encodeURIComponent(first)}`, { replace: true });
       }
     } catch (err) {
-      setError((err as Error).message);
+      if (fresh()) setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (fresh()) setLoading(false);
     }
-  }, [caseId, lane, navigate, offset, priorityBand, query, selected, stranded, strandedAll]);
+  }, [beginListLoad, caseId, lane, navigate, offset, priorityBand, query, selected, stranded, strandedAll]);
 
-  useEffect(() => { void reload(); }, [lane, priorityBand, offset, stranded, strandedAll]); // query submits explicitly
+  useEffect(() => { void reload(); }, [lane, priorityBand, offset, stranded, strandedAll]); // query: see below
+  // Live search: the queue reloads 400 ms after typing pauses (Enter still
+  // fires at once). The refs keep the effect off `reload` itself, whose
+  // identity changes with every keystroke.
+  const reloadRef = useRef(reload);
+  useEffect(() => {
+    reloadRef.current = reload;
+  });
+  useEffect(() => {
+    if (query === lastQueryRef.current) return;
+    const timer = window.setTimeout(() => {
+      lastQueryRef.current = query;
+      if (offset) setOffset(0);
+      else void reloadRef.current();
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [query, offset]);
   useEffect(() => {
     if (caseId) setSelected(caseId);
   }, [caseId]);
@@ -1045,9 +1095,9 @@ export default function People() {
               aria-label="Search person identity cases"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search names or ids…"
+              placeholder="Find a name or number, any lane"
             />
-            {lane === "other_matches" ? (
+            {lane === "other_matches" && !searching ? (
               <select value={priorityBand} onChange={(event) => { setOffset(0); setPriorityBand(event.target.value); }}>
                 <option value="All">All review priorities</option>
                 <option value="priority_1">Priority 1 · top 2%</option>
@@ -1056,7 +1106,7 @@ export default function People() {
                 <option value="priority_4">Priority 4 · remaining candidates</option>
               </select>
             ) : null}
-            {lane === "other_matches" ? (
+            {lane === "other_matches" && !searching ? (
               <div className="pl-stranded">
                 <button
                   type="button"
@@ -1088,9 +1138,13 @@ export default function People() {
               </div>
             ) : null}
           </form>
-          <p className="pl-queue-count">
+          <p className="pl-queue-count" aria-live="polite">
             {loading
-              ? "Loading…"
+              ? searching ? "Searching…" : "Loading…"
+              : searching
+                ? total
+                  ? `${total} case${total === 1 ? "" : "s"} in ${Object.keys(laneCounts).length} lane${Object.keys(laneCounts).length === 1 ? "" : "s"}`
+                  : "No case mentions that name or number"
               : total
                 ? `${offset + 1}–${offset + cases.length} of ${total}`
                 : lane === "labeling_round" && summary?.labeling_packet_available === false
@@ -1103,7 +1157,7 @@ export default function People() {
                         : `All ${reservedForLabeling} cases in this lane are part of the open labeling round. Decide them under Judge blind, or finish the round to review them here.`
                       : "No open cases"}
           </p>
-          {!loading && total > 0 && reservedForLabeling > 0 ? (
+          {!loading && !searching && total > 0 && reservedForLabeling > 0 ? (
             <p className="pl-queue-note">
               {reservedForLabeling === 1
                 ? "1 more case in this lane is in the open labeling round."
@@ -1121,26 +1175,40 @@ export default function People() {
           ) : null}
         </div>
         <ul className="pl-case-list">
-          {cases.map((item) => {
+          {cases.map((item, index) => {
             const names = [...new Set(item.names.filter(Boolean))];
+            // The tag speaks the lane's language: a decided case shows its
+            // decision, an Other-possible-matches pair its priority, the rest
+            // the name of the lane they sit in.
             const queueTag =
-              lane === "labeling_round" ? "Labeling case"
-                : item.lane === "likely_duplicates" ? "Possible duplicate"
-                : item.lane === "high_concordance" ? "High concordance"
-                : item.lane === "read_source" ? "Source needed"
-                  : item.lane === "possible_splits" ? "Career needs review"
-                    : item.lane === "rule_exclusions" ? "Career conflict"
-                      : item.status === "open"
-                        ? (item.priority_band ?? "Review candidate").replace("_", " ")
-                        : item.status.replace("_", " ");
+              item.status && item.status !== "open"
+                ? item.status.replace(/_/g, " ")
+                : item.lane === "other_matches" && item.priority_band
+                  ? item.priority_band.replace(/_/g, " ")
+                  : LANE_LABEL[item.lane] ?? "Review candidate";
+            // Search results arrive sorted by lane; a heading opens each run.
+            const heading =
+              searching && (index === 0 || cases[index - 1].lane !== item.lane)
+                ? `${LANE_LABEL[item.lane] ?? "Other"} (${laneCounts[item.lane] ?? 0})`
+                : null;
+            const isKnownLane = LANES.some((entry) => entry.id === item.lane);
             return (
-              <li key={item.case_id}>
+              <Fragment key={item.case_id}>
+                {heading && (
+                  <li className="pl-queue-heading" aria-hidden="true">
+                    {heading}
+                  </li>
+                )}
+              <li>
                 <button
                   className={item.case_id === selected ? "pl-case is-active" : "pl-case"}
-                  onClick={() => selectCase(item.case_id)}
+                  onClick={() => {
+                    if (searching && isKnownLane) adoptLane(item.lane);
+                    selectCase(item.case_id);
+                  }}
                   type="button"
                   aria-current={item.case_id === selected ? "true" : undefined}
-                  title={lane === "labeling_round" ? undefined : item.reasons?.[0] || undefined}
+                  title={item.lane === "labeling_round" ? undefined : item.reasons?.[0] || undefined}
                 >
                   <span className="pl-case-tag">{queueTag}</span>
                   <strong>{names.join(" ↔ ") || "Unnamed entries"}</strong>
@@ -1152,6 +1220,7 @@ export default function People() {
                   </small>
                 </button>
               </li>
+              </Fragment>
             );
           })}
         </ul>

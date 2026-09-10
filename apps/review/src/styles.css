@@ -9711,3 +9711,14 @@ progress {
   margin: 0 0 14px;
   max-width: 64ch;
 }
+
+/* People queue: a search across every lane groups its results under the lane
+   names, in the rail's order. */
+.pl-queue-heading {
+  color: #cbbdab;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 10px 14px 4px;
+  text-transform: uppercase;
+}

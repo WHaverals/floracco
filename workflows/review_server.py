@@ -3077,6 +3077,17 @@ _PERSON_JSON_COLUMNS = {
     "source_pointers_json",
     "waterfall_contributions_json",
 }
+# The rail's lane order; the all-lanes search sorts its results by it.
+_PERSON_LANE_ORDER = [
+    "labeling_round",
+    "likely_duplicates",
+    "high_concordance",
+    "read_source",
+    "other_matches",
+    "possible_splits",
+    "decided",
+    "rule_exclusions",
+]
 _PERSON_CLEAR_TIERS = {"batch_ghost", "same_as_strong"}
 _PERSON_CAUTION_TIERS = {
     "caution_coappearance",
@@ -4087,7 +4098,7 @@ def person_linkage_cases(
         of this lane's kind are in the round", not "N would have matched your
         current filters".
         """
-        if lane in {"labeling_round", "decided"} or not frozen_pair_keys:
+        if lane in {"labeling_round", "decided", "all"} or not frozen_pair_keys:
             return 0
         reserved = 0
         if lane == "likely_duplicates":
@@ -4132,6 +4143,12 @@ def person_linkage_cases(
 
     query = q.strip().lower()
 
+    def matches_query(case: dict[str, Any]) -> bool:
+        return not query or (
+            query in " ".join(case.get("names") or []).lower()
+            or query in " ".join(str(value) for value in case.get("person_ids") or [])
+        )
+
     def keep_preview(case: dict[str, Any]) -> bool:
         case["status"] = _person_case_status(case, parent, distinct, latest)
         if lane == "decided":
@@ -4141,12 +4158,137 @@ def person_linkage_cases(
             return False
         if priority_band != "All" and case.get("priority_band") != priority_band:
             return False
-        if query and not (
-            query in " ".join(case.get("names") or []).lower()
-            or query in " ".join(str(value) for value in case.get("person_ids") or [])
-        ):
-            return False
-        return True
+        return matches_query(case)
+
+    if lane == "all":
+        # One search across every lane: the box finds a person or a number
+        # wherever its cases sit, and the client groups the results under lane
+        # headings. Each result carries the lane it belongs to, so opening it
+        # can select that lane. Without a query there is nothing to search: the
+        # lanes are the browse view. Band and stranded filters do not apply.
+        if not query:
+            cache.close()
+            return {
+                "available": True,
+                "run": run,
+                "stale": _person_cache_stale(run),
+                "total": 0,
+                "offset": offset,
+                "cases": [],
+                "reserved_for_labeling": 0,
+            }
+        found: list[dict[str, Any]] = []
+
+        def is_open(case: dict[str, Any]) -> bool:
+            case["status"] = _person_case_status(case, parent, distinct, latest)
+            return case["status"] == "open"
+
+        # 1. Open cases of the blind round, with the blind preview (names and
+        #    numbers only), under Judge blind. A packet built for another cache
+        #    is skipped here rather than failing the whole search.
+        packet_rows = _person_labeling_packet_rows()
+        packet_run_ids = {str(row.get("run_id")) for row in packet_rows if row.get("run_id")}
+        if not packet_run_ids or packet_run_ids == {str(run["run_id"])}:
+            for packet_row in packet_rows:
+                pair_key_value = str(packet_row["pair_key"])
+                if pair_key_value not in frozen_pair_keys:
+                    continue  # a decided packet case surfaces under Decided
+                row = cache.execute(
+                    "SELECT * FROM person_pair_suggestion WHERE pair_key=?", (pair_key_value,)
+                ).fetchone()
+                if not row:
+                    continue
+                pair = _decode_person_pair(row)
+                evidence = pair.get("evidence_json") or {}
+                preview = {
+                    "case_id": pair["case_id"],
+                    "lane": "labeling_round",
+                    "person_ids": [int(pair["person_id_l"]), int(pair["person_id_r"])],
+                    "names": [
+                        _person_name_from_evidence(evidence, "left"),
+                        _person_name_from_evidence(evidence, "right"),
+                    ],
+                    "career": pair.get("career_span_json") or {},
+                }
+                if matches_query(preview) and is_open(preview):
+                    preview["is_reviewed"] = False
+                    found.append(preview)
+        # 2. Open group cases (typing duplicates, split candidates, grouped
+        #    other matches), each under the lane its preview names.
+        for group in clear_groups + model_groups:
+            if group_in_open_round(group):
+                continue
+            preview = _person_group_preview(group, pair_by_key)
+            if group in clear_groups:
+                preview["lane"] = "likely_duplicates"
+            if matches_query(preview) and is_open(preview):
+                found.append(preview)
+        for split_case in _person_split_previews():
+            if matches_query(split_case) and is_open(split_case):
+                found.append(split_case)
+        # 3. Open pairs in the pair lanes, one query over the whole table; the
+        #    preview already names the pair's natural lane.
+        pair_where = [
+            "(lower(evidence_json) LIKE ? OR CAST(person_id_l AS TEXT)=? OR CAST(person_id_r AS TEXT)=?)"
+        ]
+        pair_params: list[Any] = [f"%{query}%", query, query]
+        for excluded in (projected_edge_keys, frozen_pair_keys):
+            if excluded:
+                marks = ",".join("?" for _ in excluded)
+                pair_where.append(f"pair_key NOT IN ({marks})")
+                pair_params.extend(sorted(excluded))
+        for row in cache.execute(
+            f"SELECT * FROM person_pair_suggestion WHERE {' AND '.join(pair_where)} "
+            "ORDER BY review_score DESC, person_id_l, person_id_r",
+            pair_params,
+        ).fetchall():
+            preview = _person_pair_preview(_decode_person_pair(row))
+            if preview["lane"] in _PERSON_LANE_ORDER and matches_query(preview) and is_open(preview):
+                found.append(preview)
+        # 4. Decided cases of every kind, under Decided, so a search for a
+        #    person also shows what has already been settled about them.
+        group_map = {group["case_id"]: group for group in groups}
+        split_map = {case["case_id"]: case for case in _person_split_previews()}
+        for case_id in latest:
+            if case_id in group_map:
+                preview = _person_group_preview(group_map[case_id], pair_by_key)
+            elif case_id in split_map:
+                preview = split_map[case_id]
+            elif case_id.startswith("pair:"):
+                row = cache.execute(
+                    "SELECT * FROM person_pair_suggestion WHERE pair_key=?",
+                    (case_id.removeprefix("pair:"),),
+                ).fetchone()
+                if not row:
+                    continue
+                preview = _person_pair_preview(_decode_person_pair(row))
+            else:
+                continue
+            if matches_query(preview) and not is_open(preview):
+                preview["lane"] = "decided"
+                found.append(preview)
+        cache.close()
+        rank = {name: index for index, name in enumerate(_PERSON_LANE_ORDER)}
+        found.sort(
+            key=lambda case: (
+                rank.get(case.get("lane"), len(rank)),
+                -(float(case.get("review_score") or -1)),
+                tuple(case.get("person_ids") or []),
+            )
+        )
+        lane_counts: dict[str, int] = {}
+        for case in found:
+            lane_counts[case["lane"]] = lane_counts.get(case["lane"], 0) + 1
+        return {
+            "available": True,
+            "run": run,
+            "stale": _person_cache_stale(run),
+            "total": len(found),
+            "offset": offset,
+            "cases": found[offset : offset + limit],
+            "reserved_for_labeling": 0,
+            "lane_counts": lane_counts,
+        }
 
     if lane == "labeling_round":
         cases: list[dict[str, Any]] = []

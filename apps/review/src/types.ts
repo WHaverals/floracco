@@ -330,13 +330,16 @@ export type PersonLinkageCasesResponse = {
   /** Open-round cases whose natural lane is this one — frozen in the blind
    * labeling round, hidden from the listing but still counted by the badge. */
   reserved_for_labeling?: number;
+  /** All-lanes search only: how many results each lane holds, for the headings. */
+  lane_counts?: Record<string, number>;
 };
 
 /** Query options for GET /api/person-linkage/cases. Mirrors the server's query
  * params (camelCase here; api.ts translates). The stranded facet is honoured
  * only with lane=other_matches — the server ignores it elsewhere. */
 export type PersonLinkageCasesRequest = {
-  lane: PersonLinkageLane;
+  /** A lane to browse, or "all" to search every lane by name or number (needs `q`). */
+  lane: PersonLinkageLane | "all";
   status?: string;
   priorityBand?: string;
   q?: string;
