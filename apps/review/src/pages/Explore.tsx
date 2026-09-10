@@ -114,7 +114,7 @@ export default function Explore() {
                   className="search-jump"
                   onClick={() => navigate(`/database/${KIND_ROUTE[jump.kind]}/${jump.ref}`)}
                 >
-                  → {jump.kind === "sub_contract" ? "Act" : jump.kind === "person" ? "Person" : "Contract"}{" "}
+                  → {jump.kind === "sub_contract" ? "Sub-contract" : jump.kind === "person" ? "Person" : "Contract"}{" "}
                   <strong>{jump.ref}</strong> · {jump.title}
                   {jump.meta ? <span className="muted"> · {jump.meta}</span> : null}
                 </button>

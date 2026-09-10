@@ -4,10 +4,20 @@ import type { DbLinkStatus, DbWordSource, WordEntryDetail } from "../types";
 import TrackedText from "./TrackedText";
 
 const STATUS_LABEL: Record<DbLinkStatus, string> = {
-  confirmed: "Attached",
-  proposed: "Suggested",
-  rejected: "Rejected",
+  confirmed: "Confirmed link",
+  proposed: "Suggested link",
+  rejected: "Rejected link",
 };
+
+/** "cc. 7r–7r" is a one-leaf range: say "c. 7r"; keep "cc." for a real span. */
+function folioLabel(folio: string): string {
+  const ends = folio
+    .split(/\s*[–—-]\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (ends.length <= 1 || ends.every((end) => end === ends[0])) return `c. ${ends[0] ?? folio}`;
+  return `cc. ${folio}`;
+}
 
 /* One frozen Word summary, collapsed to a single line under the DB narrative.
  *
@@ -45,8 +55,10 @@ export default function WordSummaryInline({ source }: { source: DbWordSource }) 
         title={source.source_entry_id}
       >
         <span className={`db-source-badge is-${source.status}`}>{STATUS_LABEL[source.status]}</span>
-        <span className="ws-inline-headline">{headline}</span>
-        {source.folio && <span className="ws-inline-folio muted">cc. {source.folio}</span>}
+        <span className="ws-inline-headline" title="The Word file’s own heading for this entry">
+          {headline}
+        </span>
+        {source.folio && <span className="ws-inline-folio muted">{folioLabel(source.folio)}</span>}
         {(source.comment_count ?? 0) > 0 && (
           <span
             className="ws-inline-comments"
@@ -56,10 +68,15 @@ export default function WordSummaryInline({ source }: { source: DbWordSource }) 
           </span>
         )}
         {source.strength != null && source.status !== "confirmed" && (
-          <span className="db-source-strength">text {Math.round(source.strength * 100)}%</span>
+          <span
+            className="db-source-strength"
+            title="How much of the Word summary’s wording also appears in the database narrative"
+          >
+            wording overlap {Math.round(source.strength * 100)}%
+          </span>
         )}
         <span className="ws-inline-chevron" aria-hidden="true">
-          {open ? "▴ Hide" : "▾ Show"}
+          {open ? "▴ Hide" : "▾ Read it"}
         </span>
       </button>
 

@@ -4091,25 +4091,40 @@ progress {
   justify-content: space-between;
 }
 
+/* Edit pills are hidden until the reviewer hovers (or tabs into) the field, row
+   or block they belong to — the record reads as a record, not as a form — and
+   then show at full strength (5:1 contrast). Pointer-less devices get them
+   always on, since there is nothing to hover. `nowrap` keeps a pill on one line
+   beside a long label ("Economic activity at discretion"). */
 .field-fix {
   background: transparent;
   border: 1px solid #d8c7ac;
   border-radius: 999px;
   color: #9d7355;
   cursor: pointer;
+  flex-shrink: 0;
   font-size: 0.62rem;
   font-weight: 700;
   letter-spacing: 0.03em;
-  opacity: 0.55;
+  opacity: 0;
   padding: 1px 8px;
   text-transform: uppercase;
   transition: opacity 0.12s ease;
+  white-space: nowrap;
 }
 
 .db-field:hover .field-fix,
+.db-field:focus-within .field-fix,
 .db-block-head:hover .field-fix,
+.db-block-head:focus-within .field-fix,
 .field-fix:focus-visible {
   opacity: 1;
+}
+
+@media (hover: none) {
+  .field-fix {
+    opacity: 0.85;
+  }
 }
 
 .field-fix:hover {
@@ -4257,7 +4272,9 @@ progress {
 }
 
 .partners-table tbody tr:hover .field-fix,
-.db-table tbody tr:hover .field-fix {
+.partners-table tbody tr:focus-within .field-fix,
+.db-table tbody tr:hover .field-fix,
+.db-table tbody tr:focus-within .field-fix {
   opacity: 1;
 }
 
@@ -4301,11 +4318,12 @@ progress {
   white-space: nowrap;
 }
 
-/* Remove is destructive + uncommon → quieter than the edit pills: borderless and
-   muted, with destructive (red) intent only on direct hover. */
+/* Remove is destructive + uncommon → hidden like the edit pills until the row is
+   hovered, then legible (borderless, no shouting), with destructive (red) intent
+   only on direct hover. The confirmation panel behind it does the real guarding. */
 .partner-remove {
   border-color: transparent;
-  color: #b2a081;
+  color: #8a6a4a;
   font-weight: 600;
   letter-spacing: 0;
 }
@@ -4379,15 +4397,16 @@ progress {
   font-size: 0.8rem;
 }
 
+/* "2 more details" — says what the chevron opens instead of a bare number. */
 .partner-cue {
   background: #e7d3b4;
   color: #6f4a2b;
   border-radius: 999px;
-  font-size: 0.62rem;
-  font-weight: 700;
-  min-width: 15px;
-  text-align: center;
-  padding: 1px 5px;
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 1px 7px;
+  white-space: nowrap;
 }
 
 .partner-row-open > td {
@@ -4447,7 +4466,8 @@ progress {
   font-weight: 600;
 }
 
-.partner-attr:hover .field-fix {
+.partner-attr:hover .field-fix,
+.partner-attr:focus-within .field-fix {
   opacity: 1;
 }
 
@@ -4464,7 +4484,9 @@ progress {
 }
 
 .partner-attr:hover .lookup-field .field-fix,
-.db-field:hover .lookup-field .field-fix {
+.partner-attr:focus-within .lookup-field .field-fix,
+.db-field:hover .lookup-field .field-fix,
+.db-field:focus-within .lookup-field .field-fix {
   opacity: 1;
 }
 
@@ -5710,26 +5732,40 @@ progress {
    places, later acts), then a quiet divider, then the sources that ground
    them (narrative, Word summary, manuscript). The jump chips let either
    reading mode skip the other. */
+/* The jump row is a line of in-page links, not pills: the rail's pills switch
+   lists and the record's pills edit, so this row must look like neither. An
+   "On this page" label says what the links do before anyone clicks one. */
 .db-jumpnav {
+  align-items: baseline;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px 14px;
   margin: 0 0 14px;
+}
+.db-jumpnav::before {
+  color: #9d7355;
+  content: "On this page";
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  margin-right: 2px;
+  text-transform: uppercase;
 }
 .db-jumpnav button {
   background: transparent;
-  border: 1px solid #d8c7ac;
-  border-radius: 999px;
-  color: #9d7355;
-  cursor: pointer;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  padding: 3px 10px;
-}
-.db-jumpnav button:hover {
-  background: #f0e6d8;
+  border: none;
+  border-bottom: 1px dotted #c8b494;
+  border-radius: 0;
   color: #7c5a3f;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0 0 1px;
+}
+.db-jumpnav button:hover,
+.db-jumpnav button:focus-visible {
+  border-bottom-color: #7c5a3f;
+  color: #1c150f;
 }
 .db-evidence-divider {
   border-top: 1px solid #e3d5bf;
@@ -9561,3 +9597,65 @@ progress {
 }
 
 
+
+/* --- UI review 2026-09-10: stakes nobody holds, worklist locators, record
+   subtitle, year inputs, list label, uncapped narrative on the record page --- */
+.partner-unattached {
+  color: #8a5a36;
+  font-style: italic;
+}
+.partner-stake-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+.partners-notice {
+  margin: 0 0 10px;
+}
+.db-record-sub {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+.worklist-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.worklist-meta {
+  color: #a8977f;
+  font-size: 0.74rem;
+}
+.worklist-item:hover .worklist-meta {
+  color: #6b5540;
+}
+.db-narrative-block > .db-narrative {
+  max-height: none;
+}
+.db-date-inputs {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+}
+.db-date-inputs input {
+  background: #211a14;
+  border: 1px solid #3a2f25;
+  border-radius: 6px;
+  color: #f0e6d4;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 2px 4px;
+  text-align: center;
+  width: 4.2em;
+}
+.db-date-inputs input:focus {
+  border-color: #d6aa7d;
+  outline: none;
+}
+.db-rail-search-label {
+  color: #cbbdab;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0 0 4px;
+  text-transform: uppercase;
+}

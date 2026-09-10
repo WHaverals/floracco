@@ -319,14 +319,14 @@ export default function CreateRecordForm({
       {numberTaken && (
         <div className="create-warning">
           <strong>Contract {numberTaken.id} already exists</strong> — {numberTaken.title} ·{" "}
-          {numberTaken.date} · c. {numberTaken.folio} · reg. {numberTaken.folder}. If the act you are
-          adding is a later act <em>on</em> it (modifica, disdetta, …):
+          {numberTaken.date} · c. {numberTaken.folio} · reg. {numberTaken.folder}. If what you are
+          adding is a sub-contract <em>of</em> it (modifica, disdetta, …):
           <button
             type="button"
             className="pill-button"
             onClick={() => navigate(`/database/sub_contract/new?parent=${numberTaken.id}`)}
           >
-            Add as act on contract {numberTaken.id} →
+            Add as sub-contract of contract {numberTaken.id} →
           </button>
         </div>
       )}

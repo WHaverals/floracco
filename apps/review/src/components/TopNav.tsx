@@ -59,7 +59,7 @@ export default function TopNav({ identityEmail }: { identityEmail?: string | nul
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search the corpus…  ( / )"
+            placeholder="Search everything…  ( / )"
             aria-label="Search the corpus"
           />
         </form>

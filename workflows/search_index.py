@@ -38,7 +38,7 @@ SNIPPET_CLOSE = "»"  # »
 
 KIND_LABELS = {
     "contract": "Contracts",
-    "sub_contract": "Acts (sub-contracts)",
+    "sub_contract": "Sub-contracts",
     "person": "People",
 }
 KIND_ORDER = ["contract", "sub_contract", "person"]

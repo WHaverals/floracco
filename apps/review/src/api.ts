@@ -323,6 +323,29 @@ export function restorePartner(
   );
 }
 
+/** Remove a stake nobody is attached to (audited soft-delete of the investment row). */
+export function removeStake(
+  contractId: string,
+  investmentId: string,
+  body: { reviewer: string; reason: string },
+): Promise<{ ok: boolean }> {
+  return request(
+    `/api/db/contract/${encodeURIComponent(contractId)}/stake/${encodeURIComponent(investmentId)}/remove`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export function restoreStake(
+  contractId: string,
+  investmentId: string,
+  body: { reviewer: string; reason: string },
+): Promise<{ ok: boolean }> {
+  return request(
+    `/api/db/contract/${encodeURIComponent(contractId)}/stake/${encodeURIComponent(investmentId)}/restore`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
 export function hideRecord(
   table: DbBrowseTable,
   id: string,

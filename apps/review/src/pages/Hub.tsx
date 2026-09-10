@@ -106,7 +106,7 @@ export default function Hub() {
           <p className="home-figures">
             <span className="home-fig-num">{stats.contracts.toLocaleString()}</span> accomandite
             <span className="home-fig-dot">·</span>
-            <span className="home-fig-num">{stats.acts.toLocaleString()}</span> later acts
+            <span className="home-fig-num">{stats.acts.toLocaleString()}</span> sub-contracts
             <span className="home-fig-dot">·</span>
             <span className="home-fig-num">{stats.people.toLocaleString()}</span> people
           </p>
@@ -121,7 +121,7 @@ export default function Hub() {
                   <span className="legend-swatch is-acc" /> accomandite
                 </span>
                 <span className="legend-item">
-                  <span className="legend-swatch is-acts" /> later acts
+                  <span className="legend-swatch is-acts" /> sub-contracts
                 </span>
               </div>
             </div>

@@ -1414,6 +1414,11 @@ def validate_correction(table: str, field: str, change_type: str, proposed_value
     if not value:
         raise HTTPException(status_code=400, detail="A proposed value is required.")
     input_type = meta["input_type"]
+    if input_type in ("text", "textarea") and data_quality.is_placeholder_text(value):
+        raise HTTPException(
+            status_code=400,
+            detail=f"“{value}” is placeholder text, not a value. To blank the field, delete the text and save (Clear).",
+        )
     if input_type == "date" and not DATE_PATTERN.match(value):
         raise HTTPException(status_code=400, detail="Date must be in YYYY-MM-DD form.")
     if input_type == "number":
@@ -1430,6 +1435,20 @@ def validate_correction(table: str, field: str, change_type: str, proposed_value
     if input_type == "bool" and value not in ("0", "1"):
         raise HTTPException(status_code=400, detail="Value must be Yes (1) or No (0).")
     return value
+
+
+def reject_placeholder_text(**fields: str) -> None:
+    """Refuse create-form text that stands in for nothing ("NULL", "none", a dash).
+
+    Keyword names are the reviewer-facing labels used in the error. The inline
+    editor gets the same guard in validate_correction; together with the importer's
+    seed hygiene this keeps placeholder strings out of the corpus for good."""
+    for label, value in fields.items():
+        if data_quality.is_placeholder_text(value):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{label}: “{value.strip()}” is placeholder text — leave the field empty instead.",
+            )
 
 
 def read_db_value(connection: sqlite3.Connection, table: str, pk_value: str, field: str) -> Any:
@@ -1839,20 +1858,26 @@ def build_partners(
         """,
         (raw_id,),
     ).fetchall()
-    for iv in orphan_investments:
+    # A stake with nobody attached: `unattached` marks it for the UI (which says
+    # so in words and offers Attach / Remove); Status keeps its meaning of the
+    # partner's personal standing (widow, guardian) and stays blank here.
+    def make_stake_row(iv: sqlite3.Row, *, removed: bool = False) -> dict[str, Any]:
         inv_id = iv["investment_id"]
-        rows.append(
-            {
-                "key": f"investment:{inv_id}",
-                "person": None,
-                "role": editable_cell("investment", inv_id, "type", iv["inv_type"], display_text(iv["inv_type"]), proposals),
-                "cash": cash_cell(inv_id, iv["investment_cash"], iv["investment_non_cash"]),
-                "profession": None,
-                "residence": "—",
-                "status": "unattached",
-                "removed": False,
-            }
-        )
+        return {
+            "key": f"investment:{inv_id}",
+            "investment_id": str(inv_id),
+            "person": None,
+            "role": editable_cell("investment", inv_id, "type", iv["inv_type"], display_text(iv["inv_type"]), proposals),
+            "cash": cash_cell(inv_id, iv["investment_cash"], iv["investment_non_cash"]),
+            "profession": None,
+            "residence": "—",
+            "status": "removed" if removed else "—",
+            "unattached": True,
+            "removed": removed,
+            "attributes": None,
+        }
+
+    rows.extend(make_stake_row(iv) for iv in orphan_investments)
 
     live_count = len(rows)
 
@@ -1878,6 +1903,16 @@ def build_partners(
             (raw_id,),
         ).fetchall()
         rows.extend(make_partner_row(inv, removed=True) for inv in removed_rows)
+        # Stakes removed through the stake endpoint (soft-deleted investment rows)
+        # come back greyed with a Restore, like removed partners.
+        removed_stakes = connection.execute(
+            """
+            SELECT investment_id, type AS inv_type, investment_cash, investment_non_cash
+            FROM investment WHERE contract_id = ? AND is_deleted = 1 ORDER BY investment_id
+            """,
+            (raw_id,),
+        ).fetchall()
+        rows.extend(make_stake_row(iv, removed=True) for iv in removed_stakes)
 
     return {"count": live_count, "rows": rows, "removed_count": len(rows) - live_count}
 
@@ -1986,12 +2021,13 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
                 ],
             }
         )
+    title, subtitle = record_heading("Contract", raw_id, data.get("firm_name"), record_locator(data))
     return {
         "table": "contract",
         "id": str(raw_id),
         "row_id": f"contract:{raw_id}",
-        "title": (data.get("firm_name") or "").strip() or f"Contract {raw_id}",
-        "subtitle": f"Main contract · {raw_id}",
+        "title": title,
+        "subtitle": subtitle,
         "fields": fields,
         "partners": partners,
         "places": places,
@@ -2052,12 +2088,20 @@ def sub_contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str
                 }
             )
 
+    title, subtitle = record_heading(
+        "Sub-contract",
+        raw_id,
+        data.get("sub_firm_name"),
+        str(data.get("sub_type") or "").strip(),
+        record_locator(data),
+        f"on contract {main_id}" if main_id else "",
+    )
     return {
         "table": "sub_contract",
         "id": str(raw_id),
         "row_id": f"sub_contract:{raw_id}",
-        "title": (data.get("sub_firm_name") or "").strip() or f"Sub-contract {raw_id}",
-        "subtitle": f"{display_text(data.get('sub_type'))} · {raw_id}",
+        "title": title,
+        "subtitle": subtitle,
         "fields": fields,
         "sections": sections,
         "document": clean_document(data.get("document")),
@@ -2147,6 +2191,18 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
         if total > cap:
             word_sources_note += f" Showing the first {cap} of {total}."
 
+    # "Person #134 · 2 contracts, 1445–1452": the same shape as the browse row.
+    years = sorted(
+        {
+            str(c["registration_date"])[:4]
+            for c in contracts
+            if str(c["registration_date"] or "")[:4].isdigit() and str(c["registration_date"]) != "0000-00-00"
+        }
+    )
+    span = f", {years[0]}" if len(years) == 1 else f", {years[0]}–{years[-1]}" if years else ""
+    appearances = (
+        "no contracts" if not contracts else f"{len(contracts)} contract{'' if len(contracts) == 1 else 's'}{span}"
+    )
     return {
         "table": "person",
         "id": str(raw_id),
@@ -2158,7 +2214,7 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
             data.get("father_mother"),
             data.get("grandfather"),
         ),
-        "subtitle": f"Person · {raw_id}",
+        "subtitle": f"Person #{raw_id} · {appearances}",
         "fields": fields,
         "sections": sections,
         "document": None,
@@ -2168,21 +2224,24 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
     }
 
 
-def search_meta(date: Any, folio: Any, folder: Any, sub_type: Any = None) -> str:
+def search_meta(date: Any, folio: Any, folder: Any, sub_type: Any = None, series: Any = None) -> str:
     """Readable one-line meta for a search result.
 
     Placeholder dates (``0000-00-00``) are suppressed — they are a known
     data-quality issue, not information — and the register folder is shown so
-    a result can be located archivally even when the firm name is blank.
+    a result can be located archivally even when the firm name is blank. Pass
+    ``series`` too where it is at hand so the rows with swapped series/folder
+    columns still read "reg. 10842" rather than "reg. Mercanzia".
     """
     date_text = str(date or "").strip()
     if date_text == "0000-00-00":
         date_text = "no date"
+    number = register_number(series, folder) if series is not None else str(folder or "").strip()
     parts = [
         str(sub_type or "").strip(),
         date_text,
         f"c. {str(folio).strip()}" if str(folio or "").strip() else "",
-        f"reg. {str(folder).strip()}" if str(folder or "").strip() else "",
+        f"reg. {number}" if number else "",
     ]
     return " · ".join(part for part in parts if part)
 
@@ -2282,9 +2341,16 @@ def db_search(
             )
             params += [like, like, like, like]
     if table in ("contract", "sub_contract"):
-        if register:
-            conditions.append("TRIM(folder) = ?")
-            params.append(register)
+        if register == NO_REGISTER:
+            conditions.append("TRIM(COALESCE(folder, '')) = ''")
+        elif register:
+            # A register number lives in `folder`, except on the rows where the two
+            # columns were swapped at entry ("Mercanzia" / "10842"): match those too.
+            conditions.append(
+                "(TRIM(folder) = ? OR (TRIM(COALESCE(series, '')) = ? "
+                "AND TRIM(COALESCE(folder, '')) NOT GLOB '[0-9]*'))"
+            )
+            params += [register, register]
         if year_from:
             conditions.append("substr(registration_date, 1, 4) >= ?")
             params.append(year_from)
@@ -2307,7 +2373,7 @@ def db_search(
                 f"SELECT COUNT(*) AS c FROM contract {where}", params
             ).fetchone()["c"]
             rows = connection.execute(
-                f"SELECT contract_id, registration_date, folio, firm_name, folder FROM contract {where} "
+                f"SELECT contract_id, registration_date, folio, firm_name, folder, series FROM contract {where} "
                 # A purely numeric query floats the exact id to the top; the chosen
                 # sort (placeholder dates last) follows.
                 f"ORDER BY CASE WHEN CAST(contract_id AS TEXT) = ? THEN 0 ELSE 1 END, {order_body} "
@@ -2320,7 +2386,7 @@ def db_search(
                     "row_id": f"contract:{r['contract_id']}",
                     "title": (r["firm_name"] or "").strip() or f"Contract {r['contract_id']}",
                     "meta": search_meta(
-                        r["registration_date"], r["folio"], r["folder"]
+                        r["registration_date"], r["folio"], r["folder"], series=r["series"]
                     ),
                 }
                 for r in rows
@@ -2330,7 +2396,8 @@ def db_search(
                 f"SELECT COUNT(*) AS c FROM sub_contract {where}", params
             ).fetchone()["c"]
             rows = connection.execute(
-                f"SELECT contract_id, registration_date, folio, sub_firm_name, sub_type, folder FROM sub_contract {where} "
+                f"SELECT contract_id, registration_date, folio, sub_firm_name, sub_type, folder, series "
+                f"FROM sub_contract {where} "
                 f"ORDER BY CASE WHEN CAST(contract_id AS TEXT) = ? THEN 0 ELSE 1 END, {order_body} "
                 "LIMIT ? OFFSET ?",
                 (*params, term, limit, offset),
@@ -2341,7 +2408,7 @@ def db_search(
                     "row_id": f"sub_contract:{r['contract_id']}",
                     "title": (r["sub_firm_name"] or "").strip() or f"Sub-contract {r['contract_id']}",
                     "meta": search_meta(
-                        r["registration_date"], r["folio"], r["folder"], r["sub_type"]
+                        r["registration_date"], r["folio"], r["folder"], r["sub_type"], series=r["series"]
                     ),
                 }
                 for r in rows
@@ -2390,21 +2457,114 @@ def db_search(
         connection.close()
 
 
-def register_label(series: str | None, folder: str | None) -> str:
-    """Human register label from the (case-varying) series + (trimmed) folder.
+# Filter sentinel for rows whose register folder is blank. The browse filter's
+# "All registers" option is the empty string, so "(no register)" needs its own
+# non-empty value or the two are indistinguishable on the wire.
+NO_REGISTER = "__none__"
+NO_REGISTER_LABEL = "(no register)"
 
-    The corpus stores the series two ways for the Camera di Commercio register and
-    leaves trailing spaces on some folders; this collapses both to one clean label
-    at read time (no data writes — the stored values stay verbatim)."""
-    folder = (folder or "").strip()
-    series_lc = (series or "").lower()
-    if not folder:
-        return "(no register)"
-    if "mercanzia" in series_lc:
-        return f"Mercanzia {folder}"
-    if "commercio" in series_lc or "camera" in series_lc:
-        return f"Camera di Commercio {folder}"
-    return folder
+
+def register_parts(series: str | None, folder: str | None) -> tuple[str, str]:
+    """(series kind, register number) for one row, read-time only.
+
+    Tolerates what the corpus actually holds: the series misspelled ("Mercancia",
+    "Mercazia"), spelled with varying case, left blank on a stray row, and — for
+    two rows — swapped with the folder ("Mercanzia" in `folder`, "10842" in
+    `series`). Kind is "mercanzia", "commercio" or "" (unknown). Stored values are
+    never rewritten."""
+    series_text = (series or "").strip()
+    number = (folder or "").strip()
+    if number and not number[:1].isdigit() and series_text[:1].isdigit():
+        series_text, number = number, series_text  # swapped columns
+    series_lc = series_text.lower()
+    if series_lc.startswith("merca"):
+        kind = "mercanzia"
+    elif "commercio" in series_lc or "camera" in series_lc:
+        kind = "commercio"
+    else:
+        kind = ""
+    return kind, number
+
+
+def register_label_for(kind: str, number: str) -> str:
+    if not number:
+        return NO_REGISTER_LABEL
+    if kind == "mercanzia":
+        return f"Mercanzia {number}"
+    if kind == "commercio":
+        return f"Camera di Commercio {number}"
+    return number
+
+
+def register_label(series: str | None, folder: str | None) -> str:
+    """Human register label from the (case-varying) series + (trimmed) folder,
+    collapsed to one clean label at read time (no data writes)."""
+    return register_label_for(*register_parts(series, folder))
+
+
+def register_number(series: str | None, folder: str | None) -> str:
+    """The register number a row belongs to, swap-tolerant (see register_parts)."""
+    return register_parts(series, folder)[1]
+
+
+def record_locator(data: dict[str, Any]) -> str:
+    """'Mercanzia 10831 · c. 7r · 1445-04-19': the archival address of a contract
+    or sub-contract row, as far as the row records it."""
+    register = register_label(data.get("series"), data.get("folder"))
+    if register == NO_REGISTER_LABEL:
+        register = "no register recorded"
+    folio = str(data.get("folio") or "").strip()
+    date = str(data.get("registration_date") or "").strip()
+    parts = [register, f"c. {folio}" if folio else "", date if date and date != "0000-00-00" else ""]
+    return " · ".join(part for part in parts if part)
+
+
+def record_heading(kind: str, raw_id: Any, name: Any, *details: str) -> tuple[str, str]:
+    """(title, subtitle) for a record page. The title is the firm's name when the
+    row has one, else 'Contract 63'. The subtitle carries the number only when the
+    title does not, then the locator and any further detail, and says so when no
+    name is recorded — so the header's best line is never 'Main contract · 63'
+    above 'Contract 63'."""
+    name_text = str(name or "").strip()
+    title = name_text or f"{kind} {raw_id}"
+    parts = [f"{kind} {raw_id}" if name_text else "", *details, "" if name_text else "no firm name recorded"]
+    return title, " · ".join(part for part in parts if part)
+
+
+def _register_sort_key(kind: str, number: str) -> tuple[int, int, str]:
+    """Chronological order for the filter: Mercanzia (1445–1770), then Camera di
+    Commercio (1786–1808), then unknown series, then the blank bucket last; within
+    a series by number ("1263" before "1263bis")."""
+    rank = {"mercanzia": 0, "commercio": 1}.get(kind, 2) if number else 3
+    digits = re.match(r"\d+", number)
+    return rank, int(digits.group(0)) if digits else 0, number
+
+
+def register_facets(rows: list[Any]) -> list[dict[str, Any]]:
+    """Collapse per-(series, folder) counts into one filter option per register
+    number. The series label is a majority vote across that register's rows, so one
+    misspelled or blank row no longer strips the prefix from the other 170."""
+    votes: dict[str, dict[str, int]] = {}
+    for row in rows:
+        kind, number = register_parts(row["series"], row["folder"])
+        bucket = votes.setdefault(number, {})
+        bucket[kind] = bucket.get(kind, 0) + int(row["c"])
+    options = []
+    for number, kinds in votes.items():
+        known = {k: n for k, n in kinds.items() if k}
+        kind = max(known, key=known.__getitem__) if known else ""
+        options.append(
+            {
+                "folder": number or NO_REGISTER,
+                "label": register_label_for(kind, number),
+                "count": sum(kinds.values()),
+                "sort": _register_sort_key(kind, number),
+            }
+        )
+    options.sort(key=lambda o: o["sort"])
+    for option in options:
+        del option["sort"]
+    return options
 
 
 @app.get("/api/db/facets")
@@ -2446,17 +2606,12 @@ def db_facets(table: str) -> dict[str, Any]:
     )
     connection = open_db()
     try:
-        registers = [
-            {
-                "folder": (r["folder"] or "").strip(),
-                "label": register_label(r["series"], r["folder"]),
-                "count": r["c"],
-            }
-            for r in connection.execute(
-                f"SELECT TRIM(folder) AS folder, MIN(series) AS series, COUNT(*) AS c "
-                f"FROM {table} WHERE is_deleted = 0 GROUP BY TRIM(folder) ORDER BY c DESC"
+        registers = register_facets(
+            connection.execute(
+                f"SELECT TRIM(COALESCE(series, '')) AS series, TRIM(COALESCE(folder, '')) AS folder, "
+                f"COUNT(*) AS c FROM {table} WHERE is_deleted = 0 GROUP BY 1, 2"
             ).fetchall()
-        ]
+        )
         histogram = [
             {"decade": int(r["decade"]), "count": r["c"]}
             for r in connection.execute(
@@ -5069,10 +5224,10 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "corpus_totals",
         "group": "Overview",
         "title": "Corpus totals",
-        "description": "How many contracts, later acts, people, places and currencies the database holds.",
+        "description": "How many contracts, sub-contracts, people, places and currencies the database holds.",
         "chart": "none",
         "sql": "SELECT 'contracts' AS item, COUNT(*) AS n FROM contract WHERE is_deleted = 0\n"
-        "UNION ALL SELECT 'later acts', COUNT(*) FROM sub_contract WHERE is_deleted = 0\n"
+        "UNION ALL SELECT 'sub-contracts', COUNT(*) FROM sub_contract WHERE is_deleted = 0\n"
         "UNION ALL SELECT 'people', COUNT(*) FROM person WHERE is_deleted = 0\n"
         "UNION ALL SELECT 'places', COUNT(*) FROM place\n"
         "UNION ALL SELECT 'currencies', COUNT(*) FROM currency",
@@ -5133,8 +5288,8 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "acts_per_contract",
         "group": "Structure",
-        "title": "Contracts ranked by number of later acts",
-        "description": "Each contract with its count of later acts (terminations, variations, …).",
+        "title": "Contracts ranked by number of sub-contracts",
+        "description": "Each contract with its count of sub-contracts (terminations, variations, …).",
         "chart": "none",
         "sql": "SELECT s.main_contract_id AS contract_id, COUNT(*) AS later_acts FROM sub_contract s\n"
         "JOIN contract c ON c.contract_id = s.main_contract_id AND c.is_deleted = 0\n"
@@ -5391,8 +5546,8 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "later_acts_by_type",
         "group": "Structure",
-        "title": "Later acts by type",
-        "description": "Registered later acts by kind. Event counts (a contract may have several or none), "
+        "title": "Sub-contracts by type",
+        "description": "Registered sub-contracts by kind. Event counts (a contract may have several or none), "
         "not a share of contracts.",
         "chart": "bar",
         "sql": "SELECT sub_type AS act_type, COUNT(*) AS acts\n"
@@ -6068,6 +6223,77 @@ def restore_partner(cid: str, investor_id: str, action: RecordAction) -> dict[st
     return _set_partner_removed(cid, investor_id, removed=False, action=action)
 
 
+# ---------------------------------------------------------------------------
+# Remove / restore a STAKE that has no partner attached (an `investment` row with
+# no live investor_group link). The remove-partner cascade deliberately leaves the
+# investment in place (decision 2026-06-17, docs/remove_partner_design.md); this
+# is the separate, audited step that design left open for the reviewer who finds
+# the stake was entered in error. Only an unattached stake can be removed — one
+# with a partner is removed through the partner, never from under them.
+# ---------------------------------------------------------------------------
+
+
+def _set_stake_removed(cid: str, investment_id: str, *, removed: bool, action: RecordAction) -> dict[str, Any]:
+    if removed and not action.reason.strip():
+        raise HTTPException(status_code=400, detail="A reason is required to remove a stake.")
+    connection = open_db()
+    clog = open_corrections()
+    try:
+        row = connection.execute(
+            "SELECT is_deleted, contract_id FROM investment WHERE investment_id = ?", (investment_id,)
+        ).fetchone()
+        if not row or str(row["contract_id"]) != str(cid):
+            raise HTTPException(status_code=404, detail="Stake not found on this contract.")
+        if bool(row["is_deleted"]) == removed:
+            raise HTTPException(status_code=409, detail="Stake is already in that state.")
+        if removed:
+            holders = connection.execute(
+                """SELECT COUNT(*) AS c FROM investor_group g JOIN investor i ON i.investor_id = g.investor_id
+                   WHERE g.investment_id = ? AND g.is_deleted = 0 AND i.is_deleted = 0""",
+                (investment_id,),
+            ).fetchone()["c"]
+            if holders:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This stake still has a partner attached — remove the partner instead.",
+                )
+        with connection:
+            connection.execute(
+                "UPDATE investment SET is_deleted = ? WHERE investment_id = ?",
+                (1 if removed else 0, investment_id),
+            )
+        try:
+            corrections_db.record_operation(
+                clog, op="delete" if removed else "restore", db_table="investment",
+                pk={"investment_id": int(investment_id)},
+                by=action.reviewer, reason=action.reason.strip() or None,
+            )
+        except Exception:
+            # compensation-lite (§0 Phase A4): unlogged flip → put it back
+            with connection:
+                connection.execute(
+                    "UPDATE investment SET is_deleted = ? WHERE investment_id = ?",
+                    (0 if removed else 1, investment_id),
+                )
+            raise
+    finally:
+        clog.close()
+        connection.close()
+    return {"ok": True, "removed": removed}
+
+
+@app.post("/api/db/contract/{cid}/stake/{investment_id}/remove")
+@serialized_write
+def remove_stake(cid: str, investment_id: str, action: RecordAction) -> dict[str, Any]:
+    return _set_stake_removed(cid, investment_id, removed=True, action=action)
+
+
+@app.post("/api/db/contract/{cid}/stake/{investment_id}/restore")
+@serialized_write
+def restore_stake(cid: str, investment_id: str, action: RecordAction) -> dict[str, Any]:
+    return _set_stake_removed(cid, investment_id, removed=False, action=action)
+
+
 class AttributionRefute(BaseModel):
     reviewer: str = Field(min_length=1)
     reason: str = Field(min_length=1)
@@ -6709,7 +6935,7 @@ def dismissed_flag_keys() -> set[str]:
 
 
 WORD_DATE_GROUP_META = {
-    "label": "Word source — date differs",
+    "label": "Word summary gives another date",
     "severity": "medium",
     "explanation": (
         "An independent transcription (the Word source) records a different registration date for "
@@ -6752,15 +6978,59 @@ def _word_date_flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     return out
 
 
+def _attach_flag_meta(connection: sqlite3.Connection, items: list[dict[str, Any]]) -> None:
+    """Give every flag the one-line locator the browse rows carry (date · folio ·
+    register; '#id · n contracts' for people), so the worklist reads like the list
+    it sits in. One query per table, chunked under SQLite's parameter limit."""
+    by_table: dict[str, set[str]] = {}
+    for f in items:
+        by_table.setdefault(f["table"], set()).add(str(f["pk"]))
+    meta: dict[tuple[str, str], str] = {}
+
+    def chunks(values: set[str]) -> Any:
+        ordered = sorted(values)
+        for start in range(0, len(ordered), 400):
+            yield ordered[start:start + 400]
+
+    for pks in chunks(by_table.get("contract", set())):
+        marks = ",".join("?" * len(pks))
+        for r in connection.execute(
+            f"SELECT contract_id, registration_date, folio, folder, series FROM contract WHERE contract_id IN ({marks})", pks
+        ):
+            meta[("contract", str(r["contract_id"]))] = search_meta(
+                r["registration_date"], r["folio"], r["folder"], series=r["series"]
+            )
+    for pks in chunks(by_table.get("sub_contract", set())):
+        marks = ",".join("?" * len(pks))
+        for r in connection.execute(
+            f"SELECT contract_id, registration_date, folio, folder, series, sub_type FROM sub_contract "
+            f"WHERE contract_id IN ({marks})", pks
+        ):
+            meta[("sub_contract", str(r["contract_id"]))] = search_meta(
+                r["registration_date"], r["folio"], r["folder"], r["sub_type"], series=r["series"]
+            )
+    for pks in chunks(by_table.get("person", set())):
+        marks = ",".join("?" * len(pks))
+        for r in connection.execute(
+            f"SELECT p.person_id, (SELECT COUNT(DISTINCT iv.contract_id) FROM investor iv "
+            f"WHERE iv.person_id = p.person_id AND iv.is_deleted = 0) AS n FROM person p WHERE p.person_id IN ({marks})",
+            pks,
+        ):
+            meta[("person", str(r["person_id"]))] = _person_search_meta(r["person_id"], r["n"])
+    for f in items:
+        f["meta"] = meta.get((f["table"], str(f["pk"])), "")
+
+
 @app.get("/api/db/flags")
 def db_flags() -> dict[str, Any]:
+    dismissed = dismissed_flag_keys()
     connection = open_db()
     try:
         items = data_quality.flags(connection) + _word_date_flags(connection) + jewish_review.flags(connection)
+        items = [f for f in items if f["key"] not in dismissed]
+        _attach_flag_meta(connection, items)
     finally:
         connection.close()
-    dismissed = dismissed_flag_keys()
-    items = [f for f in items if f["key"] not in dismissed]
     meta_lookup = {**data_quality.GROUP_META, **jewish_review.GROUP_META, "word_date_differs": WORD_DATE_GROUP_META}
     groups: dict[str, dict[str, Any]] = {}
     for f in items:
@@ -6827,6 +7097,10 @@ class SubContractCreate(BaseModel):
 @app.post("/api/db/create/contract")
 @serialized_write
 def create_contract(payload: ContractCreate) -> dict[str, Any]:
+    reject_placeholder_text(**{
+        "Firm name": payload.firm_name, "Folio": payload.folio, "Series": payload.series,
+        "Folder": payload.folder, "Economic activity": payload.economic_activity, "Narrative": payload.document,
+    })
     if not DATE_OR_BLANK.match(payload.registration_date):
         raise HTTPException(status_code=400, detail="Registration date must be YYYY-MM-DD.")
     connection = open_db()
@@ -6838,7 +7112,7 @@ def create_contract(payload: ContractCreate) -> dict[str, Any]:
             if taken:
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Contract {payload.register_number} already exists — if this is a later act on it, add it as a sub-contract instead.",
+                    detail=f"Contract {payload.register_number} already exists — if this belongs to that contract, add it as a sub-contract instead.",
                 )
             new_id = payload.register_number
         else:
@@ -6878,6 +7152,10 @@ def create_contract(payload: ContractCreate) -> dict[str, Any]:
 @app.post("/api/db/create/sub_contract")
 @serialized_write
 def create_sub_contract(payload: SubContractCreate) -> dict[str, Any]:
+    reject_placeholder_text(**{
+        "Sub-firm name": payload.sub_firm_name, "Folio": payload.folio, "Series": payload.series,
+        "Folder": payload.folder, "Narrative": payload.document,
+    })
     if payload.sub_type not in SUB_TYPES:
         raise HTTPException(status_code=400, detail=f"sub_type must be one of {SUB_TYPES}.")
     if not DATE_OR_BLANK.match(payload.registration_date):
@@ -7110,6 +7388,15 @@ def create_investor(payload: InvestorCreate) -> dict[str, Any]:
     resulting group structure, including on existing siblings."""
     if payload.person_id is None and payload.new_person is None:
         raise HTTPException(status_code=400, detail="Pick an existing person or describe a new one.")
+    reject_placeholder_text(**{
+        "Partnership name": payload.partnership_name, "Non-cash contribution": payload.investment_non_cash,
+        "Title": payload.title, "Residence": payload.residence, "Origin": payload.origin,
+        "Profession": payload.profession, "Note": payload.note,
+        **({
+            "First name": payload.new_person.first_name, "Father / mother": payload.new_person.father_mother,
+            "Last name": payload.new_person.last_name,
+        } if payload.new_person else {}),
+    })
     if payload.join_investment_id is None and payload.role not in ("gp", "lp"):
         raise HTTPException(status_code=400, detail="Role must be gp or lp.")
     connection = open_db()

@@ -19,6 +19,7 @@ export default function InlineFieldEditor({
   label,
   inputType,
   options,
+  optionLabels,
   currentValue,
   onSaved,
   onCancel,
@@ -28,6 +29,8 @@ export default function InlineFieldEditor({
   label: string;
   inputType: DbFieldInputType;
   options?: string[] | null;
+  /** Human wording for enum codes (e.g. gp → "General partner"); the stored value is unchanged. */
+  optionLabels?: Record<string, string> | null;
   currentValue: string;
   onSaved: () => void;
   onCancel: () => void;
@@ -117,7 +120,7 @@ export default function InlineFieldEditor({
           <option value="">— choose —</option>
           {(options ?? []).map((opt) => (
             <option key={opt} value={opt}>
-              {opt}
+              {optionLabels?.[opt] ?? opt}
             </option>
           ))}
         </select>

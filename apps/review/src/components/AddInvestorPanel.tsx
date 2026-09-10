@@ -25,11 +25,14 @@ export default function AddInvestorPanel({
   contractTitle,
   onSaved,
   onClose,
+  presetInvestmentId = null,
 }: {
   contractId: string;
   contractTitle: string;
   onSaved: (message: string) => void;
   onClose: () => void;
+  /** Opened from "Attach a person" on a stake nobody holds: start in join mode on that stake. */
+  presetInvestmentId?: string | null;
 }) {
   // WHO
   const [personQuery, setPersonQuery] = useState("");
@@ -43,14 +46,14 @@ export default function AddInvestorPanel({
   const [surnameHits, setSurnameHits] = useState<PersonHit[]>([]);
   const [confirmedNew, setConfirmedNew] = useState(false);
   // ROLE & CAPITAL
-  const [mode, setMode] = useState<"own" | "join">("own");
+  const [mode, setMode] = useState<"own" | "join">(presetInvestmentId ? "join" : "own");
   const [role, setRole] = useState<"gp" | "lp">("lp");
   const [cash, setCash] = useState("");
   const [cashUnspecified, setCashUnspecified] = useState(false);
   const [nonCash, setNonCash] = useState("");
   const [firmName, setFirmName] = useState("");
   const [investments, setInvestments] = useState<ContractInvestment[]>([]);
-  const [joinId, setJoinId] = useState("");
+  const [joinId, setJoinId] = useState(presetInvestmentId ?? "");
   // DETAILS
   const [title, setTitle] = useState("");
   const [residence, setResidence] = useState("");
@@ -182,11 +185,9 @@ export default function AddInvestorPanel({
         note,
       });
       const who = pickedPerson?.display_name || `${npFirst} ${npLast}`.trim();
-      onSaved(
-        `Added ${who}${result.person_created ? " (new person)" : ""} as ${
-          mode === "join" ? "joint investor" : role
-        }.`,
-      );
+      const how =
+        mode !== "join" ? role : takesOver ? `holder of the ${joined?.type ?? ""} stake`.replace("  ", " ") : "joint investor";
+      onSaved(`Added ${who}${result.person_created ? " (new person)" : ""} as ${how}.`);
       resetWho();
       setCash("");
       setCashUnspecified(false);
@@ -231,10 +232,15 @@ export default function AddInvestorPanel({
     ["and_c", "& C. (e compagni)"],
   ];
 
+  // In join mode, a tranche with no members is a stake nobody holds: the person
+  // added takes it over (role and sum stay as recorded) rather than sharing it.
+  const joined = mode === "join" ? (investments.find((inv) => inv.investment_id === joinId) ?? null) : null;
+  const takesOver = Boolean(joined && !joined.members);
+
   return (
     <div className="add-investor-panel">
       <div className="add-investor-head">
-        <strong>Add an investor</strong>
+        <strong>{takesOver ? "Attach a person to this stake" : "Add an investor"}</strong>
         <span className="muted">to {contractTitle}</span>
         <button type="button" className="drawer-close" onClick={onClose} aria-label="Close">
           ×
@@ -378,8 +384,8 @@ export default function AddInvestorPanel({
               <input type="radio" checked={mode === "own"} onChange={() => setMode("own")} /> own capital tranche
             </label>
             <label>
-              <input type="radio" checked={mode === "join"} onChange={() => setMode("join")} /> shares an existing
-              tranche (joint)
+              <input type="radio" checked={mode === "join"} onChange={() => setMode("join")} />{" "}
+              {takesOver ? "takes over a stake with no partner" : "shares an existing tranche (joint)"}
             </label>
           </div>
         )}
@@ -435,12 +441,14 @@ export default function AddInvestorPanel({
               {investments.map((inv) => (
                 <option key={inv.investment_id} value={inv.investment_id}>
                   {inv.type} · {inv.cash == null ? "unspecified" : inv.cash} ·{" "}
-                  {inv.partnership_name || inv.members || `investment ${inv.investment_id}`}
+                  {inv.partnership_name || inv.members || "no partner attached"}
                 </option>
               ))}
             </select>
             <span className="lookup-status is-new">
-              Role and capital come from the shared tranche; “joint” is recorded on every member automatically.
+              {takesOver
+                ? "This stake has no partner yet. The person you add takes it over; role and capital stay as recorded."
+                : "Role and capital come from the shared tranche; “joint” is recorded on every member automatically."}
             </span>
           </label>
         )}

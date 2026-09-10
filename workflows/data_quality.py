@@ -19,10 +19,56 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+# Strings that mean "nothing here" but were saved as text. The archive export
+# leaked exactly one (`'NULL'` in contract 69's firm name, docs/multi_user_safety.md
+# D8); the rest are what a person types when they mean blank. Three places share
+# this set so the corpus never holds placeholder text: the importer blanks it at
+# seed time, the editors refuse it, and the flag below catches whatever slips by.
+PLACEHOLDER_TEXT: frozenset[str] = frozenset({"null", "none", "n/a", "-", "—", "–"})
+
+# Correctable free-text columns the placeholder check sweeps, per table, with the
+# fix descriptor the UI needs to open the right editor. Investor columns live on
+# the partner row of the contract page, hence the partner_field kind.
+PLACEHOLDER_COLUMNS: dict[str, list[str]] = {
+    "contract": ["firm_name", "folio", "document"],
+    "sub_contract": ["sub_firm_name", "folio", "document"],
+    "person": ["first_name", "father_mother", "grandfather", "last_name", "nickname"],
+    "investor": ["profession", "husband_first_name", "husband_last_name", "guardian_of"],
+}
+
+
+def is_placeholder_text(value: Any) -> bool:
+    """True when a text value is a stand-in for nothing ("NULL", "none", a dash)."""
+    if value is None:
+        return False
+    return str(value).strip().lower() in PLACEHOLDER_TEXT
+
+
+def _existing_columns(connection: sqlite3.Connection, table: str, wanted: list[str]) -> list[str]:
+    """The subset of `wanted` that the table actually has (schemas differ between
+    the corpus and test fixtures; a missing column is simply not checked)."""
+    try:
+        present = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+    except sqlite3.DatabaseError:
+        return []
+    return [col for col in wanted if col in present]
+
+
+def _placeholder_sql() -> str:
+    """SQL predicate for a column holding placeholder text (bind the column name)."""
+    tokens = ", ".join("?" for _ in PLACEHOLDER_TEXT)
+    return f"LOWER(TRIM(COALESCE({{col}}, ''))) IN ({tokens})"
+
+
 # group id -> reviewer-facing label, severity, and the one-line explanation.
 GROUP_META: dict[str, dict[str, str]] = {
+    "placeholder_text": {
+        "label": "Placeholder text",
+        "severity": "medium",
+        "explanation": "A field holds the word NULL (or a dash) where the source has nothing — an export artefact or a slip at the keyboard, not information. Open the field and clear it; if the act does record a value, enter that instead.",
+    },
     "broken_economic_sector": {
-        "label": "Broken economic sector",
+        "label": "Economic activity not in the list",
         "severity": "high",
         "explanation": "The economic activity points to an entry that no longer exists, so it shows blank. Set it from the act.",
     },
@@ -47,7 +93,7 @@ GROUP_META: dict[str, dict[str, str]] = {
         "explanation": "This person has neither a first nor a last name. Add their name from the act.",
     },
     "broken_place": {
-        "label": "Broken place",
+        "label": "Place not in the list",
         "severity": "high",
         "explanation": "A residence/origin points to a place entry that no longer exists. Re-point it from the act, or clear it.",
     },
@@ -62,9 +108,14 @@ GROUP_META: dict[str, dict[str, str]] = {
         "explanation": "No accomandatario (general partner) is recorded. Check the act and add or correct a partner's role.",
     },
     "missing_sub_type": {
-        "label": "Act type missing",
+        "label": "Sub-contract type missing",
         "severity": "medium",
-        "explanation": "This later act has no type (balance / renewal / termination / variation). Set it from the act.",
+        "explanation": "This sub-contract has no type (balance / renewal / termination / variation). Set it from the act.",
+    },
+    "orphan_stake": {
+        "label": "Stake with no partner",
+        "severity": "medium",
+        "explanation": "A role and a sum are recorded on this contract without a person attached — left over from data entry, or a partner who was removed. Open the Partners block and attach the right person, or remove the stake if it was entered in error.",
     },
     "widow_not_woman": {
         "label": "Marked widow, not a woman",
@@ -116,9 +167,10 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     # 3. contract with no live partners but a recorded narrative to add them from. A
     # contract with neither partners NOR narrative is an empty stub → integrity report.
     for r in connection.execute(
-        """SELECT contract_id AS cid, firm_name AS firm FROM contract c
-           WHERE c.is_deleted=0 AND COALESCE(c.document,'')<>''
-             AND NOT EXISTS (SELECT 1 FROM investor i WHERE i.contract_id=c.contract_id AND i.is_deleted=0)"""
+        """SELECT c.contract_id AS cid, c.firm_name AS firm FROM contract c
+           LEFT JOIN (SELECT contract_id FROM investor WHERE is_deleted=0 GROUP BY contract_id) has
+             ON has.contract_id=c.contract_id
+           WHERE c.is_deleted=0 AND COALESCE(c.document,'')<>'' AND has.contract_id IS NULL"""
     ):
         add("no_partners", "contract", r["cid"], _firm(r["firm"], r["cid"]), {"kind": "add_investor", "field": None})
 
@@ -205,12 +257,71 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     # to the person's "Recorded as woman" toggle; if instead the widow flag is the
     # error, the reviewer corrects that on the contract.
     for r in connection.execute(
-        """SELECT DISTINCT p.person_id AS pid, p.first_name AS fn, p.last_name AS ln
+        """SELECT p.person_id AS pid, p.first_name AS fn, p.last_name AS ln
            FROM person p
-           WHERE p.is_deleted=0 AND p.is_woman=0
-             AND EXISTS (SELECT 1 FROM investor i WHERE i.person_id=p.person_id AND i.is_widow=1 AND i.is_deleted=0)"""
+           JOIN (SELECT DISTINCT person_id FROM investor WHERE is_widow=1 AND is_deleted=0) w
+             ON w.person_id=p.person_id
+           WHERE p.is_deleted=0 AND p.is_woman=0"""
     ):
         who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"Person #{r['pid']}"
         add("widow_not_woman", "person", r["pid"], who, {"kind": "edit", "field": "is_woman"})
+
+    # 11. stake with no partner — an investment row nobody is linked to (ten in
+    # the seed; the remove-partner cascade also leaves one behind by design).
+    # The set of held investments is materialised once: investor_group has no
+    # index on investment_id, so a correlated NOT EXISTS here cost 4 s per call.
+    for r in connection.execute(
+        """SELECT v.investment_id AS iid, v.contract_id AS cid, c.firm_name AS firm, v.type AS role,
+                  v.investment_cash AS cash
+           FROM investment v JOIN contract c ON c.contract_id=v.contract_id
+           LEFT JOIN (SELECT ig.investment_id AS iid FROM investor_group ig
+                      JOIN investor i ON i.investor_id=ig.investor_id
+                      WHERE ig.is_deleted=0 AND i.is_deleted=0 GROUP BY ig.investment_id) held
+             ON held.iid=v.investment_id
+           WHERE v.is_deleted=0 AND c.is_deleted=0 AND held.iid IS NULL"""
+    ):
+        stake = " · ".join(x for x in ((r["role"] or "").strip(), "" if r["cash"] is None else str(r["cash"])) if x)
+        add("orphan_stake", "contract", r["cid"], f"{_firm(r['firm'], r['cid'])} · {stake or 'stake'}",
+            {"kind": "review_partners", "field": None}, key_suffix=str(r["iid"]))
+
+    # 12. placeholder text — "NULL", "none", a dash — saved where the source has nothing.
+    # One flag per (record, column); the fix opens that column's editor so the
+    # reviewer clears it (or enters the real value if the act has one).
+    tokens = sorted(PLACEHOLDER_TEXT)
+    for col in _existing_columns(connection, "contract", PLACEHOLDER_COLUMNS["contract"]):
+        for r in connection.execute(
+            f"SELECT contract_id AS cid, firm_name AS firm, {col} AS bad FROM contract "
+            f"WHERE is_deleted=0 AND {_placeholder_sql().format(col=col)}", tokens
+        ):
+            add("placeholder_text", "contract", r["cid"], f"{_firm(r['firm'], r['cid'])} · {col} = “{r['bad']}”",
+                {"kind": "edit", "field": col}, key_suffix=col)
+    for col in _existing_columns(connection, "sub_contract", PLACEHOLDER_COLUMNS["sub_contract"]):
+        for r in connection.execute(
+            f"SELECT contract_id AS scid, sub_firm_name AS firm, {col} AS bad FROM sub_contract "
+            f"WHERE is_deleted=0 AND {_placeholder_sql().format(col=col)}", tokens
+        ):
+            sub_name = (r["firm"] or "").strip() or f"Sub-contract {r['scid']}"
+            add("placeholder_text", "sub_contract", r["scid"], f"{sub_name} · {col} = “{r['bad']}”",
+                {"kind": "edit", "field": col}, key_suffix=col)
+    for col in _existing_columns(connection, "person", PLACEHOLDER_COLUMNS["person"]):
+        for r in connection.execute(
+            f"SELECT person_id AS pid, first_name AS fn, last_name AS ln, {col} AS bad FROM person "
+            f"WHERE is_deleted=0 AND {_placeholder_sql().format(col=col)}", tokens
+        ):
+            who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"Person #{r['pid']}"
+            add("placeholder_text", "person", r["pid"], f"{who} · {col} = “{r['bad']}”",
+                {"kind": "edit", "field": col}, key_suffix=col)
+    for col in _existing_columns(connection, "investor", PLACEHOLDER_COLUMNS["investor"]):
+        for r in connection.execute(
+            f"""SELECT i.investor_id AS iid, i.contract_id AS cid, c.firm_name AS firm,
+                       p.first_name AS fn, p.last_name AS ln, i.{col} AS bad
+                FROM investor i JOIN contract c ON c.contract_id=i.contract_id
+                LEFT JOIN person p ON p.person_id=i.person_id
+                WHERE i.is_deleted=0 AND c.is_deleted=0 AND {_placeholder_sql().format(col='i.' + col)}""",
+            tokens,
+        ):
+            who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"investor {r['iid']}"
+            add("placeholder_text", "contract", r["cid"], f"{who} · {_firm(r['firm'], r['cid'])} · {col} = “{r['bad']}”",
+                {"kind": "partner_field", "field": col, "investor_id": str(r["iid"])}, key_suffix=f"{r['iid']}:{col}")
 
     return out

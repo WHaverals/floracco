@@ -143,6 +143,8 @@ export type DbFlag = {
   severity: "high" | "medium";
   explanation: string;
   fix: DbFlagFix;
+  /** The browse row's locator line (date · folio · register, or '#id · n contracts'). */
+  meta?: string;
 };
 export type DbFlagGroup = {
   group: string;
@@ -690,6 +692,10 @@ export type DbPartnerAttributes = { notable: number; groups: DbPartnerAttrGroup[
 
 export type DbPartnerRow = {
   key: string;
+  /** Set on stake rows (an investment nobody is linked to): the investment id. */
+  investment_id?: string | null;
+  /** A stake with no partner attached — shown in words, with Attach / Remove. */
+  unattached?: boolean;
   person: { id: string; name: string } | null;
   role: DbEditableCell | null;
   cash: DbPartnerCash;

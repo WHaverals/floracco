@@ -245,8 +245,46 @@ def add_soft_delete_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def blank_placeholder_text(connection: sqlite3.Connection, tables: list[str]) -> dict[str, int]:
+    """Turn placeholder strings ("NULL", "none", a dash) in text columns into SQL NULL.
+
+    The archive export leaks the word NULL as a quoted string where the source has
+    nothing (one cell in the 2026 dump: contract 69's firm name), and the platform
+    then shows it as a title. The corpus invariant is that such cells are NULL, so
+    this runs on every seed. Returns the number of cells blanked per table.column
+    (only the non-zero ones), so a surprising count on a fresh export is visible in
+    the build stats. Shares its token set with the editors and the Needs-review flag.
+    """
+    try:
+        from workflows.data_quality import PLACEHOLDER_TEXT
+    except ImportError:  # run as a script from workflows/
+        from data_quality import PLACEHOLDER_TEXT  # type: ignore[no-redef]
+    tokens = sorted(PLACEHOLDER_TEXT)
+    marks = ", ".join("?" for _ in tokens)
+    blanked: dict[str, int] = {}
+    for table in tables:
+        for _, column, declared, *_rest in connection.execute(f"PRAGMA table_info(`{table}`)"):
+            if "INT" in (declared or "").upper() or "REAL" in (declared or "").upper():
+                continue
+            cursor = connection.execute(
+                f"UPDATE `{table}` SET `{column}` = NULL "
+                f"WHERE LOWER(TRIM(COALESCE(`{column}`, ''))) IN ({marks})",
+                tokens,
+            )
+            if cursor.rowcount:
+                blanked[f"{table}.{column}"] = cursor.rowcount
+    return blanked
+
+
 def _norm(value: object) -> str:
-    return "" if value is None else str(value).strip()
+    """Comparison form for replay pre-images. The literal string "NULL" counts as
+    blank: the op-log recorded it as the pre-image of contract 69's firm name when
+    the seed still held it (see blank_placeholder_text), and the cleaned seed now
+    has NULL there — the two must match or that history replays as a conflict."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.upper() == "NULL" else text
 
 
 def replay_corrections(connection: sqlite3.Connection) -> dict:
@@ -352,6 +390,9 @@ def build(*, backup: bool = True) -> dict:
         for table in IMPORT_TABLES:
             insert_counts[table] = import_table(connection, dump_text, table)
 
+        # Seed hygiene: placeholder strings the export wrote where it meant NULL.
+        placeholders_blanked = blank_placeholder_text(connection, list(IMPORT_TABLES))
+
         connection.commit()
 
         counts = {table: count_rows(connection, table) for table in IMPORT_TABLES}
@@ -402,6 +443,7 @@ def build(*, backup: bool = True) -> dict:
         "built_at": datetime.now(timezone.utc).isoformat(),
         "row_counts": counts,
         "insert_statements_rows_est": insert_counts,
+        "placeholder_text_blanked": placeholders_blanked,
         "max_ids": max_ids,
         "corrections_replay": replay_stats,
         "search_index": search_stats,

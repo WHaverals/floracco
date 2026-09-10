@@ -14,6 +14,8 @@ import {
   relinkField,
   removePartner,
   restorePartner,
+  removeStake,
+  restoreStake,
   restoreRecord,
   searchDb,
   setPlaceRemoved,
@@ -104,7 +106,24 @@ export default function Database() {
   const [total, setTotal] = useState(0);
   // Browse filters (contract & sub_contract only) + their facet values.
   const [facets, setFacets] = useState<DbFacets | null>(null);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  // Open by default: register and years are the main way through 4,866 rows.
+  // A reviewer who collapses the panel stays collapsed (remembered in this browser).
+  const [filtersOpen, setFiltersOpen] = useState(() => {
+    try {
+      return localStorage.getItem("floracco_db_filters_open") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleFilters = () => {
+    const next = !filtersOpen;
+    try {
+      localStorage.setItem("floracco_db_filters_open", next ? "1" : "0");
+    } catch {
+      // storage unavailable: the panel still toggles for this visit
+    }
+    setFiltersOpen(next);
+  };
   const [register, setRegister] = useState("");
   const [yearRange, setYearRange] = useState<[number, number] | null>(null);
   const [subType, setSubType] = useState("");
@@ -351,12 +370,14 @@ export default function Database() {
           { value: "id_asc", label: "Id ↑" },
           { value: "id_desc", label: "Id ↓" },
         ];
+  // The rail box filters THIS list; the nav box searches everything and leaves
+  // the page. The label above the box and the placeholders say which is which.
   const searchPlaceholder =
     table === "person"
-      ? "Search name, nickname, or id…"
+      ? "name, nickname or number"
       : table === "contract"
-        ? "Search firm, party, activity, folio, or id…"
-        : "Search firm, folio, or id…";
+        ? "firm, partner, activity, folio or number"
+        : "firm, folio or number";
 
   // Filters: register/date/type on contract & sub-contract; gender on people.
   const showFilters =
@@ -407,6 +428,7 @@ export default function Database() {
             </p>
           ) : (
             <>
+              <p className="db-rail-search-label">In this list</p>
               <input
                 className="db-search"
                 type="search"
@@ -451,10 +473,11 @@ export default function Database() {
                   <button
                     type="button"
                     className="db-filter-toggle"
-                    onClick={() => setFiltersOpen((open) => !open)}
+                    onClick={toggleFilters}
                     aria-expanded={filtersOpen}
                   >
-                    Filters{activeFilterCount ? ` (${activeFilterCount})` : ""} {filtersOpen ? "▴" : "▾"}
+                    {table === "person" ? "Filters" : "Register & years"}
+                    {activeFilterCount ? ` (${activeFilterCount})` : ""} {filtersOpen ? "▴" : "▾"}
                   </button>
                   {activeFilterCount > 0 && (
                     <button type="button" className="db-filter-clear" onClick={clearFilters}>
@@ -526,7 +549,8 @@ export default function Database() {
                   {group.items.map((flag) => (
                     <li key={flag.key} className={flag.table === routeTable && flag.pk === routeId ? "is-active" : undefined}>
                       <button type="button" className="worklist-item" onClick={() => navigate(flagHref(flag))}>
-                        {flag.title}
+                        <span>{flag.title}</span>
+                        {flag.meta && <span className="worklist-meta">{flag.meta}</span>}
                       </button>
                       <button
                         type="button"
@@ -599,11 +623,11 @@ export default function Database() {
         {!isCreating && !record && !loadingRecord && !recordError && (
           <div className="db-detail-empty">
             <p className="eyebrow">Record viewer</p>
-            <h2>Pick a record to inspect</h2>
+            <h2>Pick a contract, sub-contract or person on the left</h2>
             <p className="muted">
-              Foreign keys are resolved to readable values; the attached Word summary, the manuscript
-              page, and the full change history are shown. Hover any editable field to fix it in
-              place — every change is audited and revertible.
+              You will see its details, partners and places, the Word summary, the manuscript page and
+              every change made so far. Move the mouse over a value and click Edit to correct it. Every
+              change is recorded and can be undone.
             </p>
           </div>
         )}
@@ -663,6 +687,25 @@ function proposedLabel(value: string | null | undefined, inputType?: string | nu
   return value ?? "";
 }
 
+/** Reviewer-facing names for the editable partner columns (tooltips, editor
+ * labels). Column names are storage names, not something a reader should see. */
+const PARTNER_CELL_LABELS: Record<string, string> = {
+  type: "role",
+  investment_cash: "capital",
+  profession: "profession",
+};
+
+/** gp/lp are the stored codes; the reader sees the words. The code stays visible
+ * on hover so the old shorthand is never lost. */
+const ROLE_LABELS: Record<string, string> = {
+  gp: "General partner",
+  lp: "Limited partner",
+};
+
+function partnerCellLabel(column: string): string {
+  return PARTNER_CELL_LABELS[column] ?? column.replace(/_/g, " ");
+}
+
 /** One Partners cell: shows the value with a hover ✎, swaps to the shared
  * InlineFieldEditor while editing, and surfaces any pending correction chip. */
 function PartnerCell({
@@ -686,20 +729,28 @@ function PartnerCell({
       <InlineFieldEditor
         dbRowId={cell.db_row_id}
         column={cell.column}
-        label={cell.column}
+        label={partnerCellLabel(cell.column)}
         inputType={cell.input_type}
         options={cell.options}
+        optionLabels={cell.column === "type" ? ROLE_LABELS : null}
         currentValue={cell.current}
         onSaved={onSaved}
         onCancel={onCancel}
       />
     );
   }
+  const isRole = cell.column === "type";
+  const shown = isRole ? (ROLE_LABELS[cell.value] ?? cell.value) : cell.value;
   return (
     <div className="partner-cell">
-      <span className="partner-cell-value">{cell.value}</span>
+      <span
+        className="partner-cell-value"
+        title={isRole && ROLE_LABELS[cell.value] ? `Recorded as “${cell.value}”` : undefined}
+      >
+        {shown}
+      </span>
       {cell.editable && !disabled && (
-        <button type="button" className="field-fix" onClick={onEdit} title={`Edit ${cell.column}`}>
+        <button type="button" className="field-fix" onClick={onEdit} title={`Edit ${partnerCellLabel(cell.column)}`}>
           ✎ Edit
         </button>
       )}
@@ -717,12 +768,15 @@ function PartnerCell({
  * runs the audited cascade. Mirrors InlineFieldEditor's pattern. */
 function PartnerActionConfirm({
   mode,
+  subject = "partner",
   consequence,
   warning,
   onConfirm,
   onClose,
 }: {
   mode: "remove" | "restore";
+  /** What is being removed or restored — a partner, or a stake nobody holds. */
+  subject?: "partner" | "stake";
   consequence: string;
   warning: string;
   onConfirm: (reviewer: string, reason: string) => Promise<void>;
@@ -740,7 +794,7 @@ function PartnerActionConfirm({
       return;
     }
     if (mode === "remove" && !reason.trim()) {
-      setError("A reason is required to remove a partner.");
+      setError(`A reason is required to remove a ${subject}.`);
       return;
     }
     localStorage.setItem("floracco_reviewer", reviewer.trim());
@@ -757,7 +811,7 @@ function PartnerActionConfirm({
   return (
     <div className="partner-confirm">
       <p className="partner-confirm-lead">
-        {mode === "remove" ? "Remove this partner? " : "Restore this partner? "}
+        {mode === "remove" ? `Remove this ${subject}? ` : `Restore this ${subject}? `}
         <span className="muted">{consequence}</span>
       </p>
       {warning && <p className="partner-confirm-warn">⚠ {warning}</p>}
@@ -768,7 +822,7 @@ function PartnerActionConfirm({
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="reason (required)"
-            aria-label="Reason for removing this partner"
+            aria-label={`Reason for removing this ${subject}`}
           />
         )}
         <input
@@ -872,6 +926,14 @@ function InlineLookupEditor({
   );
 }
 
+/** What clicking ✎ on a lookup value does, in the reviewer's words. */
+const LOOKUP_EDIT_TITLES: Record<DbRelink["kind"], string> = {
+  currency: "Choose another currency",
+  economic_activity: "Choose another economic activity",
+  place: "Choose another place",
+  title: "Choose another title",
+};
+
 /** An FK value shown read-with-✎: click to re-point it (combobox). */
 function LookupField({
   relink,
@@ -903,7 +965,12 @@ function LookupField({
     <span className="lookup-field">
       <span className="lookup-field-value">{value || "—"}</span>
       {!disabled && (
-        <button type="button" className="field-fix" onClick={() => setEditing(true)} title="Edit — re-points to a lookup phrase">
+        <button
+          type="button"
+          className="field-fix"
+          onClick={() => setEditing(true)}
+          title={LOOKUP_EDIT_TITLES[relink.kind] ?? "Choose another value"}
+        >
           ✎ Edit
         </button>
       )}
@@ -1042,6 +1109,7 @@ function PartnersBlock({
   onOpen,
   onCorrectName,
   onAddInvestor,
+  onAttachTo,
   onRefresh,
 }: {
   partners: DbRecord["partners"];
@@ -1051,6 +1119,8 @@ function PartnersBlock({
   onOpen: (table: DbBrowseTable, id: string) => void;
   onCorrectName?: () => void;
   onAddInvestor: () => void;
+  /** Open the add-investor panel on a stake nobody holds, so a person can take it over. */
+  onAttachTo?: (investmentId: string) => void;
   onRefresh: () => void;
 }) {
   // Keyed by `${rowKey}:${column}` (not the cell's db_row_id) so a shared joint
@@ -1058,6 +1128,14 @@ function PartnersBlock({
   const [editing, setEditing] = useState<string | null>(null);
   // The partner row (key) with an open remove/restore confirm.
   const [pending, setPending] = useState<{ key: string; mode: "remove" | "restore" } | null>(null);
+  const unattachedLabel = (
+    <span
+      className="partner-unattached"
+      title="A role and a sum recorded without a person: left over from data entry, or a partner who was removed. Attach the right person, or remove the stake if it was entered in error."
+    >
+      No partner attached
+    </span>
+  );
   // The partner row (key) whose detail panel is expanded (one at a time).
   // A deep-link from the worklist (?inv=) expands the flagged partner on arrival.
   const [expanded, setExpanded] = useState<string | null>(
@@ -1077,17 +1155,18 @@ function PartnersBlock({
     const shared = row.cash.joint && row.cash.joint_count > 1;
     const text = shared
       ? "The shared tranche stays with the other partner(s); it will no longer show as joint."
-      : "Their stake will be left unattached on this contract (not deleted).";
+      : "Their stake stays on the contract with no partner attached. You can attach someone else or remove it afterwards.";
     let warning = "";
     const role = row.role?.value;
     if (role === "gp" || role === "lp") {
       const sameRole = liveRows.filter((r) => r.person && r.role?.value === role).length;
       if (sameRole <= 1) {
-        warning = `This is the contract's last ${role === "gp" ? "general (gp)" : "limited (lp)"} partner.`;
+        warning = `This is the contract's last ${role === "gp" ? "general partner (gp)" : "limited partner (lp)"}.`;
       }
     }
     return { text, warning };
   };
+  const unattachedCount = liveRows.filter((r) => r.unattached).length;
 
   const renderCell = (rowKey: string, cell: DbEditableCell | null) => {
     const key = cell ? `${rowKey}:${cell.column}` : "";
@@ -1121,7 +1200,7 @@ function PartnersBlock({
                   : "Recorded as a joint stake (parallel investments)"
               }
             >
-              joint{row.cash.joint_count > 1 ? ` · ${row.cash.joint_count}` : ""}
+              {row.cash.joint_count > 1 ? `shared by ${row.cash.joint_count} partners` : "joint stake"}
             </span>
           )}
         </div>
@@ -1140,6 +1219,8 @@ function PartnersBlock({
       <button type="button" className="db-person-link" onClick={() => onOpen("person", row.person!.id)}>
         {row.person.name}
       </button>
+    ) : row.unattached ? (
+      unattachedLabel
     ) : (
       <span className="muted">—</span>
     );
@@ -1164,6 +1245,13 @@ function PartnersBlock({
           </button>
         )}
       </div>
+      {unattachedCount > 0 && (
+        <p className="notice warning partners-notice">
+          {unattachedCount === 1 ? "One stake" : `${unattachedCount} stakes`} on this contract{" "}
+          {unattachedCount === 1 ? "has" : "have"} no partner attached. Attach the right person, or remove
+          the stake if it was entered in error.
+        </p>
+      )}
       {count === 0 ? (
         <p className="muted">
           No investors are recorded yet — every accomandita needs at least an accomandatario (gp) and an
@@ -1200,7 +1288,11 @@ function PartnersBlock({
                         title={notable ? `${notable} recorded attribute${notable === 1 ? "" : "s"} — click to view/edit` : "View / edit all attributes"}
                       >
                         <span className="partner-chevron">{isOpen ? "▾" : "▸"}</span>
-                        {notable > 0 && <span className="partner-cue">{notable}</span>}
+                        {notable > 0 && (
+                          <span className="partner-cue">
+                            {notable} more {notable === 1 ? "detail" : "details"}
+                          </span>
+                        )}
                       </button>
                     )}
                   </td>
@@ -1219,6 +1311,30 @@ function PartnersBlock({
                         ✕ Remove
                       </button>
                     )}
+                    {!hidden && row.unattached && row.investment_id && (
+                      <span className="partner-stake-actions">
+                        {onAttachTo && (
+                          <button
+                            type="button"
+                            className="field-fix"
+                            onClick={() => onAttachTo(row.investment_id!)}
+                            title="Add a person who takes over this stake"
+                          >
+                            + Attach a person
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="field-fix partner-remove"
+                          onClick={() =>
+                            setPending(pending?.key === row.key ? null : { key: row.key, mode: "remove" })
+                          }
+                          title="Remove this stake from the contract (reversible)"
+                        >
+                          ✕ Remove stake
+                        </button>
+                      </span>
+                    )}
                   </td>
                 </tr>
                 {isOpen && row.attributes && (
@@ -1231,17 +1347,32 @@ function PartnersBlock({
                 {pending?.key === row.key && pending.mode === "remove" && (
                   <tr className="partner-confirm-row">
                     <td colSpan={8}>
-                      <PartnerActionConfirm
-                        mode="remove"
-                        consequence={consequenceFor(row).text}
-                        warning={consequenceFor(row).warning}
-                        onClose={() => setPending(null)}
-                        onConfirm={async (reviewer, reason) => {
-                          await removePartner(contractId, investorId(row.key), { reviewer, reason });
-                          setPending(null);
-                          onRefresh();
-                        }}
-                      />
+                      {row.unattached && row.investment_id ? (
+                        <PartnerActionConfirm
+                          mode="remove"
+                          subject="stake"
+                          consequence="The role and sum leave the record; nothing else changes. Restorable under Show hidden."
+                          warning=""
+                          onClose={() => setPending(null)}
+                          onConfirm={async (reviewer, reason) => {
+                            await removeStake(contractId, row.investment_id!, { reviewer, reason });
+                            setPending(null);
+                            onRefresh();
+                          }}
+                        />
+                      ) : (
+                        <PartnerActionConfirm
+                          mode="remove"
+                          consequence={consequenceFor(row).text}
+                          warning={consequenceFor(row).warning}
+                          onClose={() => setPending(null)}
+                          onConfirm={async (reviewer, reason) => {
+                            await removePartner(contractId, investorId(row.key), { reviewer, reason });
+                            setPending(null);
+                            onRefresh();
+                          }}
+                        />
+                      )}
                     </td>
                   </tr>
                 )}
@@ -1255,8 +1386,7 @@ function PartnersBlock({
       {removedRows.length > 0 && (
         <div className="partners-removed">
           <p className="partners-removed-head muted">
-            Removed partner{removedRows.length > 1 ? "s" : ""} ({removedRows.length}) — hidden from the
-            record, kept in the audit trail.
+            Removed ({removedRows.length}) — hidden from the record, kept in the audit trail.
           </p>
           <table className="db-table partners-table is-removed">
             <tbody>
@@ -1268,7 +1398,7 @@ function PartnersBlock({
                     <td className="muted">{row.cash.display}</td>
                     <td className="muted">{row.profession?.value ?? "—"}</td>
                     <td className="muted">{row.residence}</td>
-                    <td className="muted">removed</td>
+                    <td className="muted">{row.unattached ? "removed stake" : "removed"}</td>
                     <td className="partner-actions">
                       {!hidden && (
                         <button
@@ -1277,9 +1407,9 @@ function PartnersBlock({
                           onClick={() =>
                             setPending(pending?.key === row.key ? null : { key: row.key, mode: "restore" })
                           }
-                          title="Restore this partner"
+                          title={row.unattached ? "Restore this stake" : "Restore this partner"}
                         >
-                          ↩ Restore
+                          ↩ Restore{row.unattached ? " stake" : ""}
                         </button>
                       )}
                     </td>
@@ -1287,17 +1417,32 @@ function PartnersBlock({
                   {pending?.key === row.key && pending.mode === "restore" && (
                     <tr className="partner-confirm-row">
                       <td colSpan={7}>
-                        <PartnerActionConfirm
-                          mode="restore"
-                          consequence="The partner and their link to the stake come back; a joint tranche is re-formed if applicable."
-                          warning=""
-                          onClose={() => setPending(null)}
-                          onConfirm={async (reviewer, reason) => {
-                            await restorePartner(contractId, investorId(row.key), { reviewer, reason });
-                            setPending(null);
-                            onRefresh();
-                          }}
-                        />
+                        {row.unattached && row.investment_id ? (
+                          <PartnerActionConfirm
+                            mode="restore"
+                            subject="stake"
+                            consequence="The role and sum come back on the record, still with no partner attached."
+                            warning=""
+                            onClose={() => setPending(null)}
+                            onConfirm={async (reviewer, reason) => {
+                              await restoreStake(contractId, row.investment_id!, { reviewer, reason });
+                              setPending(null);
+                              onRefresh();
+                            }}
+                          />
+                        ) : (
+                          <PartnerActionConfirm
+                            mode="restore"
+                            consequence="The partner and their link to the stake come back; a joint tranche is re-formed if applicable."
+                            warning=""
+                            onClose={() => setPending(null)}
+                            onConfirm={async (reviewer, reason) => {
+                              await restorePartner(contractId, investorId(row.key), { reviewer, reason });
+                              setPending(null);
+                              onRefresh();
+                            }}
+                          />
+                        )}
                       </td>
                     </tr>
                   )}
@@ -1681,6 +1826,9 @@ function RecordDetail({
   const [manuscriptPath, setManuscriptPath] = useState<string | null>(null);
   const [editingColumn, setEditingColumn] = useState<string | null>(null);
   const [addingInvestor, setAddingInvestor] = useState(false);
+  // "Attach a person" on a stake nobody holds opens the add panel preset to
+  // that stake; the key remounts the panel so the preset takes effect.
+  const [attachInvestmentId, setAttachInvestmentId] = useState<string | null>(null);
   const [investorMessage, setInvestorMessage] = useState("");
   const history = record.change_history ?? [];
   // A DB-native row was created on the platform after the Word-corpus freeze:
@@ -1691,14 +1839,17 @@ function RecordDetail({
   const documentEditable = !record.is_deleted && (record.table === "contract" || record.table === "sub_contract");
   const documentCorrection = record.document_correction ?? null;
   const deps = record.dependents;
+  const counted = (n: number | undefined, word: string) => (n ? `${n} ${word}${n === 1 ? "" : "s"}` : "");
   const depParts = deps
     ? [
-        deps.sub_contract && `${deps.sub_contract} sub-contract(s)`,
-        deps.investor && `${deps.investor} investor(s)`,
-        deps.investment && `${deps.investment} investment(s)`,
-        deps.contract_place && `${deps.contract_place} place link(s)`,
+        counted(deps.sub_contract, "sub-contract"),
+        counted(deps.investor, "partner"),
+        counted(deps.investment, "stake"),
+        counted(deps.contract_place, "place"),
       ].filter(Boolean)
     : [];
+  const depList =
+    depParts.length > 1 ? `${depParts.slice(0, -1).join(", ")} and ${depParts[depParts.length - 1]}` : depParts[0] ?? "";
 
   // Close any open editor when the record changes, then act on a deep-link
   // `?fix=` from the "Needs review" worklist: open the right editor on arrival.
@@ -1710,7 +1861,14 @@ function RecordDetail({
     if (!autoFixField) return;
     if (autoFixField === "add_investor") {
       setAddingInvestor(true);
-    } else if (autoFixField !== "review_partners" && !autoFixInv) {
+    } else if (autoFixField === "review_partners") {
+      // a worklist item about the partners (duplicate, no gp, stake nobody holds):
+      // bring the block into view rather than opening any one editor
+      window.setTimeout(
+        () => document.getElementById("rec-partners")?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        50,
+      );
+    } else if (!autoFixInv) {
       const f = record.fields.find((x) => x.column === autoFixField);
       if (f) setEditingColumn(autoFixField); // scalar/bool/date/enum field
     }
@@ -1742,7 +1900,7 @@ function RecordDetail({
       ? [{ id: "rec-places", label: `Places (${record.places.count})` }]
       : []),
     ...(record.table === "contract" && (hasSubSection || !record.is_deleted)
-      ? [{ id: "rec-related", label: `Later acts (${relatedSection ? relatedSection.rows.length : 0})` }]
+      ? [{ id: "rec-related", label: `Sub-contracts (${relatedSection ? relatedSection.rows.length : 0})` }]
       : []),
     ...(record.table !== "contract" && relatedSection
       ? [{ id: "rec-related", label: relatedSection.title }]
@@ -1758,7 +1916,7 @@ function RecordDetail({
     <article className={`db-record${record.is_deleted ? " is-hidden-record" : ""}`}>
       <header className="db-record-head">
         <div className="db-record-titles">
-          <p className="eyebrow">{record.subtitle}</p>
+          <p className="eyebrow db-record-sub">{record.subtitle}</p>
           <h2>
             {record.title}
             {record.is_deleted && <span className="db-hidden-badge">Hidden</span>}
@@ -1766,17 +1924,16 @@ function RecordDetail({
         </div>
         {!record.is_deleted && (
           <details className="db-actions">
-            <summary>Actions</summary>
+            <summary>Hide this record…</summary>
             <div className="db-actions-body">
               <div className="db-danger-body">
                 <p className="muted">
-                  <strong>Hide this record</strong> — soft-delete: reversible, removed from search and
-                  matching, kept for audit.
+                  Hiding removes the record from lists and matching. It stays in the archive and can be
+                  restored.
                 </p>
                 {depParts.length > 0 && (
                   <p className="db-deps-warning">
-                    ⚠ This contract has {depParts.join(", ")}. They are <strong>not</strong> hidden
-                    automatically yet and will point at a hidden contract.
+                    ⚠ This contract has {depList}. They stay visible and will point to a hidden contract.
                   </p>
                 )}
                 <div className="db-record-actions">
@@ -1975,7 +2132,15 @@ function RecordDetail({
             autoExpandInvestor={autoFixInv || null}
             onOpen={onOpen}
             onCorrectName={onCorrectName}
-            onAddInvestor={() => setAddingInvestor((v) => !v)}
+            onAddInvestor={() => {
+              setAttachInvestmentId(null);
+              setAddingInvestor((v) => !v);
+            }}
+            onAttachTo={(investmentId) => {
+              setAttachInvestmentId(investmentId);
+              setInvestorMessage("");
+              setAddingInvestor(true);
+            }}
             onRefresh={refreshRecordOnly}
           />
         </div>
@@ -1984,14 +2149,18 @@ function RecordDetail({
       {investorMessage && <div className="notice success">{investorMessage}</div>}
       {addingInvestor && record.table === "contract" && !record.is_deleted && (
         <AddInvestorPanel
+          key={attachInvestmentId ?? "own"}
           contractId={record.id}
           contractTitle={record.title}
+          presetInvestmentId={attachInvestmentId}
           onSaved={(message) => {
             setInvestorMessage(message);
+            setAttachInvestmentId(null);
             onRefresh();
           }}
           onClose={() => {
             setAddingInvestor(false);
+            setAttachInvestmentId(null);
             setInvestorMessage("");
           }}
         />
@@ -2039,9 +2208,9 @@ function RecordDetail({
                 type="button"
                 className="field-fix"
                 onClick={() => onOpenCreateAct(record.id)}
-                title="Add a later act (disdetta, bilancio, …) on this contract"
+                title="Add a sub-contract (disdetta, bilancio, …) to this contract"
               >
-                + Add act
+                + Add sub-contract
               </button>
             )}
           </div>
@@ -2085,12 +2254,12 @@ function RecordDetail({
               type="button"
               className="field-fix"
               onClick={() => onOpenCreateAct(record.id)}
-              title="Add a later act (disdetta, bilancio, …) on this contract"
+              title="Add a sub-contract (disdetta, bilancio, …) to this contract"
             >
-              + Add act
+              + Add sub-contract
             </button>
           </div>
-          <p className="muted">No later acts are recorded on this contract yet.</p>
+          <p className="muted">No sub-contracts are recorded on this contract yet.</p>
         </section>
       )}
 
@@ -2213,7 +2382,8 @@ function RecordDetail({
           <div className="db-block-head">
             <h3>Manuscript page</h3>
             <span className="db-block-sub muted">
-              found by register & folio — the page mapping is provisional
+              located by register and folio; the mapping to leaves is not yet verified, so the opening
+              shown may be off by one
             </span>
           </div>
           <div className="db-ms-images">

@@ -1,4 +1,49 @@
+import { useEffect, useState } from "react";
 import type { DbFacets } from "../types";
+
+/** A typed year beside the slider: two thumbs are a poor tool for hitting one
+ *  year. Commits on blur or Enter, clamped to the corpus span; anything that is
+ *  not a year reverts to the current value. */
+function YearInput({
+  value,
+  min,
+  max,
+  label,
+  onCommit,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  label: string;
+  onCommit: (year: number) => void;
+}) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => setText(String(value)), [value]);
+  const commit = () => {
+    const parsed = Number.parseInt(text, 10);
+    if (Number.isNaN(parsed)) {
+      setText(String(value));
+      return;
+    }
+    onCommit(Math.min(max, Math.max(min, parsed)));
+  };
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={text}
+      aria-label={label}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        }
+      }}
+    />
+  );
+}
 
 /** A by-decade histogram with a dual-thumb range slider beneath it. The bars are
  *  the corpus's date distribution (orientation); the two thumbs set the year span.
@@ -31,8 +76,10 @@ function DateRangeSlider({
     <div className="db-date-filter">
       <div className="db-date-head">
         <span>Years</span>
-        <span className="db-date-range">
-          {lo}–{hi}
+        <span className="db-date-inputs">
+          <YearInput value={lo} min={min} max={max} label="From year" onCommit={(year) => apply(year, hi)} />
+          <span aria-hidden>–</span>
+          <YearInput value={hi} min={min} max={max} label="To year" onCommit={(year) => apply(lo, year)} />
         </span>
       </div>
       <div className="db-histogram" aria-hidden="true">
@@ -54,7 +101,7 @@ function DateRangeSlider({
           min={min}
           max={max}
           value={lo}
-          aria-label="From year"
+          aria-label="From year (slider)"
           onChange={(e) => apply(Number(e.target.value), hi)}
         />
         <input
@@ -62,7 +109,7 @@ function DateRangeSlider({
           min={min}
           max={max}
           value={hi}
-          aria-label="To year"
+          aria-label="To year (slider)"
           onChange={(e) => apply(lo, Number(e.target.value))}
         />
       </div>

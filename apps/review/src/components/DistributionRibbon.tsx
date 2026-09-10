@@ -37,7 +37,7 @@ export default function DistributionRibbon({ contract, sub }: { contract: Bin[];
         viewBox={`0 0 ${W} ${H}`}
         width="100%"
         role="img"
-        aria-label="Accomandite and later acts registered per decade, 1445 to 1808"
+        aria-label="Accomandite and sub-contracts registered per decade, 1445 to 1808"
         preserveAspectRatio="xMidYMid meet"
       >
         <line x1={padX} y1={axisY} x2={W - padX} y2={axisY} stroke="#e0d4c0" strokeWidth="1" />
@@ -63,7 +63,7 @@ export default function DistributionRibbon({ contract, sub }: { contract: Bin[];
                 onMouseEnter={() => setHover(i)}
                 onMouseLeave={() => setHover(null)}
               >
-                <title>{`${d}s — ${c} accomandite, ${s} later acts`}</title>
+                <title>{`${d}s — ${c} accomandite, ${s} sub-contracts`}</title>
               </rect>
             </g>
           );
@@ -87,7 +87,7 @@ export default function DistributionRibbon({ contract, sub }: { contract: Bin[];
           </span>
           <span className="ribbon-tip-row">
             <span className="ribbon-tip-dot is-acts" />
-            {(sMap.get(tipDecade) ?? 0).toLocaleString()} later acts
+            {(sMap.get(tipDecade) ?? 0).toLocaleString()} sub-contracts
           </span>
         </div>
       )}

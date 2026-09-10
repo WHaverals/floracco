@@ -87,7 +87,7 @@ function Notes({ notes }: { notes: ReactNode[] }) {
 const PRIMER_NOTES: ReactNode[] = [
   (
     <>
-      The 3,452 later acts (renewals, terminations and balances) name people
+      The 3,452 sub-contracts (renewals, terminations and balances) name people
       too, but only in their narrative text. The database does not list who
       appears in them, so they are not counted here.
     </>
