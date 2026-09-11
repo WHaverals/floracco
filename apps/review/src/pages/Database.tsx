@@ -157,6 +157,42 @@ export default function Database() {
   // "Needs review" worklist (a query-param mode, orthogonal to the shown record).
   const reviewMode = searchParams.get("review") === "1";
   const [flagGroups, setFlagGroups] = useState<DbFlagGroup[]>([]);
+  // The Needs-review categories fold. The set of open ones is remembered in
+  // this browser; the category holding the open record unfolds by itself; a
+  // long category shows its first rows and offers the rest on request.
+  const WORKLIST_OPEN_KEY = "floracco_db_worklist_open";
+  const WORKLIST_FOLD_AT = 25;
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(WORKLIST_OPEN_KEY) ?? "[]");
+      return new Set(Array.isArray(stored) ? stored.filter((v) => typeof v === "string") : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const [showAllGroups, setShowAllGroups] = useState<Set<string>>(new Set());
+  const setGroupOpen = (id: string, open: boolean) =>
+    setOpenGroups((prev) => {
+      if (prev.has(id) === open) return prev;
+      const next = new Set(prev);
+      if (open) next.add(id);
+      else next.delete(id);
+      try {
+        localStorage.setItem(WORKLIST_OPEN_KEY, JSON.stringify([...next]));
+      } catch {
+        // storage unavailable: the fold still works for this visit
+      }
+      return next;
+    });
+  useEffect(() => {
+    if (!routeId) return;
+    const holder = flagGroups.find((g) => g.items.some((f) => f.table === routeTable && f.pk === routeId));
+    if (!holder) return;
+    setGroupOpen(holder.group, true);
+    const position = holder.items.findIndex((f) => f.table === routeTable && f.pk === routeId);
+    if (position >= WORKLIST_FOLD_AT) setShowAllGroups((prev) => new Set(prev).add(holder.group));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flagGroups, routeTable, routeId]);
   // stale-response guards (one per stream — record loads, list searches, flags)
   const beginRecord = useLatest();
   const beginList = useLatest();
@@ -441,7 +477,7 @@ export default function Database() {
                 ? "Checking records…"
                 : flagTotal === 0
                 ? "All clear — no records flagged."
-                : `${flagTotal} record${flagTotal === 1 ? "" : "s"} flagged. Suggestions only — you decide; nothing changes until you edit.`}
+                : `${flagTotal} record${flagTotal === 1 ? "" : "s"} flagged in ${flagGroups.length} categor${flagGroups.length === 1 ? "y" : "ies"}. Click a category to open it. Suggestions only — you decide; nothing changes until you edit.`}
             </p>
           ) : (
             <>
@@ -555,36 +591,61 @@ export default function Database() {
               ) : (
                 <p className="db-empty muted">All clear.</p>
               ))}
-            {flagGroups.map((group) => (
-              <section key={group.group} className={`worklist-group sev-${group.severity}`}>
-                <header className="worklist-group-head">
-                  <span className="worklist-dot" aria-hidden />
-                  <h4>
-                    {group.label} <span className="worklist-count">{group.items.length}</span>
-                  </h4>
-                </header>
-                <p className="worklist-why muted">{group.explanation}</p>
-                <ul>
-                  {group.items.map((flag) => (
-                    <li key={flag.key} className={flag.table === routeTable && flag.pk === routeId ? "is-active" : undefined}>
-                      <button type="button" className="worklist-item" onClick={() => navigate(flagHref(flag))}>
-                        <span>{flag.title}</span>
-                        {flag.meta && <span className="worklist-meta">{flag.meta}</span>}
-                      </button>
-                      <button
-                        type="button"
-                        className="worklist-dismiss"
-                        title="Not an issue — dismiss"
-                        disabled={flagBusyKey === flag.key}
-                        onClick={() => dismissFlagNow(flag)}
-                      >
-                        ✕
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ))}
+            {flagGroups.map((group) => {
+              const open = openGroups.has(group.group);
+              const visible = showAllGroups.has(group.group) ? group.items : group.items.slice(0, WORKLIST_FOLD_AT);
+              return (
+                <section key={group.group} className={`worklist-group sev-${group.severity}${open ? " is-open" : ""}`}>
+                  <button
+                    type="button"
+                    className="worklist-group-head"
+                    aria-expanded={open}
+                    onClick={() => setGroupOpen(group.group, !open)}
+                  >
+                    <span className="worklist-chevron" aria-hidden>
+                      {open ? "▾" : "▸"}
+                    </span>
+                    <span className="worklist-dot" aria-hidden />
+                    <span className="worklist-group-title">
+                      {group.label} <span className="worklist-count">{group.items.length}</span>
+                    </span>
+                  </button>
+                  {open && (
+                    <>
+                      <p className="worklist-why muted">{group.explanation}</p>
+                      <ul>
+                        {visible.map((flag) => (
+                          <li key={flag.key} className={flag.table === routeTable && flag.pk === routeId ? "is-active" : undefined}>
+                            <button type="button" className="worklist-item" onClick={() => navigate(flagHref(flag))}>
+                              <span>{flag.title}</span>
+                              {flag.meta && <span className="worklist-meta">{flag.meta}</span>}
+                            </button>
+                            <button
+                              type="button"
+                              className="worklist-dismiss"
+                              title="Not an issue — dismiss"
+                              disabled={flagBusyKey === flag.key}
+                              onClick={() => dismissFlagNow(flag)}
+                            >
+                              ✕
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                      {visible.length < group.items.length && (
+                        <button
+                          type="button"
+                          className="worklist-more"
+                          onClick={() => setShowAllGroups((prev) => new Set(prev).add(group.group))}
+                        >
+                          Show all {group.items.length}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </section>
+              );
+            })}
           </div>
         ) : (
         <ul className="db-results">

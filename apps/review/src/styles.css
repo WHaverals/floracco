@@ -9722,3 +9722,62 @@ progress {
   padding: 10px 14px 4px;
   text-transform: uppercase;
 }
+
+/* --- Needs-review categories fold: one line each until opened; the open
+   record's category unfolds by itself; long categories show 25 rows and
+   offer the rest. --- */
+.worklist-group {
+  padding: 4px 14px 6px;
+}
+
+.worklist-group.is-open {
+  padding-bottom: 12px;
+}
+
+.worklist-group-head {
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 7px;
+  padding: 6px 4px;
+  text-align: left;
+  width: 100%;
+}
+
+.worklist-group-head:hover {
+  background: #221b15;
+}
+
+.worklist-chevron {
+  color: #9d8b74;
+  flex: none;
+  font-size: 0.7rem;
+  width: 10px;
+}
+
+.worklist-group-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.worklist-more {
+  background: none;
+  border: 1px solid #3a2f25;
+  border-radius: 999px;
+  color: #cbbdab;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  margin: 6px 0 0 8px;
+  padding: 3px 10px;
+}
+
+.worklist-more:hover {
+  background: #2a221b;
+  color: #f6f1ea;
+}
