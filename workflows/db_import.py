@@ -364,6 +364,15 @@ def replay_corrections(connection: sqlite3.Connection) -> dict:
     return {"applied": applied, "conflicts": conflicts, "skipped": skipped}
 
 
+def _display_path(path: Path) -> str:
+    """Repo-relative when inside the repo, absolute otherwise (a backup verification
+    rebuilds into a temporary directory; the summary must not crash on that)."""
+    try:
+        return str(path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def build(*, backup: bool = True) -> dict:
     dump = dump_path()
     out = db_path()
@@ -437,8 +446,8 @@ def build(*, backup: bool = True) -> dict:
         connection.close()
 
     return {
-        "dump_path": str(dump.relative_to(PROJECT_ROOT)),
-        "db_path": str(out.relative_to(PROJECT_ROOT)),
+        "dump_path": _display_path(dump),
+        "db_path": _display_path(out),
         "dump_timestamp": dump_time,
         "built_at": datetime.now(timezone.utc).isoformat(),
         "row_counts": counts,

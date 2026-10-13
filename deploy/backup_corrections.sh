@@ -7,6 +7,12 @@
 # record of human changes; Render's daily disk snapshots are a floor, this is
 # the real copy. Cron it (e.g. hourly) and sync the output off-box.
 #
+# NOTE (2026-10-11): deploy/ is NOT in the Docker image, so this cannot be run from
+# the Render service Shell. The maintained path is deploy/backup.sh, run from the
+# maintainer's machine; its server half, deploy/backup_remote.sh, supersedes this
+# script (same online-backup mechanism, plus the seed, main.db, the write lock and
+# checksums). Kept as the on-server reference only.
+#
 #   FLORACCO_DATA_DIR    working data root (required)
 #   FLORACCO_BACKUP_DIR  where to write backups (default: $FLORACCO_DATA_DIR/../backups)
 #   FLORACCO_BACKUP_KEEP how many to retain (default: 48)

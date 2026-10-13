@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Daily backup of the live site's human work (deploy/backup.sh). Rendered and installed by
+     deploy/install_backup_schedule.sh; the __PLACEHOLDERS__ are filled in there. A run missed
+     because the Mac was asleep or off happens at the next wake / login. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>org.accomandite.floracco-backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/deploy/backup.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>__HOUR__</integer>
+    <key>Minute</key>
+    <integer>__MINUTE__</integer>
+  </dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>FLORACCO_BACKUP_ROOT</key>
+    <string>__ROOT__</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__ROOT__/backup.log</string>
+  <key>StandardErrorPath</key>
+  <string>__ROOT__/backup.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
