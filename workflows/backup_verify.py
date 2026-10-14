@@ -372,11 +372,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("folder", help="the downloaded backup folder (…/<STAMP>)")
     parser.add_argument("--root", help="backup root holding the dated folders (default: the folder's parent)")
     parser.add_argument("--force", action="store_true", help="keep the folder even if nothing changed")
+    parser.add_argument("--record-failure", metavar="WHAT",
+                        help="deploy/backup.sh uses this when a step before verification failed: "
+                             "append a FAIL line for the stamp to BACKUP_LOG.md and exit 1")
     args = parser.parse_args(argv)
 
     folder = Path(args.folder).expanduser().resolve()
     root = Path(args.root).expanduser().resolve() if args.root else folder.parent
     stamp = folder.name
+    if args.record_failure:
+        append_log(root, f"| {stamp} | FAIL | not downloaded: failed at step {args.record_failure}; see backup.log | | | | | |")
+        print(f"[{stamp}] FAIL recorded in BACKUP_LOG.md: {args.record_failure}")
+        return 1
     snapshot: dict[str, Any] = {}
     if (folder / "snapshot.json").exists():
         snapshot = json.loads((folder / "snapshot.json").read_text())
