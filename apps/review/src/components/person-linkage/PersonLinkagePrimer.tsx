@@ -1355,8 +1355,8 @@ export default function PersonLinkagePrimer() {
               <dd>The duplicates created by the typing, and pairs with the same full name and a plausible combined working life. Confirm them one by one.</dd>
             </div>
             <div>
-              <dt>Spelling variants</dt>
-              <dd>Names that differ slightly while everything else agrees. These need a human eye; the tool never claims a match here on its own.</dd>
+              <dt>Name and context agree</dt>
+              <dd>The same name, or one letter off, with the father&rsquo;s name, the years or a firm in agreement. These need a human eye; the tool never claims a match here on its own.</dd>
             </div>
             <div>
               <dt>Check the contract</dt>

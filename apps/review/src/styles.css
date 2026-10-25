@@ -6359,7 +6359,7 @@ progress {
 }
 
 .pl-career-summary span {
-  color: #877564;
+  color: #6b5c4d; /* was #877564: 3.76:1 on the ribbon's tint; now ≈5.4:1 */
   font-size: 0.67rem;
 }
 
@@ -6903,7 +6903,7 @@ progress {
 
 .pl-record-id,
 .pl-record-meta {
-  color: #826f5d;
+  color: #6b5c4d; /* was #826f5d: 4.10:1 on the header tint; now ≈5.5:1 */
   display: block;
   font-size: 0.68rem;
   font-weight: 500;

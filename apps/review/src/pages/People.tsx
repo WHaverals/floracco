@@ -29,7 +29,7 @@ const REVIEWER_KEY = "floracco_reviewer";
 const LANES: Array<{ id: PersonLinkageLane; label: string; note: string }> = [
   { id: "labeling_round", label: "Judge blind", note: "Cases chosen to cover every kind of evidence; the scores stay hidden until you answer" },
   { id: "likely_duplicates", label: "Likely duplicates", note: "The same name typed twice, or the same full name with one plausible working life" },
-  { id: "high_concordance", label: "Spelling variants", note: "Names that differ slightly while everything else agrees" },
+  { id: "high_concordance", label: "Name and context agree", note: "The same name, or one letter off, with the father, the years or a firm agreeing" },
   { id: "read_source", label: "Check the contract", note: "The fields cannot settle it; the act itself decides" },
   { id: "other_matches", label: "Other possible matches", note: "Every pair the model ranks, best first" },
   { id: "possible_splits", label: "One entry, two people?", note: "An entry that may hold two different people" },
@@ -1011,8 +1011,10 @@ export default function People() {
   const scopedAppearanceCount = detail?.persons
     .filter((person) => scopedIds.includes(person.person_id))
     .reduce((sum, person) => sum + person.n_appearances, 0) ?? 0;
+  // Recurring firm words count as one signal, not one per word: three words
+  // of one firm family are a single piece of context, not three.
   const sharedContextCount = detail?.pairs.reduce(
-    (sum, pair) => sum + pair.shared_firms_json.length + pair.shared_firm_words_json.length
+    (sum, pair) => sum + pair.shared_firms_json.length + (pair.shared_firm_words_json.length ? 1 : 0)
       + pair.shared_partner_ids_json.length,
     0,
   ) ?? 0;
@@ -1282,7 +1284,7 @@ export default function People() {
             <div className="pl-review-body">
               {detail.stale?.stale ? (
                 <div className="notice warning" role="alert">
-                  The database or saved model is newer than this suggestion cache. You may read it, but rebuild before relying on its score.
+                  The database or saved model has changed since these suggestions were built. The lane, the reasons and the score may no longer match the entries; judge from the entries and the sources, and rebuild before relying on the rest.
                 </div>
               ) : null}
               {detail.needs_recheck ? (
@@ -1422,6 +1424,9 @@ export default function People() {
                       {scopeSummary && ["same_as", "distinct"].includes(pendingDecision) ? (
                         <small className="pl-decision-scope">{scopeSummary}</small>
                       ) : null}
+                      <small className="pl-decision-scope">
+                        Writes a signed note that can be undone later; the entries themselves stay unchanged.
+                      </small>
                     </div>
                     <button
                       type="button"
