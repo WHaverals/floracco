@@ -23,16 +23,15 @@ import type {
  * reserved for later phases. (See docs/reference/scope.md.)
  */
 
-/* `unit` and `hint` say what a term's number counts. A place or a title can be
- * recorded several times on one contract (once per partner), so those read
- * "recorded N times"; a currency or an activity is recorded once per contract. */
+/* Every number counts contracts (WH, 2026-10-26). `hint` says what puts a
+ * contract under a term: a place or a title can be recorded several times on
+ * one contract (once per partner), and the contract still counts once. */
 const VOCABS: {
   kind: ReferenceKind;
   label: string;
   singular: string;
   noun: string;
   aNoun: string;
-  unit: "times" | "contracts";
   hint: string;
   quick: string[];
 }[] = [
@@ -42,8 +41,7 @@ const VOCABS: {
     singular: "Place",
     noun: "place",
     aNoun: "a place",
-    unit: "times",
-    hint: "Each contract’s place of activity, and each partner’s residence and place of origin, counts once.",
+    hint: "A contract counts once, whether the place is its place of activity or a partner’s residence or place of origin.",
     quick: ["popolo", "fiere", "parti di"],
   },
   {
@@ -52,8 +50,7 @@ const VOCABS: {
     singular: "Title",
     noun: "title",
     aNoun: "a title",
-    unit: "times",
-    hint: "Each partner’s own title, and each title recorded for a partner’s husband, father or mother, or grandfather, counts once.",
+    hint: "A contract counts once, whether the title is a partner’s own or one recorded for a partner’s husband, father or mother, or grandfather.",
     quick: ["senatore", "cavaliere", "quondam", "signora"],
   },
   {
@@ -62,7 +59,6 @@ const VOCABS: {
     singular: "Currency",
     noun: "currency",
     aNoun: "a currency",
-    unit: "contracts",
     hint: "Each contract counts once, under the currency it is recorded in.",
     quick: ["scudi", "ducati", "fiorini", "lire", "pezze"],
   },
@@ -72,43 +68,45 @@ const VOCABS: {
     singular: "Economic activity",
     noun: "economic activity",
     aNoun: "an economic activity",
-    unit: "contracts",
     hint: "Each contract counts once, under the economic activity recorded for it.",
     quick: ["seta", "lana", "cambi", "panni", "spezieria"],
   },
 ];
 
-const fmtTimes = (n: number) => (n === 1 ? "once" : `${n.toLocaleString()} times`);
 const fmtContracts = (n: number) => `${n.toLocaleString()} contract${n === 1 ? "" : "s"}`;
 
-/** A term's number in the rail, with its unit. */
-function usageLabel(n: number, unit: "times" | "contracts"): string {
-  if (n === 0) return "unused";
-  return unit === "contracts" ? fmtContracts(n) : `recorded ${fmtTimes(n)}`;
+/** A term's number in the rail: the contracts that record it. */
+function usageLabel(n: number): string {
+  return n === 0 ? "unused" : fmtContracts(n);
 }
 
 /* The kinds of use behind a place's or a title's number, in the order the
- * record page lists those fields. */
+ * record page lists those fields; each part counts contracts too. */
 const PART_PHRASE: [string, (n: number) => string][] = [
-  ["activity", (n) => `as the place of activity of ${fmtContracts(n)}`],
-  ["residence", (n) => `as a partner’s residence ${fmtTimes(n)}`],
-  ["origin", (n) => `as a partner’s place of origin ${fmtTimes(n)}`],
-  ["title", (n) => `as a partner’s own title ${fmtTimes(n)}`],
-  ["title_husband", (n) => `as a husband’s title ${fmtTimes(n)}`],
-  ["title_father_mother", (n) => `as a father’s or mother’s title ${fmtTimes(n)}`],
-  ["title_grandfather", (n) => `as a grandfather’s title ${fmtTimes(n)}`],
+  ["activity", (n) => `on ${n.toLocaleString()} as the place of activity`],
+  ["residence", (n) => `on ${n.toLocaleString()} as a partner’s residence`],
+  ["origin", (n) => `on ${n.toLocaleString()} as a partner’s place of origin`],
+  ["title", (n) => `on ${n.toLocaleString()} as a partner’s own title`],
+  ["title_husband", (n) => `on ${n.toLocaleString()} as a husband’s title`],
+  ["title_father_mother", (n) => `on ${n.toLocaleString()} as a father’s or mother’s title`],
+  ["title_grandfather", (n) => `on ${n.toLocaleString()} as a grandfather’s title`],
 ];
 
 const joinAnd = (xs: string[]) =>
   xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")}${xs.length > 2 ? "," : ""} and ${xs[xs.length - 1]}`;
 
-/** One sentence that puts the rail's number, the contract count and its parts together. */
+/** One sentence that puts the rail's number (contracts) and its parts together. */
 function usageSentence(kind: ReferenceKind, d: ReferenceRecordsResponse): string {
   if (d.usage_total === 0) return "Not recorded on any contract.";
   if (kind === "currency") return `The currency of ${fmtContracts(d.record_total)}.`;
   if (kind === "activity") return `The economic activity of ${fmtContracts(d.record_total)}.`;
-  const parts = PART_PHRASE.filter(([k]) => (d.usage_parts[k] ?? 0) > 0).map(([k, say]) => say(d.usage_parts[k]));
-  return `Recorded ${fmtTimes(d.usage_total)}, on ${fmtContracts(d.record_total)}: ${joinAnd(parts)}.`;
+  const shown = PART_PHRASE.filter(([k]) => (d.usage_parts[k] ?? 0) > 0);
+  const parts = shown.map(([k, say]) => say(d.usage_parts[k]));
+  const overlap = shown.reduce((sum, [k]) => sum + d.usage_parts[k], 0) > d.record_total;
+  return (
+    `Recorded on ${fmtContracts(d.record_total)}: ${joinAnd(parts)}.` +
+    (overlap ? " A contract that records it in more than one way counts once." : "")
+  );
 }
 
 /** Horizontal usage bars — the overview "shape" of a vocabulary (pure counts). */
@@ -195,7 +193,7 @@ function DecadeBars({ data }: { data: { decade: number; count: number }[] }) {
         {[1450, 1500, 1550, 1600, 1650, 1700, 1750, 1800].map((y) => {
           const x = padX + ((y - FROM) / 10) * slot + slot / 2;
           return (
-            <text key={y} x={x} y={H - 3} fontSize="10" fill="#9a8a78" textAnchor="middle" fontFamily="Georgia, serif">
+            <text key={y} x={x} y={H - 3} fontSize="10" fill="#6f6052" textAnchor="middle" fontFamily="Georgia, serif">
               {y}
             </text>
           );
@@ -311,7 +309,7 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
             >
               <span className="ref-fam-value">{t.value}</span>
               <span className="ref-fam-count muted">
-                {t.count > 0 ? `${t.count.toLocaleString()}×` : "unused"}
+                {usageLabel(t.count)}
               </span>
               {t.id === canonId && <span className="ref-fam-badge">kept spelling</span>}
             </button>
@@ -711,7 +709,7 @@ export default function Reference() {
               >
                 <span className="db-result-title">{t.value}</span>
                 <span className="db-result-meta muted" title={vocab.hint}>
-                  {usageLabel(t.count, vocab.unit)}
+                  {usageLabel(t.count)}
                 </span>
               </button>
             </li>
@@ -747,7 +745,7 @@ export default function Reference() {
             <p className="eyebrow">Most-referenced</p>
             <h2>{vocab.label} by usage</h2>
             <p className="muted ref-note">
-              How often each term is recorded. {vocab.hint} Select a term to read its contracts.
+              How many contracts record each term. {vocab.hint} Select a term to read its contracts.
             </p>
             {list && list.top.length > 0 ? (
               <UsageBars top={list.top} onPick={(value) => setSearch(value)} />

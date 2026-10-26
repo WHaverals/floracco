@@ -54,7 +54,7 @@ COLUMN_LABELS: dict[str, str] = {
 }
 
 # Stored role codes (investment.type) as worklist titles show them.
-ROLE_WORDS: dict[str, str] = {"gp": "General partner", "lp": "Limited partner"}
+ROLE_WORDS: dict[str, str] = {"gp": "General partner", "lp": "External investor (accomandante)"}
 
 
 def is_placeholder_text(value: Any) -> bool:
@@ -100,7 +100,7 @@ GROUP_META: dict[str, dict[str, str]] = {
     "no_partners": {
         "label": "No partners recorded",
         "severity": "high",
-        "explanation": "This accomandita has no partners entered; it needs at least one general partner (accomandatario) and one limited partner (accomandante). Add them from the source.",
+        "explanation": "This accomandita has no partners entered; it needs at least one general partner (accomandatario) and one external investor (accomandante). Add them from the source.",
     },
     "dup_partner": {
         "label": "Possible duplicate partner",

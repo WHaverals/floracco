@@ -232,7 +232,7 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
         </p>
       ) : (
         <p className="muted ref-note pm-caption">
-          {points ? `${shown.toLocaleString()} places in view` : "Loading…"} · dot size = times recorded ·
+          {points ? `${shown.toLocaleString()} places in view` : "Loading…"} · dot size = contracts ·
           hollow ring = approximate · scroll to zoom, drag to pan
         </p>
       )}
@@ -328,7 +328,7 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
                       <button key={p.id} type="button" className="pm-tip-row" onClick={() => pick(p)}>
                         <span className="pm-tip-row-name">{p.value}</span>
                         <span className="pm-tip-row-meta">
-                          {p.count > 0 ? `${p.count.toLocaleString()}×` : p.approx ? "approx" : "—"}
+                          {p.count > 0 ? `${p.count.toLocaleString()} contract${p.count === 1 ? "" : "s"}` : p.approx ? "approx" : "—"}
                         </span>
                       </button>
                     ))}
@@ -345,9 +345,7 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
                   <span className="pm-tip-meta">
                     {hover.p.count === 0
                       ? "unused"
-                      : hover.p.count === 1
-                        ? "recorded once"
-                        : `recorded ${hover.p.count.toLocaleString()} times`}
+                      : `on ${hover.p.count.toLocaleString()} contract${hover.p.count === 1 ? "" : "s"}`}
                   </span>
                 </>
               )}
@@ -377,7 +375,7 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
                 >
                   <span className="pm-row-name">{p.value}</span>
                   <span className="pm-row-meta muted">
-                    {p.count > 0 ? `${p.count.toLocaleString()}×` : p.approx ? "approx" : "—"}
+                    {p.count > 0 ? `${p.count.toLocaleString()} contract${p.count === 1 ? "" : "s"}` : p.approx ? "approx" : "—"}
                   </span>
                 </button>
               </li>
@@ -403,7 +401,7 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
               </span>
             );
           })}
-          <span className="muted pm-size-cap">times recorded (log scale)</span>
+          <span className="muted pm-size-cap">contracts (log scale)</span>
         </span>
       </div>
     </div>

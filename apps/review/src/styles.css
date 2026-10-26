@@ -132,6 +132,12 @@ textarea {
   min-height: 28px;
 }
 
+/* The Reconcile queue is dark: keep the old label brown there (the light-page
+   labels moved to #7e5c44, UI review 2026-10-14, #29). */
+.queue .eyebrow {
+  color: #9d7355;
+}
+
 .queue-header .eyebrow {
   margin: 0;
 }
@@ -198,7 +204,7 @@ textarea {
 }
 
 .eyebrow {
-  color: #9d7355;
+  color: #7e5c44;
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -208,7 +214,7 @@ textarea {
 
 .muted,
 .empty-state {
-  color: #806f62;
+  color: #6f6052;
 }
 
 .workspace {
@@ -434,7 +440,7 @@ textarea {
 }
 
 .home-tl-year {
-  color: #9d7355;
+  color: #7e5c44;
   display: block;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1.1rem;
@@ -463,7 +469,7 @@ textarea {
 }
 
 .home-essay a {
-  color: #9d7355;
+  color: #7e5c44;
 }
 
 .term {
@@ -575,7 +581,7 @@ textarea {
 }
 
 .home-colophon-links a {
-  color: #9d7355;
+  color: #7e5c44;
 }
 
 .home-colophon-cite {
@@ -589,7 +595,7 @@ textarea {
 }
 
 .home-colophon-cite-label {
-  color: #9d7355;
+  color: #7e5c44;
   display: block;
   font-size: 0.7rem;
   font-weight: 700;
@@ -665,7 +671,7 @@ a.hub-card:hover {
 .hub-tag {
   background: #efe3d3;
   border-radius: 999px;
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.7rem;
   font-weight: 700;
   padding: 3px 9px;
@@ -748,7 +754,7 @@ a.hub-card:hover {
 }
 
 .case-bar-context span:not(.dot) {
-  color: #806f62;
+  color: #6f6052;
 }
 
 .reviewed-flag {
@@ -790,7 +796,7 @@ a.hub-card:hover {
 }
 
 .case-counter {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
   min-width: 56px;
@@ -1203,7 +1209,7 @@ button.act-chip-jump.is-supported {
 }
 
 .verdict-text-muted {
-  color: #806f62;
+  color: #6f6052;
   font-weight: 600;
 }
 
@@ -1452,7 +1458,7 @@ button.act-chip-jump.is-supported {
 }
 
 dt {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.72rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1585,7 +1591,7 @@ dd {
 }
 
 .rev-legend summary {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.82rem;
   font-weight: 700;
 }
@@ -1691,7 +1697,7 @@ dd {
 }
 
 .rev-popover-head {
-  color: #806f62;
+  color: #6f6052;
   display: block;
   font-size: 0.74rem;
   font-weight: 700;
@@ -1726,7 +1732,7 @@ dd {
 }
 
 .rev-body-meta {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.76rem;
   font-weight: 700;
 }
@@ -1762,7 +1768,7 @@ dd {
 }
 
 .img-counter {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
 }
@@ -1814,7 +1820,7 @@ dd {
 }
 
 .manuscript-thumb-zoom {
-  color: #9d7355;
+  color: #7e5c44;
   font-size: 0.68rem;
   font-weight: 600;
 }
@@ -1922,7 +1928,7 @@ fieldset {
 }
 
 legend {
-  color: #806f62;
+  color: #6f6052;
   padding: 0 6px;
 }
 
@@ -1999,10 +2005,14 @@ progress {
   background: #dcebd3;
 }
 
+/* One warning look (UI review 2026-10-14, #31): an amber tint with a darker
+   left rule, so a warning reads as a notice and not as the page. Shared by
+   .db-deps-warning and .create-warning. */
 .notice.warning {
-  background: #f7efe0;
-  border: 1px solid #eadfcc;
-  color: #4d4033;
+  background: #f4e0b9;
+  border: 1px solid #d9b26b;
+  border-left: 3px solid #9c6a1e;
+  color: #684313;
 }
 
 .empty-state.large {
@@ -2084,7 +2094,8 @@ progress {
   margin: 0;
 }
 
-.db-rail .db-count.muted {
+/* The page's muted grey (#6f6052) is too dark to read on the dark rail. */
+.db-rail .muted {
   color: #9a8a78;
 }
 
@@ -2256,22 +2267,128 @@ progress {
   color: #3a2c1d; /* dark text once the background turns cream */
 }
 
+/* "Not an issue": always visible, labelled, and it asks first (UI review
+   2026-10-14, #2); the confirmation opens under the item. */
+.worklist-group li {
+  flex-wrap: wrap;
+}
+
 .worklist-dismiss {
+  align-self: flex-start;
   background: none;
-  border: none;
+  border: 1px solid #3a2f25;
+  border-radius: 999px;
+  color: #cbbdab;
   cursor: pointer;
-  color: #b0a48f;
-  opacity: 0;
-  padding: 2px 6px;
-  font-size: 0.8rem;
+  flex: none;
+  font: inherit;
+  font-size: 0.7rem;
+  margin-top: 3px;
+  padding: 3px 9px;
+  white-space: nowrap;
 }
 
-.worklist-group li:hover .worklist-dismiss {
-  opacity: 1;
+.worklist-dismiss:hover,
+.worklist-dismiss.is-open {
+  background: #2a221b;
+  color: #f6f1ea;
 }
 
-.worklist-dismiss:hover {
-  color: #a33b2e;
+.worklist-dismiss:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.worklist-confirm {
+  background: #211a14;
+  border: 1px solid #3a2f25;
+  border-radius: 8px;
+  display: flex;
+  flex: 1 0 100%;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 6px;
+  padding: 8px 10px;
+}
+
+.worklist-confirm-lead {
+  color: #d8c7ac;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.worklist-confirm-row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.worklist-confirm input {
+  background: #15110e;
+  border: 1px solid #7a6752;
+  border-radius: 6px;
+  color: #f8f3ea;
+  font: inherit;
+  font-size: 0.76rem;
+  min-width: 0;
+  padding: 4px 8px;
+}
+
+.worklist-confirm input::placeholder {
+  color: #9a8a78;
+}
+
+.worklist-confirm-initials {
+  flex: 0 1 80px;
+  width: 80px;
+}
+
+.worklist-confirm-button {
+  background: #2a221b;
+  border: 1px solid #3a2f25;
+  border-radius: 999px;
+  color: #cbbdab;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.worklist-confirm-button:hover {
+  color: #f6f1ea;
+}
+
+.worklist-confirm-button.is-primary {
+  background: #d6aa7d;
+  border-color: #d6aa7d;
+  color: #1c150f;
+}
+
+.worklist-confirm-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Stays in view at the top of the scrolled list until the next dismissal. */
+.worklist-undo {
+  background: #211a14;
+  border: 1px solid #3a2f25;
+  border-radius: 8px;
+  color: #d8c7ac;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  margin: 0 14px 4px;
+  padding: 7px 10px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+/* The page's link brown is too dark on the rail. */
+.db-rail .link-like {
+  color: #e2b98c;
 }
 
 .db-detail {
@@ -2505,7 +2622,7 @@ progress {
 }
 
 .ref-block-label {
-  color: #9a8a78;
+  color: #6f6052;
   font-size: 0.72rem;
   letter-spacing: 0.06em;
   margin: 0 0 8px;
@@ -2729,7 +2846,6 @@ progress {
 .ref-resolution-foot {
   font-size: 0.76rem;
   margin: 10px 0 0;
-  opacity: 0.75;
 }
 
 /* --- Places map (editorial cartography) --- */
@@ -3004,7 +3120,7 @@ progress {
 }
 
 .ref-link-rel {
-  color: #9a8a78;
+  color: #6f6052;
 }
 
 .ref-link-by {
@@ -3027,7 +3143,6 @@ progress {
 
 .ref-noun-foot {
   margin-top: 18px;
-  opacity: 0.7;
 }
 
 .ref-records {
@@ -3046,6 +3161,11 @@ progress {
 
 .ref-records .db-result-title {
   color: #2e2620;
+}
+
+/* The rail's meta grey is too faint on the light pane. */
+.ref-records .db-result-meta {
+  color: #6f6052;
 }
 
 /* The rail's dashed "Load more" is drawn for the dark rail; on the light
@@ -3082,7 +3202,7 @@ progress {
 }
 
 .an-group-head {
-  color: #9d7355;
+  color: #9d7355; /* on the dark rail; the light-page labels use #7e5c44 */
   font-size: 0.7rem;
   letter-spacing: 0.07em;
   margin: 14px 0 4px;
@@ -3120,7 +3240,7 @@ progress {
 }
 
 .an-query.is-active .an-query-desc {
-  color: #5a4632;
+  color: #4a3722; /* as .db-result.is-active .db-result-meta: 5.3:1 on #d6aa7d */
 }
 
 .an-query-title {
@@ -3182,7 +3302,7 @@ progress {
 }
 
 .an-filters-label {
-  color: #9d7355;
+  color: #7e5c44;
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -3210,7 +3330,7 @@ progress {
 .an-filter-x {
   background: transparent;
   border: none;
-  color: #9a8a78;
+  color: #6f6052;
   cursor: pointer;
   font-size: 0.78rem;
   padding: 2px 4px;
@@ -3224,7 +3344,7 @@ progress {
   background: transparent;
   border: 1px dashed #c2a878;
   border-radius: 999px;
-  color: #9d7355;
+  color: #7e5c44;
   cursor: pointer;
   font-size: 0.82rem;
   padding: 4px 12px;
@@ -3635,10 +3755,11 @@ progress {
 }
 
 .db-deps-warning {
-  background: #fdf3e6;
-  border: 1px solid #eccf9f;
+  background: #f4e0b9;
+  border: 1px solid #d9b26b;
+  border-left: 3px solid #9c6a1e;
   border-radius: 8px;
-  color: #6b4a1e;
+  color: #684313;
   font-size: 0.85rem;
   margin: 8px 0;
   padding: 8px 12px;
@@ -3708,7 +3829,7 @@ progress {
 }
 
 .db-field dt {
-  color: #9d7355;
+  color: #7e5c44;
   font-size: 0.72rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -3716,6 +3837,18 @@ progress {
 
 .db-field dd {
   margin: 2px 0 0;
+}
+
+/* An open editor gets the whole row (UI review 2026-10-14, #51). The editor's
+   own grid-column (.inline-editor) cannot do this: it sits inside a .db-field,
+   and that is the grid item. So the field holding an open editor, scalar or
+   phrase, spans every column, and its Edit pill stays beside the label. */
+.db-field:has(.inline-editor) {
+  grid-column: 1 / -1;
+}
+
+.db-field:has(.inline-editor) > dt {
+  justify-content: flex-start;
 }
 
 .db-block {
@@ -3736,7 +3869,7 @@ progress {
 }
 
 .db-table th {
-  color: #9d7355;
+  color: #7e5c44;
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -3872,7 +4005,7 @@ progress {
 }
 
 .db-source-open {
-  color: #9d7355;
+  color: #7e5c44;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -4113,6 +4246,12 @@ progress {
   color: #f2a493;
 }
 
+/* ...and its muted lines and scan counter a lighter grey (UI review 2026-10-14, #30). */
+.manuscript-lightbox .muted,
+.manuscript-lightbox .img-counter {
+  color: #9a8a78;
+}
+
 /* ------------------------------------------------------------------ */
 /* Corrections: suggest-fix affordance, field chips, propose drawer    */
 /* ------------------------------------------------------------------ */
@@ -4132,7 +4271,7 @@ progress {
   background: transparent;
   border: 1px solid #d8c7ac;
   border-radius: 999px;
-  color: #9d7355;
+  color: #7e5c44;
   cursor: pointer;
   flex-shrink: 0;
   font-size: 0.62rem;
@@ -4163,6 +4302,21 @@ progress {
   background: #d6aa7d;
   border-color: #d6aa7d;
   color: #1c150f;
+}
+
+/* A 24px click target for the 16px pill (UI review 2026-10-14, #43) without
+   changing its look: an invisible band 4px above and below it (the inset
+   counts from the padding edge, inside the 1px border). It is out of flow, so
+   nothing moves. Not more than 4px: two pills stacked in the partner panel
+   are about 9px apart. */
+.field-fix {
+  position: relative;
+}
+
+.field-fix::after {
+  content: "";
+  inset: -5px -1px;
+  position: absolute;
 }
 
 .field-correction {
@@ -4330,13 +4484,14 @@ progress {
 
 .partner-badge {
   background: #efe2cc;
-  border-radius: 999px;
+  border-radius: 10px;
   color: #8a5a36;
+  display: inline-block;
   font-size: 0.66rem;
   font-weight: 600;
   letter-spacing: 0.03em;
   padding: 1px 7px;
-  white-space: nowrap;
+  white-space: normal; /* may take two lines in a narrow Partners table (#38) */
 }
 
 .partner-noncash {
@@ -4429,16 +4584,23 @@ progress {
   font-size: 0.8rem;
 }
 
-/* "2 more details" — says what the chevron opens instead of a bare number. */
+/* "2 more details" under the partner's name — says what the chevron opens
+   instead of a bare number; a click opens the same panel. */
 .partner-cue {
   background: #e7d3b4;
-  color: #6f4a2b;
+  border: 0;
   border-radius: 999px;
+  color: #6f4a2b;
+  cursor: pointer;
+  display: block;
+  font: inherit;
   font-size: 0.64rem;
   font-weight: 600;
   letter-spacing: 0.01em;
+  margin-top: 4px;
   padding: 1px 7px;
   white-space: nowrap;
+  width: fit-content;
 }
 
 .partner-row-open > td {
@@ -4454,6 +4616,76 @@ progress {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 14px 28px;
+}
+
+/* --- Partners table at laptop size (UI review 2026-10-14, #38) --- */
+
+/* Names first: the Person column takes up to a fifth of the table before
+   Role, Capital and Profession grow (their hidden Edit pills inflate them). */
+.partners-table thead th:nth-child(2) {
+  width: 20%;
+}
+
+/* "External investor" stays on one line; "(accomandante)" takes the second. */
+.partners-table tbody td:nth-child(3) .partner-cell-value {
+  min-width: 7.9em;
+}
+
+/* Chevron-only first column: the Person cell's padding is the gap. */
+.partners-table td.partner-expand-cell {
+  padding-right: 0;
+}
+
+/* When the record is narrower than the table, the table scrolls in its own
+   box, never the record pane; an open phrase list is never clipped. */
+.partners-scroll {
+  container: partners / inline-size;
+  overflow-x: auto;
+}
+
+.partners-scroll:has(.lookup-suggestions) {
+  overflow: visible;
+}
+
+/* Remove stays in view at the right edge while the table scrolls (live rows
+   only: removed rows are faded and would show text through). */
+.partners-table:not(.is-removed) td.partner-actions {
+  background: #f6f1ea;
+  position: sticky;
+  right: 0;
+}
+
+.partners-table:not(.is-removed) tbody tr:hover td.partner-actions,
+.partners-table:not(.is-removed) tr.partner-row-open > td.partner-actions {
+  background: #fbf4e8;
+}
+
+/* Full-width rows (attribute panel, remove confirmation) stay inside the
+   visible part of the scroller. */
+.partners-scroll .partner-detail {
+  left: 18px;
+  max-width: calc(100cqi - 36px);
+  position: sticky;
+  z-index: 1; /* sticky makes a stacking layer: keep an open phrase list above the next rows */
+}
+
+.partners-scroll .partner-confirm {
+  left: 10px;
+  max-width: calc(100cqi - 20px);
+  position: sticky;
+}
+
+/* A narrow record (Partners block 800 px or less): tighter column gaps. */
+@container partners (max-width: 800px) {
+  .partners-table th,
+  .partners-table td:not([colspan]) {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .partners-table td.partner-expand-cell {
+    padding-right: 0;
+  }
 }
 
 .partner-detail-group h5 {
@@ -4591,7 +4823,7 @@ progress {
 }
 
 .propose-label {
-  color: #9d7355;
+  color: #7e5c44;
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -4703,7 +4935,7 @@ progress {
 
 .diff-arrow {
   align-self: center;
-  color: #9d7355;
+  color: #7e5c44;
   font-size: 1.2rem;
 }
 
@@ -5423,7 +5655,7 @@ progress {
 .ws-inline-bar:hover { background: #f6efe2; }
 .ws-inline-headline { font-weight: 600; }
 .ws-inline-folio { font-size: 0.82rem; }
-.ws-inline-chevron { color: #9d7355; font-size: 0.78rem; margin-left: auto; white-space: nowrap; }
+.ws-inline-chevron { color: #7e5c44; font-size: 0.78rem; margin-left: auto; white-space: nowrap; }
 .ws-inline-body { border-top: 1px solid #efe4d0; padding: 10px 14px 14px; }
 .ws-inline-tools {
   align-items: center;
@@ -5503,7 +5735,7 @@ progress {
 }
 .create-field { display: grid; gap: 4px; position: relative; }
 .create-label {
-  color: #9d7355;
+  color: #7e5c44;
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -5523,20 +5755,23 @@ progress {
 .create-parent-line { margin: 4px 0 0; }
 .create-actions { justify-content: flex-end; margin-top: 12px; }
 .create-warning {
-  background: #fff3e6;
-  border: 1px solid #e8c9a0;
+  background: #f4e0b9;
+  border: 1px solid #d9b26b;
+  border-left: 3px solid #9c6a1e;
   border-radius: 12px;
-  color: #5c3d1e;
+  color: #684313;
   font-size: 0.9rem;
   margin-bottom: 14px;
   padding: 10px 14px;
 }
 .create-warning ul { margin: 6px 0 0; padding-left: 18px; }
 .create-warning .pill-button { margin-left: 8px; }
+/* The identity hint's brown is 4.1:1 on the warning tint; one step darker. */
+.create-warning .pl-picker-hint:not(.pl-picker-hint-split) { color: #7a5634; }
 .link-like {
   background: none;
   border: 0;
-  color: #9d7355;
+  color: #7e5c44;
   cursor: pointer;
   font: inherit;
   padding: 0;
@@ -5577,7 +5812,7 @@ progress {
 .lookup-used { font-size: 0.78rem; white-space: nowrap; }
 .lookup-status { font-size: 0.78rem; }
 .lookup-status.is-reuse { color: #4c7a44; }
-.lookup-status.is-new { color: #9d7355; }
+.lookup-status.is-new { color: #7e5c44; }
 
 /* Comment badge on the collapsed Word strip (rare, high-value) */
 .ws-inline-comments {
@@ -5731,7 +5966,7 @@ progress {
 .tranche-mode { display: flex; gap: 18px; }
 .inline-check { font-size: 0.82rem; white-space: nowrap; }
 .add-investor-flags { display: grid; gap: 4px; }
-.add-investor-more summary { color: #9d7355; cursor: pointer; font-size: 0.85rem; }
+.add-investor-more summary { color: #7e5c44; cursor: pointer; font-size: 0.85rem; }
 .add-investor-note { flex: 1; }
 .add-investor-checkbox span { padding-top: 6px; }
 
@@ -5773,7 +6008,7 @@ progress {
   margin: 0 0 14px;
 }
 .db-jumpnav::before {
-  color: #9d7355;
+  color: #7e5c44;
   content: "On this page";
   font-size: 0.66rem;
   font-weight: 700;
@@ -5799,7 +6034,7 @@ progress {
 }
 .db-evidence-divider {
   border-top: 1px solid #e3d5bf;
-  color: #9d7355;
+  color: #7e5c44;
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -6149,7 +6384,7 @@ progress {
 }
 
 .pl-case-position {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.78rem;
   font-weight: 700;
 }
@@ -6179,7 +6414,7 @@ progress {
 }
 
 .pl-consequence-intro span {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.78rem;
 }
 
@@ -6204,7 +6439,7 @@ progress {
 }
 
 .pl-fact-strip span {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.65rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -6304,7 +6539,7 @@ progress {
 
 .pl-name-matrix thead th,
 .pl-contract-table thead th {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.68rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -6317,7 +6552,7 @@ progress {
 }
 
 .pl-name-matrix td.is-missing {
-  color: #9a8a78;
+  color: #6f6052;
   font-style: italic;
 }
 
@@ -6378,7 +6613,7 @@ progress {
 
 .pl-pair-matrix strong,
 .pl-scope strong {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.68rem;
 }
 
@@ -6438,7 +6673,7 @@ progress {
 }
 
 .pl-career-axis-year {
-  fill: #9a8a78;
+  fill: #6f6052;
   font-size: 8px;
 }
 
@@ -6509,7 +6744,7 @@ progress {
 
 .pl-career figcaption {
   align-items: center;
-  color: #806f62;
+  color: #6f6052;
   display: flex;
   font-size: 0.72rem;
   flex-wrap: wrap;
@@ -6722,7 +6957,7 @@ progress {
 }
 
 .pl-water-head {
-  color: #806f62;
+  color: #6f6052;
   display: grid;
   font-size: 0.65rem;
   grid-template-columns: 1fr 1fr;
@@ -6750,7 +6985,7 @@ progress {
 }
 
 .pl-water-totals small {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.62rem;
   text-transform: uppercase;
 }
@@ -6777,7 +7012,7 @@ progress {
 }
 
 .pl-water-label span {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.68rem;
 }
 
@@ -6872,7 +7107,7 @@ progress {
 
 .pl-history span,
 .pl-history q {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.7rem;
 }
 
@@ -7723,7 +7958,7 @@ progress {
 }
 
 .pl-quondam-value {
-  color: #9d7355;
+  color: #7e5c44;
   font-style: italic;
   text-decoration: underline;
   text-decoration-color: #f4e0b9;
@@ -7797,7 +8032,7 @@ progress {
 }
 
 .pl-connection-empty {
-  color: #9a8a78;
+  color: #6f6052;
   display: block;
   font-size: 0.65rem;
   font-style: italic;
@@ -8274,7 +8509,7 @@ progress {
 }
 
 .pl-primer-tool > figcaption {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.78rem;
   margin-top: 8px;
 }
@@ -8295,7 +8530,7 @@ progress {
 }
 
 .pl-ladder > figcaption {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.74rem;
   margin-bottom: 8px;
 }
@@ -8355,7 +8590,7 @@ progress {
 }
 
 .pl-ladder li.is-null {
-  color: #9a8a78;
+  color: #6f6052;
   font-style: italic;
 }
 
@@ -8365,7 +8600,7 @@ progress {
 
 .pl-ladder-note {
   border-top: 1px dashed #e4d8c7;
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.74rem;
   line-height: 1.45;
   margin: 8px 0 0;
@@ -8373,7 +8608,7 @@ progress {
 }
 
 .pl-primer-note {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.74rem;
 }
 
@@ -8484,7 +8719,7 @@ progress {
 }
 
 .pl-ex-head .pl-ex-row > span {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.66rem;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -8507,7 +8742,7 @@ progress {
 }
 
 .pl-ex-id {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.8rem;
 }
 
@@ -8564,7 +8799,7 @@ progress {
 }
 
 .pl-ex > figcaption {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.78rem;
   margin-top: 8px;
 }
@@ -8595,7 +8830,7 @@ progress {
 
 .pl-cmp-grid > .pl-cmp-head {
   border-top: none;
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.66rem;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -8604,11 +8839,11 @@ progress {
 }
 
 .pl-cmp-grid > .pl-cmp-field {
-  color: #806f62;
+  color: #6f6052;
 }
 
 .pl-cmp-grid > .is-blank {
-  color: #9a8a78;
+  color: #6f6052;
   font-style: italic;
 }
 
@@ -8617,7 +8852,7 @@ progress {
 }
 
 .pl-cmp > figcaption {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.78rem;
   margin-top: 8px;
 }
@@ -8730,7 +8965,7 @@ progress {
 }
 
 .pl-circle-cand-label {
-  fill: #806f62;
+  fill: #6f6052;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -8826,7 +9061,7 @@ progress {
 
 .pl-circle > figcaption {
   align-items: center;
-  color: #806f62;
+  color: #6f6052;
   display: flex;
   flex-wrap: wrap;
   font-size: 0.78rem;
@@ -9031,7 +9266,7 @@ progress {
 
 /* An inline jump to a figure, and the figure's brief flash on arrival. */
 .pl-primer-jump {
-  color: #9d7355;
+  color: #7e5c44;
   text-decoration: underline;
   text-decoration-color: #d8c7ac;
   text-underline-offset: 2px;
@@ -9047,7 +9282,7 @@ progress {
 }
 
 .pl-primer-notes a {
-  color: #9d7355;
+  color: #7e5c44;
 }
 
 .pl-fn-back {
@@ -9103,7 +9338,7 @@ progress {
 }
 
 .pl-ruler-odds {
-  fill: #806f62;
+  fill: #6f6052;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 9.5px;
   font-style: italic;
@@ -9127,7 +9362,7 @@ progress {
 }
 
 .pl-ruler-subtitle {
-  fill: #806f62;
+  fill: #6f6052;
   font-size: 10px;
 }
 
@@ -9203,7 +9438,7 @@ progress {
 }
 
 .pl-ruler > figcaption {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.78rem;
   margin-top: 7px;
 }
@@ -9253,7 +9488,7 @@ progress {
 
 .pl-lanes-table > figcaption {
   border-top: 1px solid #eadfcc;
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.78rem;
   margin-top: 2px;
   padding-top: 8px;
@@ -9307,7 +9542,7 @@ progress {
 }
 
 .pl-tl-note {
-  fill: #806f62;
+  fill: #6f6052;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 10px;
   font-style: italic;
@@ -9336,13 +9571,13 @@ progress {
 }
 
 .pl-tl-year {
-  fill: #806f62;
+  fill: #6f6052;
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;
 }
 
 .pl-tl > figcaption {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.78rem;
   margin-top: 6px;
 }
@@ -9404,7 +9639,7 @@ progress {
 }
 
 .pl-pg-eqn-term i {
-  color: #806f62;
+  color: #6f6052;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 0.7rem;
   font-style: italic;
@@ -9429,7 +9664,7 @@ progress {
 }
 
 .pl-pg-eqn-op {
-  color: #9a8a78;
+  color: #6f6052;
   font-size: 0.95rem;
 }
 
@@ -9498,7 +9733,7 @@ progress {
 }
 
 .pl-pg-levels-title {
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.74rem;
   margin-bottom: 2px;
 }
@@ -9533,7 +9768,7 @@ progress {
 }
 
 .pl-pg-level.is-null {
-  color: #9a8a78;
+  color: #6f6052;
   font-style: italic;
 }
 
@@ -9601,7 +9836,7 @@ progress {
 }
 
 .pl-pg-net .pl-pg-net-tiny {
-  fill: #9a8a78;
+  fill: #6f6052;
   font-family: inherit;
   font-size: 8px;
 }
@@ -9619,7 +9854,7 @@ progress {
 }
 
 .pl-pg-net .pl-pg-net-note {
-  fill: #806f62;
+  fill: #6f6052;
   font-family: inherit;
   font-size: 9px;
   font-style: italic;
@@ -9662,7 +9897,7 @@ progress {
 
 .pl-pg-levels-note {
   border-top: 1px dashed #e4d8c7;
-  color: #806f62;
+  color: #6f6052;
   font-size: 0.74rem;
   line-height: 1.45;
   margin-top: 4px;
@@ -9679,7 +9914,9 @@ progress {
 }
 .partner-stake-actions {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 6px;
+  justify-content: flex-end;
 }
 .partners-notice {
   margin: 0 0 10px;
@@ -9756,6 +9993,15 @@ progress {
     flex: none;
     max-height: 40vh;
     min-height: 200px;
+    overflow: auto;
+  }
+
+  /* The Needs-review worklist and the Analysis library take the list's cap but
+     not its floor: either can be a line or two tall (#39). */
+  .db-browser:not(.pl-browser) .db-worklist,
+  .db-browser:not(.pl-browser) .an-library {
+    flex: none;
+    max-height: 40vh;
     overflow: auto;
   }
 

@@ -71,7 +71,7 @@ export default function DistributionRibbon({ contract, sub }: { contract: Bin[];
         {[1450, 1500, 1550, 1600, 1650, 1700, 1750, 1800].map((y) => {
           const x = padX + ((y - FROM) / 10) * slot + slot / 2;
           return (
-            <text key={y} x={x} y={H - 4} fontSize="10" fill="#9a8a78" textAnchor="middle" fontFamily="Georgia, serif">
+            <text key={y} x={x} y={H - 4} fontSize="10" fill="#6f6052" textAnchor="middle" fontFamily="Georgia, serif">
               {y}
             </text>
           );

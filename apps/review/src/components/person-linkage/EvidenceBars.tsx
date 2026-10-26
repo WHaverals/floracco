@@ -50,8 +50,10 @@ function contextLabel(row: WaterfallContribution): string {
     return "no dated contracts on one side, or both entries in the same contract";
   }
   if (row.comparison === "role") {
-    const text = label === "all other comparisons" ? "one general partner, one limited partner" : row.label;
-    return `${text} (shown for context; not used in review order)`;
+    if (label === "all other comparisons") {
+      return "one general partner, one external investor (accomandante); shown for context, not used in review order";
+    }
+    return `${row.label} (shown for context; not used in review order)`;
   }
   return row.label;
 }

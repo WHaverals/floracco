@@ -113,7 +113,7 @@ function fieldStatus(persons: PersonLinkagePerson[], key: keyof PersonLinkagePer
 
 /** A person's partner roles as counts of appearances, in words. */
 function roleProfileText(p: { gp: number; lp: number }): string {
-  const parts = [p.gp ? `${p.gp} as general partner` : "", p.lp ? `${p.lp} as limited partner` : ""].filter(Boolean);
+  const parts = [p.gp ? `${p.gp} as general partner` : "", p.lp ? `${p.lp} as external investor (accomandante)` : ""].filter(Boolean);
   return parts.length ? parts.join(" · ") : "No role recorded";
 }
 

@@ -111,7 +111,7 @@ const FILTER_DEFS: Record<Subject, FilterDef[]> = {
     { key: "gender_women", label: "Women", value: null },
     { key: "gender_men", label: "Men", value: null },
     { key: "role_gp", label: "General partner", value: null },
-    { key: "role_lp", label: "Limited partner", value: null },
+    { key: "role_lp", label: "External investor (accomandante)", value: null },
     { key: "via_proxy", label: "Via proxy", value: null },
     { key: "jewish", label: "Jewish (recorded or attributed)", value: null },
     { key: "title_contains", label: "Title contains", value: "text" },
@@ -245,7 +245,7 @@ function LineChart({ result, allSeries = false }: { result: AnalysisResult; allS
             x={px(t)}
             y={H - 4}
             fontSize="10"
-            fill="#9a8a78"
+            fill="#6f6052"
             textAnchor={t === xMin ? "start" : t === xMax ? "end" : "middle"}
             fontFamily="Georgia, serif"
           >

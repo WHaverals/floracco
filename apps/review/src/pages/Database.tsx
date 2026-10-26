@@ -13,6 +13,7 @@ import {
   loadFlags,
   refuteJewishAttribution,
   relinkField,
+  restoreFlag,
   removePartner,
   restorePartner,
   removeStake,
@@ -454,6 +455,33 @@ export default function Database() {
       .finally(() => fresh() && setLoadingRecord(false));
   }, [routeTable, routeId, beginRecord]);
 
+  // Stacked layout (800 px and below, the breakpoint of the stacking rule at the
+  // end of styles.css): the record sits under the list, inside the scrolling
+  // .db-browser, so a record opened from the page lands below the fold (UI
+  // review 2026-10-14, #39). Once the newly opened record has rendered, scroll
+  // its top into view, unless its head is already on screen. Not on the page's
+  // first load: the list stays on top.
+  const browserRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLElement>(null);
+  const shownRoute = useRef(`${routeTable}/${routeId}`);
+  const revealRoute = useRef("");
+  useEffect(() => {
+    const key = `${routeTable}/${routeId}`;
+    if (key === shownRoute.current) return; // first load, and StrictMode's second run
+    shownRoute.current = key;
+    revealRoute.current = key;
+  }, [routeTable, routeId]);
+  useEffect(() => {
+    if (!record || loadingRecord || revealRoute.current !== `${record.table}/${record.id}`) return;
+    revealRoute.current = "";
+    const browser = browserRef.current;
+    const detail = detailRef.current;
+    if (!browser || !detail || !window.matchMedia("(max-width: 800px)").matches) return;
+    const offset = detail.getBoundingClientRect().top - browser.getBoundingClientRect().top;
+    if (offset >= 0 && offset + 160 <= browser.clientHeight) return; // head already in view
+    browser.scrollTo({ top: browser.scrollTop + offset, behavior: "smooth" });
+  }, [record, loadingRecord]);
+
   const openRecord = useCallback(
     (nextTable: DbBrowseTable, id: string) => {
       if (!id) return;
@@ -491,25 +519,64 @@ export default function Database() {
     return `/database/${flag.table}/${encodeURIComponent(flag.pk)}?review=1&fix=${encodeURIComponent(param)}${inv}`;
   }, []);
 
-  const [flagBusyKey, setFlagBusyKey] = useState<string | null>(null);
+  // "Not an issue": an in-place confirmation under the item (initials, optional
+  // reason), then the item leaves the list; Undo brings it back (append-only log).
+  const [dismissingKey, setDismissingKey] = useState<string | null>(null);
+  const [lastDismissed, setLastDismissed] = useState<{ key: string; title: string; reviewer: string } | null>(null);
+  const [dismissSaving, setDismissSaving] = useState(false);
+  const [undoBusy, setUndoBusy] = useState(false);
   const [flagActionError, setFlagActionError] = useState("");
+  const openDismiss = useCallback((key: string | null) => {
+    if (!confirmDiscard("worklist-dismiss")) return;
+    setFlagActionError("");
+    setDismissingKey(key);
+  }, []);
   const dismissFlagNow = useCallback(
-    (flag: DbFlag) => {
-      let who = localStorage.getItem("floracco_reviewer") ?? "";
-      if (!who.trim()) {
-        who = window.prompt("Your initials (for the audit trail):") ?? "";
-        if (!who.trim()) return;
-        localStorage.setItem("floracco_reviewer", who.trim());
-      }
+    async (flag: DbFlag, reviewer: string, reason: string) => {
       setFlagActionError("");
-      setFlagBusyKey(flag.key);
-      dismissFlag(flag.key, { reviewer: who.trim(), reason: "" })
-        .then(loadFlagsNow)
-        .catch((err: Error) => setFlagActionError(`Dismiss failed — the flag stays: ${err.message}`))
-        .finally(() => setFlagBusyKey(null));
+      // While one dismissal saves, no other confirmation opens, so its error
+      // always has a panel to show in.
+      setDismissSaving(true);
+      try {
+        await dismissFlag(flag.key, { reviewer, reason });
+      } finally {
+        setDismissSaving(false);
+      }
+      setDismissingKey((k) => (k === flag.key ? null : k));
+      setLastDismissed({ key: flag.key, title: flag.title, reviewer });
+      loadFlagsNow();
     },
     [loadFlagsNow],
   );
+  const undoDismiss = useCallback(() => {
+    if (!lastDismissed || undoBusy) return;
+    const { key, reviewer } = lastDismissed;
+    setFlagActionError("");
+    setUndoBusy(true);
+    restoreFlag(key, { reviewer })
+      .then(() => {
+        setLastDismissed((cur) => (cur?.key === key ? null : cur));
+        loadFlagsNow();
+      })
+      .catch((err: Error & { status?: number }) => {
+        if (err.status === 409) {
+          // Already back (a retried Undo whose first reply was lost): show the list as it is.
+          setLastDismissed((cur) => (cur?.key === key ? null : cur));
+          loadFlagsNow();
+          return;
+        }
+        setFlagActionError(`The item could not be brought back: ${err.message}`);
+      })
+      .finally(() => setUndoBusy(false));
+  }, [lastDismissed, undoBusy, loadFlagsNow]);
+  // Opening another record, another item of the same record or leaving the
+  // worklist closes an open confirmation, so the leave question about a typed
+  // reason is true.
+  const routeFix = searchParams.get("fix");
+  const routeInv = searchParams.get("inv");
+  useEffect(() => {
+    setDismissingKey(null);
+  }, [routeTable, routeId, routeFix, routeInv, reviewMode]);
 
   // Picker → open the person's own record, where every name field is editable
   // in place (no detour through a drawer).
@@ -570,7 +637,7 @@ export default function Database() {
   };
 
   return (
-    <div className="db-browser">
+    <div className="db-browser" ref={browserRef}>
       <aside className="db-rail">
         <div className="db-rail-head">
           <p className="eyebrow">Database</p>
@@ -717,7 +784,15 @@ export default function Database() {
         </div>
         {reviewMode ? (
           <div className="db-worklist">
-            {flagActionError && <p className="error-text">{flagActionError}</p>}
+            {lastDismissed && (
+              <p className="worklist-undo">
+                Marked as not an issue: “{lastDismissed.title}”.{" "}
+                <button type="button" className="link-like" onClick={undoDismiss} disabled={undoBusy}>
+                  {undoBusy ? "Undoing…" : "Undo"}
+                </button>
+                {flagActionError && <span className="error-text"> {flagActionError}</span>}
+              </p>
+            )}
             {flagsFailed && !flagsLoading && (
               <p className="db-empty error-text">
                 {flagGroups.length === 0
@@ -743,7 +818,14 @@ export default function Database() {
                     type="button"
                     className="worklist-group-head"
                     aria-expanded={open}
-                    onClick={() => setGroupOpen(group.group, !open)}
+                    onClick={() => {
+                      // Folding a category closes its open confirmation: ask first.
+                      if (open && dismissingKey && group.items.some((f) => f.key === dismissingKey)) {
+                        if (!confirmDiscard("worklist-dismiss")) return;
+                        setDismissingKey(null);
+                      }
+                      setGroupOpen(group.group, !open);
+                    }}
                   >
                     <span className="worklist-chevron" aria-hidden>
                       {open ? "▾" : "▸"}
@@ -765,13 +847,19 @@ export default function Database() {
                             </button>
                             <button
                               type="button"
-                              className="worklist-dismiss"
-                              title="Not an issue — dismiss"
-                              disabled={flagBusyKey === flag.key}
-                              onClick={() => dismissFlagNow(flag)}
+                              className={dismissingKey === flag.key ? "worklist-dismiss is-open" : "worklist-dismiss"}
+                              title="Reviewed, and the record is right: take this item off the list"
+                              disabled={dismissSaving}
+                              onClick={() => openDismiss(dismissingKey === flag.key ? null : flag.key)}
                             >
-                              ✕
+                              Not an issue
                             </button>
+                            {dismissingKey === flag.key && (
+                              <WorklistDismissConfirm
+                                onConfirm={(reviewer, reason) => dismissFlagNow(flag, reviewer, reason)}
+                                onClose={() => setDismissingKey(null)}
+                              />
+                            )}
                           </li>
                         ))}
                       </ul>
@@ -835,7 +923,7 @@ export default function Database() {
         )}
       </aside>
 
-      <section className="db-detail">
+      <section className="db-detail" ref={detailRef}>
         {isCreating && (
           <CreateRecordForm
             table={routeTable as "contract" | "sub_contract"}
@@ -1003,6 +1091,71 @@ function PartnerCell({
           {partnerChipLabel(cell.correction, cell.column)}
         </span>
       )}
+    </div>
+  );
+}
+
+/** The Needs-review "Not an issue" confirmation, under the item on the dark rail:
+ * initials and an optional reason; the record itself is not changed. */
+function WorklistDismissConfirm({
+  onConfirm,
+  onClose,
+}: {
+  onConfirm: (reviewer: string, reason: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useUnsavedChange(reason.trim() !== "" && !busy, "the reason for marking this item as not an issue", [
+    "worklist-dismiss",
+  ]);
+
+  const run = async () => {
+    setError("");
+    if (!reviewer.trim()) {
+      setError("Initials needed.");
+      return;
+    }
+    localStorage.setItem("floracco_reviewer", reviewer.trim());
+    setBusy(true);
+    try {
+      await onConfirm(reviewer.trim(), reason.trim());
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="worklist-confirm">
+      <p className="worklist-confirm-lead">
+        Take this item off the list? The record is not changed, and you can undo this right after.
+      </p>
+      <input
+        className="worklist-confirm-reason"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="reason (optional)"
+        aria-label="Reason (optional)"
+      />
+      <div className="worklist-confirm-row">
+        <input
+          className="worklist-confirm-initials"
+          value={reviewer}
+          onChange={(e) => setReviewer(e.target.value)}
+          placeholder="initials"
+          aria-label="Your initials"
+        />
+        <button type="button" className="worklist-confirm-button" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+        <button type="button" className="worklist-confirm-button is-primary" onClick={run} disabled={busy}>
+          {busy ? "Saving…" : "Not an issue"}
+        </button>
+      </div>
+      {error && <p className="error-text">{error}</p>}
     </div>
   );
 }
@@ -1506,7 +1659,8 @@ function PartnersBlock({
                   : "Recorded as joint; the co-holders' stakes were entered separately"
               }
             >
-              {row.cash.joint_count > 1 ? `shared by ${row.cash.joint_count} partners` : "joint stake"}
+              {/* Non-breaking spaces: at most two lines ("shared by 2" / "partners"). */}
+              {row.cash.joint_count > 1 ? `shared\u00a0by\u00a0${row.cash.joint_count} partners` : "joint stake"}
             </span>
           )}
         </div>
@@ -1561,9 +1715,10 @@ function PartnersBlock({
       {count === 0 ? (
         <p className="muted">
           No partners are recorded yet. Every accomandita needs at least one general partner (accomandatario)
-          and one limited partner (accomandante).
+          and one external investor (accomandante).
         </p>
       ) : (
+        <div className="partners-scroll">
         <table className="db-table partners-table">
           <thead>
             <tr>
@@ -1581,6 +1736,14 @@ function PartnersBlock({
             {liveRows.map((row: DbPartnerRow) => {
               const notable = row.attributes?.notable ?? 0;
               const isOpen = expanded === row.key;
+              const panelTitle = notable
+                ? `${notable} recorded attribute${notable === 1 ? "" : "s"} — click to view/edit`
+                : "View / edit all attributes";
+              const togglePanel = () => {
+                // Collapsing or switching the panel closes its editors: ask first.
+                if (expanded && !confirmDiscard(`partner-panel:${expanded}`)) return;
+                setExpanded(isOpen ? null : row.key);
+              };
               return (
               <Fragment key={row.key}>
                 <tr className={isOpen ? "partner-row-open" : undefined}>
@@ -1590,23 +1753,23 @@ function PartnersBlock({
                         type="button"
                         className="partner-expand"
                         aria-expanded={isOpen}
-                        onClick={() => {
-                          // Collapsing or switching the panel closes its editors: ask first.
-                          if (expanded && !confirmDiscard(`partner-panel:${expanded}`)) return;
-                          setExpanded(isOpen ? null : row.key);
-                        }}
-                        title={notable ? `${notable} recorded attribute${notable === 1 ? "" : "s"} — click to view/edit` : "View / edit all attributes"}
+                        onClick={togglePanel}
+                        title={panelTitle}
                       >
                         <span className="partner-chevron">{isOpen ? "▾" : "▸"}</span>
-                        {notable > 0 && (
-                          <span className="partner-cue">
-                            {notable} more {notable === 1 ? "detail" : "details"}
-                          </span>
-                        )}
                       </button>
                     )}
                   </td>
-                  <td>{personCell(row)}</td>
+                  <td>
+                    {personCell(row)}
+                    {/* Under the name, not beside the chevron: a cue column wider than the
+                        names pushed the table past a laptop-size record (#38). */}
+                    {row.person && row.attributes && notable > 0 && (
+                      <button type="button" className="partner-cue" onClick={togglePanel} title={panelTitle}>
+                        {notable} more {notable === 1 ? "detail" : "details"}
+                      </button>
+                    )}
+                  </td>
                   {editableCells(row)}
                   <td className="partner-actions">
                     {!hidden && row.person && (
@@ -1695,6 +1858,7 @@ function PartnersBlock({
             })}
           </tbody>
         </table>
+        </div>
       )}
 
       {removedRows.length > 0 && (
@@ -1702,6 +1866,7 @@ function PartnersBlock({
           <p className="partners-removed-head muted">
             Removed ({removedRows.length}) — hidden from the record, kept in the audit trail.
           </p>
+          <div className="partners-scroll">
           <table className="db-table partners-table is-removed">
             <tbody>
               {removedRows.map((row: DbPartnerRow) => (
@@ -1772,6 +1937,7 @@ function PartnersBlock({
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </section>

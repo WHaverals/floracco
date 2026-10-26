@@ -2673,44 +2673,46 @@ REFERENCE_KINDS: dict[str, tuple[str, str, str]] = {
 }
 
 
-# Each vocabulary's kinds of use. Every part counts links on LIVE contracts only
+# Each vocabulary's kinds of use, as (term, contract) pairs on LIVE contracts only
 # (joined to contract), so links on hidden contracts, or on contract numbers that
 # do not exist, never count: the same population the term page and Analysis use.
+# Every number counts contracts (WH, 2026-10-26): a contract that records a term
+# several times, or in several ways, counts once.
 _LIVE_INVESTOR = "FROM investor i JOIN contract c ON c.contract_id = i.contract_id AND c.is_deleted = 0 "
 _REFERENCE_PARTS: dict[str, list[tuple[str, str]]] = {
     "place": [
         (
             "activity",
-            "SELECT cp.place_id k, COUNT(*) n FROM contract_place cp "
+            "SELECT DISTINCT cp.place_id k, cp.contract_id cid FROM contract_place cp "
             "JOIN contract c ON c.contract_id = cp.contract_id AND c.is_deleted = 0 "
-            "WHERE cp.is_deleted = 0 GROUP BY cp.place_id",
+            "WHERE cp.is_deleted = 0",
         ),
-        ("residence", f"SELECT i.place_of_residence k, COUNT(*) n {_LIVE_INVESTOR}WHERE i.is_deleted = 0 GROUP BY i.place_of_residence"),
-        ("origin", f"SELECT i.place_of_origin k, COUNT(*) n {_LIVE_INVESTOR}WHERE i.is_deleted = 0 GROUP BY i.place_of_origin"),
+        ("residence", f"SELECT DISTINCT i.place_of_residence k, i.contract_id cid {_LIVE_INVESTOR}WHERE i.is_deleted = 0"),
+        ("origin", f"SELECT DISTINCT i.place_of_origin k, i.contract_id cid {_LIVE_INVESTOR}WHERE i.is_deleted = 0"),
     ],
     "title": [
-        (col, f"SELECT i.{col} k, COUNT(*) n {_LIVE_INVESTOR}WHERE i.is_deleted = 0 GROUP BY i.{col}")
+        (col, f"SELECT DISTINCT i.{col} k, i.contract_id cid {_LIVE_INVESTOR}WHERE i.is_deleted = 0")
         for col in ("title", "title_husband", "title_father_mother", "title_grandfather")
     ],
-    "currency": [("contract", "SELECT currency_id k, COUNT(*) n FROM contract WHERE is_deleted = 0 GROUP BY currency_id")],
-    "activity": [("contract", "SELECT economic_sector k, COUNT(*) n FROM contract WHERE is_deleted = 0 GROUP BY economic_sector")],
+    "currency": [("contract", "SELECT currency_id k, contract_id cid FROM contract WHERE is_deleted = 0")],
+    "activity": [("contract", "SELECT economic_sector k, contract_id cid FROM contract WHERE is_deleted = 0")],
 }
 
 
-def _reference_parts(connection: sqlite3.Connection, kind: str) -> dict[int, dict[str, int]]:
-    """Per term, its live references split by kind of use — pure counting, no judgement."""
-    parts: dict[int, dict[str, int]] = {}
+def _reference_contracts(connection: sqlite3.Connection, kind: str) -> dict[int, dict[str, set[int]]]:
+    """Per term, the live contracts behind each kind of use — pure counting, no judgement."""
+    links: dict[int, dict[str, set[int]]] = {}
     for part, sql in _REFERENCE_PARTS.get(kind, []):
         for row in connection.execute(sql):
             key = row["k"]
             if key not in (None, 0, ""):
-                parts.setdefault(int(key), {})[part] = row["n"]
-    return parts
+                links.setdefault(int(key), {}).setdefault(part, set()).add(int(row["cid"]))
+    return links
 
 
 def _reference_counts(connection: sqlite3.Connection, kind: str) -> dict[int, int]:
-    """How many live record-references each term has: the sum of its parts."""
-    return {k: sum(v.values()) for k, v in _reference_parts(connection, kind).items()}
+    """How many live contracts record each term, in any of its kinds of use."""
+    return {k: len(set().union(*v.values())) for k, v in _reference_contracts(connection, kind).items()}
 
 
 @app.get("/api/db/reference/{kind}")
@@ -2843,8 +2845,10 @@ def db_reference_records(
             narrative_sub_contracts = connection.execute(
                 "SELECT COUNT(*) FROM sub_contract WHERE is_deleted = 0 AND document LIKE ? COLLATE NOCASE", (like,)
             ).fetchone()[0]
-        # The rail's number for this term, split by kind of use (same SQL as the rail).
-        parts = _reference_parts(connection, kind).get(term_id, {})
+        # The rail's number for this term (its contracts), split by kind of use;
+        # same SQL as the rail. A contract can count under more than one part.
+        links = _reference_contracts(connection, kind).get(term_id, {})
+        parts = {part: len(c) for part, c in links.items()}
         # Machine resolution + coordinate (place only, if the batch has run).
         resolution = None
         if kind == "place" and place_cache.exists():
@@ -2861,7 +2865,7 @@ def db_reference_records(
             # the phantom-contract links catalogued in the integrity report.
             "record_total": len(records),
             "usage_parts": parts,
-            "usage_total": sum(parts.values()),
+            "usage_total": len(set().union(*links.values())),
             "narrative_mentions": narrative_contracts + narrative_sub_contracts,
             "narrative_contracts": narrative_contracts,
             "narrative_sub_contracts": narrative_sub_contracts,
@@ -5703,8 +5707,8 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "investments_by_role",
         "group": "Structure",
-        "title": "Stakes by role (general vs limited partner)",
-        "description": "Number of stakes recorded for general partners and for limited partners. "
+        "title": "Stakes by role (general partner vs external investor)",
+        "description": "Number of stakes recorded for general partners and for external investors (accomandanti). "
         "A stake shared by several partners counts once.",
         "chart": "bar",
         "sql": "SELECT type AS role, COUNT(*) AS investments FROM investment\n"
@@ -5793,8 +5797,8 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "gp_lp_per_contract",
         "group": "Structure",
-        "title": "General and limited partners per contract (fewest, average, most)",
-        "description": "How many general and limited partners a contract has. Each person is counted "
+        "title": "General partners and external investors per contract (fewest, average, most)",
+        "description": "How many general partners and external investors (accomandanti) a contract has. Each person is counted "
         "once, even when several share one stake or one person holds several.",
         "chart": "none",
         # Partners are PEOPLE reached through investor_group, never investment rows:
@@ -7355,11 +7359,22 @@ def edit_place_address(cid: str, place_id: str, payload: PlaceAddress) -> dict[s
 # "Needs review" — DB-intrinsic data-quality flags (Tier 1). Computed live over
 # main.db (no Word dependency, is_deleted-filtered); fixing a record removes its
 # flag on the next load. Dismiss = "reviewed, not an error" (append-only log).
+# An undo appends a "restore" row; a key's last row decides (older rows carry no
+# action and are dismissals).
 # ---------------------------------------------------------------------------
 
 
 def dismissed_flag_keys() -> set[str]:
-    return {row.get("key") for row in load_jsonl(FLAG_DISMISSALS_PATH) if row.get("key")}
+    dismissed: set[str] = set()
+    for row in load_jsonl(FLAG_DISMISSALS_PATH):
+        key = row.get("key")
+        if not key:
+            continue
+        if row.get("action") == "restore":
+            dismissed.discard(key)
+        else:
+            dismissed.add(key)
+    return dismissed
 
 
 WORD_DATE_GROUP_META = {
@@ -7564,10 +7579,28 @@ def dismiss_flag(key: str, action: FlagDismiss) -> dict[str, Any]:
     FLAG_DISMISSALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with FLAG_DISMISSALS_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({
-            "key": key, "reviewer": action.reviewer, "reason": action.reason.strip(),
+            "key": key, "action": "dismiss", "reviewer": action.reviewer, "reason": action.reason.strip(),
             "at": datetime.now(timezone.utc).isoformat(),
         }) + "\n")
     return {"ok": True, "dismissed": key}
+
+
+class FlagRestore(BaseModel):
+    reviewer: str = Field(min_length=1)
+
+
+@app.post("/api/db/flags/{key:path}/restore")
+def restore_flag(key: str, action: FlagRestore) -> dict[str, Any]:
+    """Undo a dismissal: the item comes back on the next load (append-only)."""
+    if key not in dismissed_flag_keys():
+        raise HTTPException(status_code=409, detail="This item is not dismissed, so there is nothing to undo.")
+    FLAG_DISMISSALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with FLAG_DISMISSALS_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "key": key, "action": "restore", "reviewer": action.reviewer,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }) + "\n")
+    return {"ok": True, "restored": key}
 
 
 class ContractCreate(BaseModel):
@@ -7915,7 +7948,7 @@ def create_investor(payload: InvestorCreate) -> dict[str, Any]:
         } if payload.new_person else {}),
     })
     if payload.join_investment_id is None and payload.role not in ("gp", "lp"):
-        raise HTTPException(status_code=400, detail="Choose general partner or limited partner.")
+        raise HTTPException(status_code=400, detail="Choose general partner or external investor (accomandante).")
     connection = open_db()
     try:
         contract = connection.execute(

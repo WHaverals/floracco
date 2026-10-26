@@ -299,6 +299,14 @@ export function dismissFlag(
   });
 }
 
+/** Undo a dismissal: the item returns to Needs review. */
+export function restoreFlag(key: string, body: { reviewer: string }): Promise<{ ok: boolean }> {
+  return request(`/api/db/flags/${encodeURIComponent(key)}/restore`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function addPlace(
   contractId: string,
   body: { place: string; address: string; reviewer: string; reason: string },

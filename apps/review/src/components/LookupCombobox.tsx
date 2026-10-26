@@ -28,9 +28,10 @@ export function lookupCheckBlock(check: LookupCheck, field = "this field"): stri
  *     exactly as typed, and creating a new phrase is a normal outcome, not a
  *     failure.
  */
-/** "used once" / "used 12 times". */
-function usedTimes(n: number): string {
-  return n === 1 ? "used once" : `used ${n.toLocaleString()} times`;
+/** "used on 1 contract" / "used on 12 contracts": the Reference page's number. */
+function usedOn(n: number): string {
+  if (n === 0) return "not used on any contract";
+  return `used on ${n.toLocaleString()} contract${n === 1 ? "" : "s"}`;
 }
 
 export default function LookupCombobox({
@@ -140,7 +141,7 @@ export default function LookupCombobox({
                 }}
               >
                 <span className="lookup-value">{item.value}</span>
-                <span className="lookup-used muted">{usedTimes(item.used)}</span>
+                <span className="lookup-used muted">{usedOn(item.used)}</span>
               </button>
             </li>
           ))}
@@ -165,12 +166,12 @@ export default function LookupCombobox({
       {check === "ok" &&
         (reusing ? (
           <span className="lookup-status is-reuse">
-            An existing phrase, {usedTimes(exact!.used)}. The record will point to it.
+            An existing phrase, {usedOn(exact!.used)}. The record will point to it.
           </span>
         ) : exact ? (
           <span className="lookup-status is-new">
             A new phrase, stored exactly as typed. A recorded phrase differs from it only in capitals, accents or
-            spacing: “{exact.value}” ({usedTimes(exact.used)}).
+            spacing: “{exact.value}” ({usedOn(exact.used)}).
           </span>
         ) : (
           <span className="lookup-status is-new">A new phrase. It will be stored exactly as typed.</span>

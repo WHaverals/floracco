@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createInvestor, loadContractInvestments, sameSurname, searchPersonsRich } from "../api";
 import { useLatest } from "../utils/latest";
-import { roleLabel } from "../utils/roles";
+import { aRole, roleLabel } from "../utils/roles";
 import { useUnsavedChange } from "../utils/unsavedChanges";
 import type { ContractInvestment, PersonHit } from "../types";
 import LookupCombobox, { lookupCheckBlock, type LookupCheck } from "./LookupCombobox";
@@ -246,7 +246,7 @@ export default function AddInvestorPanel({
       const who = pickedPerson?.display_name || `${npFirst} ${npLast}`.trim();
       const how =
         mode !== "join"
-          ? `as a ${roleLabel(role).toLowerCase()}`
+          ? `as ${aRole(role)}`
           : takesOver
             ? joined?.type
               ? `as the ${roleLabel(joined.type).toLowerCase()} holding this stake`
@@ -530,7 +530,7 @@ export default function AddInvestorPanel({
                   if (next === "gp" && !cash.trim()) setCash("0");
                 }}
               >
-                <option value="lp">Limited partner (accomandante): provides capital</option>
+                <option value="lp">External investor (accomandante): provides capital</option>
                 <option value="gp">General partner (accomandatario): runs the firm</option>
               </select>
             </label>

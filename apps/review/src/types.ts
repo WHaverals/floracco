@@ -219,9 +219,10 @@ export type ReferenceRecordsResponse = {
   kind: ReferenceKind;
   value: string;
   record_total: number;
-  /** The rail's number for this term split by kind of use (place: activity, residence,
-   *  origin; title: one key per title field; currency/activity: contract). */
+  /** Contracts per kind of use (place: activity, residence, origin; title: one key
+   *  per title field; currency/activity: contract). A contract can be in several. */
   usage_parts: Record<string, number>;
+  /** The rail's number: the live contracts that record the term (= record_total). */
   usage_total: number;
   /** Contracts plus sub-contracts whose narrative contains the term's text. */
   narrative_mentions: number;
