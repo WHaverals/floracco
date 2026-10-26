@@ -1308,7 +1308,9 @@ def decision_link_maps() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
 
 
 def word_sources_via_contracts(
-    targets: list[tuple[str, str]], cap: int = 24
+    targets: list[tuple[str, str]],
+    cap: int | None = 24,
+    include_unproposed_confirmed: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
     """Aggregate linked Word sources for a set of (db_row_id, via_label) targets.
 
@@ -1318,12 +1320,16 @@ def word_sources_via_contracts(
     person is recorded as an investor. Each returned source carries a ``via``
     label naming that contract, so the provenance stays explicit. Returns
     (sources_up_to_cap, total_before_cap); one pass over the link file.
+    ``cap=None`` keeps every source; ``include_unproposed_confirmed`` adds the
+    links a reviewer confirmed that the matcher never proposed, as
+    ``linked_word_sources`` does for one row.
     """
     target_label = {db_row_id: label for db_row_id, label in targets}
     if not target_label:
         return [], 0
     confirmed_map, rejected_map = decision_link_maps()
     seen: set[tuple[str, str]] = set()
+    covered_keys: dict[str, set[str]] = {}
     sources: list[dict[str, Any]] = []
     for row in load_jsonl(LINK_CANDIDATES_PATH):
         db_row_id = row.get("db_row_id")
@@ -1335,6 +1341,7 @@ def word_sources_via_contracts(
             continue
         seen.add(dedupe)
         key = str(row.get("source_entry_key") or "")
+        covered_keys.setdefault(str(db_row_id), set()).add(key)
         if key in confirmed_map.get(db_row_id, set()):
             status = "confirmed"
         elif key in rejected_map.get(db_row_id, set()):
@@ -1368,11 +1375,36 @@ def word_sources_via_contracts(
                 "via_row_id": db_row_id,
             }
         )
+    if include_unproposed_confirmed:
+        entries = source_entries_by_key()
+        for db_row_id, label in target_label.items():
+            for key in sorted(
+                confirmed_map.get(db_row_id, set()) - covered_keys.get(db_row_id, set())
+            ):
+                entry = entries.get(key)
+                if not entry:
+                    continue
+                sources.append(
+                    {
+                        "source_entry_id": entry.get("source_entry_id"),
+                        "source_entry_key": key,
+                        "register_id": entry.get("register_id"),
+                        "label": entry.get("event_label_raw") or entry.get("event_label_guess"),
+                        "date": entry.get("registration_date_raw"),
+                        "folio": _entry_folio(entry),
+                        "relationship": "reviewer_confirmed",
+                        "strength": None,
+                        "status": "confirmed",
+                        "via": label,
+                        "via_row_id": db_row_id,
+                        "comment_count": len(entry.get("comment_ids") or []),
+                    }
+                )
     status_rank = {"confirmed": 0, "proposed": 1, "rejected": 2}
     sources.sort(
         key=lambda item: (status_rank.get(item["status"], 3), -(item["strength"] or 0.0))
     )
-    return sources[:cap], len(sources)
+    return (sources if cap is None else sources[:cap]), len(sources)
 
 
 # ---------------------------------------------------------------------------
@@ -5111,6 +5143,67 @@ def _person_business_context(
     }
 
 
+def _entry_word_sources(
+    connection: sqlite3.Connection, person: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """The Word summaries of the acts one entry appears in, per act, in date order.
+
+    A one-entry ("split") case has no pair and so no shared contracts, which is
+    where the Sources drawer used to look; a reader deciding which acts are
+    whose needs the summary of each act (review W6; scope v2, prerequisite A).
+    One pass over the link file for all the entry's acts, every candidate
+    kept, reviewer-confirmed links included even when the matcher never
+    proposed them. Returned beside — never inside — `evidence_basis`, so a
+    standing flag's "evidence changed" check does not move when a link is
+    proposed or judged.
+    """
+    acts: dict[int, dict[str, Any]] = {}
+    for appearance in person.get("appearances") or []:
+        raw = appearance.get("contract_id")
+        if raw in (None, ""):
+            continue
+        contract_id = int(raw)
+        acts.setdefault(
+            contract_id,
+            {
+                "contract_id": contract_id,
+                "registration_date": appearance.get("registration_date"),
+                "firm_name": appearance.get("firm_name"),
+                "folio": None,
+                "document": None,
+                "word_sources": [],
+            },
+        )
+    if not acts:
+        return []
+    targets = [
+        (f"contract:{contract_id}", act["firm_name"] or f"Contract {contract_id}")
+        for contract_id, act in acts.items()
+    ]
+    sources, _total = word_sources_via_contracts(
+        targets, cap=None, include_unproposed_confirmed=True
+    )
+    for source in sources:
+        via = str(source.get("via_row_id") or "").removeprefix("contract:")
+        if via.isdigit() and int(via) in acts:
+            acts[int(via)]["word_sources"].append(source)
+    marks = ",".join("?" for _ in acts)
+    for row in connection.execute(
+        f"SELECT contract_id, folio, document FROM contract "
+        f"WHERE contract_id IN ({marks}) AND is_deleted=0",
+        list(acts),
+    ):
+        act = acts[int(row["contract_id"])]
+        act["folio"] = row["folio"]
+        act["document"] = clean_document(row["document"])
+
+    def date_key(act: dict[str, Any]) -> tuple[str, int]:
+        date = str(act.get("registration_date") or "")
+        return (date if date and date != PLACEHOLDER_DATE else "9999", act["contract_id"])
+
+    return sorted(acts.values(), key=date_key)
+
+
 def _person_case_payload(case_id: str) -> dict[str, Any]:
     if not person_linkage_enabled():
         raise HTTPException(status_code=404, detail="Person identity review is not enabled.")
@@ -5171,6 +5264,8 @@ def _person_case_payload(case_id: str) -> dict[str, Any]:
                 item["document"] = clean_document(item.get("document"))
                 item["word_sources"] = linked_word_sources(f"contract:{contract_id}")
                 contracts.append(item)
+        # A one-entry case: the summaries of its own acts, per act, dated.
+        entry_sources = _entry_word_sources(connection, persons[0]) if len(ids) == 1 else None
     finally:
         connection.close()
 
@@ -5250,6 +5345,9 @@ def _person_case_payload(case_id: str) -> dict[str, Any]:
         "stale": _person_cache_stale(run),
         "needs_recheck": needs_recheck,
         "evidence_basis": evidence_basis,
+        # Split cases only: the Word summaries of the entry's own acts, in
+        # date order. Not part of `evidence_basis` (see _entry_word_sources).
+        **({"entry_sources": entry_sources} if entry_sources is not None else {}),
     }
 
 

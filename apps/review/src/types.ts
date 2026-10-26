@@ -487,6 +487,16 @@ export type PersonReferenceLink = {
   created_at: string;
 };
 
+/** One act on a People case page, with the Word summaries linked to it. */
+export type PersonCaseContract = {
+  contract_id: number;
+  registration_date: string | null;
+  firm_name: string | null;
+  folio: string | null;
+  document: string | null;
+  word_sources: DbWordSource[];
+};
+
 export type PersonLinkageCase = {
   case_id: string;
   kind: "pair" | "group" | "split";
@@ -494,14 +504,9 @@ export type PersonLinkageCase = {
   persons: PersonLinkagePerson[];
   pairs: PersonPairSuggestion[];
   group?: Record<string, unknown> | null;
-  shared_contracts: Array<{
-    contract_id: number;
-    registration_date: string | null;
-    firm_name: string | null;
-    folio: string | null;
-    document: string | null;
-    word_sources: DbWordSource[];
-  }>;
+  shared_contracts: PersonCaseContract[];
+  /** Split cases only: the entry's own acts in date order, each with its summaries. */
+  entry_sources?: PersonCaseContract[];
   business_context: {
     exact_firms: Array<{
       normalized_name: string;

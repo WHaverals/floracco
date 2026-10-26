@@ -7495,6 +7495,28 @@ a.db-history-subject:hover {
   opacity: 0.5;
 }
 
+/* Sources drawer on a one-entry case: the entry's own acts, each with its
+   summaries. The link status sits inside the button, small and plain. */
+.pl-entry-sources .pl-source-card h3 {
+  font-size: 0.86rem;
+}
+
+.pl-source-status {
+  color: #806f62;
+  font-size: 0.66rem;
+  font-weight: 500;
+  margin-left: 8px;
+}
+
+.pill-button.is-rejected {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+.pill-button.is-rejected .pl-source-status {
+  text-decoration: none;
+}
+
 /* Third line of a Decided or Flagged row: initials · date · the note. */
 .pl-case .pl-case-note {
   color: #a99a88;

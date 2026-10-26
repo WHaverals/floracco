@@ -692,7 +692,50 @@ function EvidenceDrawer({
                   })}
                 </section>
               ) : null}
-              {!detail.shared_contracts.length && !relatedSources.length ? (
+              {detail.entry_sources?.length ? (
+                <section className="pl-drawer-source-list pl-entry-sources">
+                  <p className="muted">
+                    The acts this entry appears in, oldest first, each with the Word summary linked to it.
+                    A link is the matcher's proposal unless it is marked confirmed; a rejected link is kept
+                    visible and marked.
+                  </p>
+                  {detail.entry_sources.map((act) => (
+                    <article className="pl-source-card" key={act.contract_id}>
+                      <h3>
+                        <Link to={`/database/contract/${act.contract_id}`}>
+                          {recordedDate(act.registration_date) || "Undated"} · act {act.contract_id}
+                        </Link>
+                        {act.firm_name ? ` · ${act.firm_name}` : ""}
+                      </h3>
+                      {act.word_sources.length ? (
+                        <div className="pl-source-links">
+                          {act.word_sources.map((source) => (
+                            <button
+                              type="button"
+                              className={source.status === "rejected" ? "pill-button is-rejected" : "pill-button"}
+                              key={`${act.contract_id}-${source.source_entry_id}`}
+                              onClick={() => onOpenSource(source.source_entry_id)}
+                              title={source.folio ? `Folio ${source.folio}` : undefined}
+                            >
+                              Read Word summary
+                              <span className="pl-source-status">
+                                {source.status === "confirmed"
+                                  ? "confirmed link"
+                                  : source.status === "rejected"
+                                    ? "rejected link"
+                                    : "proposed link"}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="muted">No Word summary is linked to this act.</p>
+                      )}
+                    </article>
+                  ))}
+                </section>
+              ) : null}
+              {!detail.shared_contracts.length && !relatedSources.length && !detail.entry_sources?.length ? (
                 <p className="muted">No linked Word summaries are available for this case.</p>
               ) : null}
             </>
@@ -1270,7 +1313,8 @@ export default function People() {
     0,
   ) ?? 0;
   const sourceCount = relatedSources.length
-    + (detail?.shared_contracts.reduce((sum, contract) => sum + contract.word_sources.length, 0) ?? 0);
+    + (detail?.shared_contracts.reduce((sum, contract) => sum + contract.word_sources.length, 0) ?? 0)
+    + (detail?.entry_sources?.reduce((sum, act) => sum + act.word_sources.length, 0) ?? 0);
   const needsGroupScope = Boolean(detail && detail.persons.length >= 3 && !scopeKey);
   const scopeSummary = detail && scopedIds.length
     ? scopedIds.map((personId) => {
