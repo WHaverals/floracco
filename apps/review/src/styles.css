@@ -4648,14 +4648,18 @@ progress {
 }
 
 /* When the record is narrower than the table, the table scrolls in its own
-   box, never the record pane; an open phrase list is never clipped. */
+   box, never the record pane. */
 .partners-scroll {
   container: partners / inline-size;
   overflow-x: auto;
 }
 
-.partners-scroll:has(.lookup-suggestions) {
-  overflow: visible;
+/* An open phrase list takes room in the partner's panel instead of floating
+   over it, so the box grows with it and never cuts it off. A floating list
+   needed the box opened up (overflow: visible) while it was open, and at
+   about 800-960 px windows the table then spilled out of the record. */
+.partners-scroll .lookup-suggestions {
+  position: static;
 }
 
 /* Remove stays in view at the right edge while the table scrolls (live rows
@@ -4677,7 +4681,6 @@ progress {
   left: 18px;
   max-width: calc(100cqi - 36px);
   position: sticky;
-  z-index: 1; /* sticky makes a stacking layer: keep an open phrase list above the next rows */
 }
 
 .partners-scroll .partner-confirm {
@@ -4749,6 +4752,17 @@ progress {
 .partner-attr-locked .lock {
   font-size: 0.72rem;
   opacity: 0.55;
+}
+
+/* An open editor gets the panel's whole width, as on the details grid (#51):
+   its group spans every column of the panel and the editor sits under its
+   label. Beside an 11rem label in a 246-361 px group, the input was 84-155 px. */
+.partner-detail-group:has(.inline-editor) {
+  grid-column: 1 / -1;
+}
+
+.partner-attr:has(.inline-editor) > dd {
+  grid-column: 1 / -1;
 }
 
 /* FK relink field (value + ✎ → lookup combobox) */
