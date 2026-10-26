@@ -3503,6 +3503,16 @@ def _latest_person_events(clog: sqlite3.Connection) -> dict[str, dict[str, Any]]
     return latest
 
 
+# A decided case that the open round still holds (its pair, or a pair of its
+# group, waits under Judge blind) is listed with names and numbers only, like
+# the round's own rows: no score, rank or routing reaches the list.
+_ROUND_SAFE_PREVIEW_KEYS = ("case_id", "kind", "lane", "person_ids", "names", "career", "status")
+
+
+def _round_safe_preview(preview: dict[str, Any]) -> dict[str, Any]:
+    return {key: preview[key] for key in _ROUND_SAFE_PREVIEW_KEYS if key in preview}
+
+
 def _person_case_status(
     case: dict[str, Any],
     parent: dict[int, int],
@@ -4276,6 +4286,12 @@ def person_linkage_cases(
             for key in group.get("edge_pair_keys_json") or []
         )
 
+    def held_by_round(case_id: str, group_map: dict[str, dict[str, Any]]) -> bool:
+        """A decided group with a frozen pair, or a decided frozen pair."""
+        if case_id in group_map:
+            return group_in_open_round(group_map[case_id])
+        return case_id.startswith("pair:") and case_id.removeprefix("pair:") in frozen_pair_keys
+
     def reserved_for_labeling_count() -> int:
         """Open-round cases whose NATURAL lane is the requested one.
 
@@ -4492,6 +4508,8 @@ def person_linkage_cases(
                 continue
             if matches_query(preview) and not is_open(preview):
                 preview["lane"] = "decided"
+                if held_by_round(case_id, group_map):
+                    preview = _round_safe_preview(preview)
                 found.append(_with_decision_meta(preview, latest.get(case_id)))
         cache.close()
         rank = {name: index for index, name in enumerate(_PERSON_LANE_ORDER)}
@@ -4591,6 +4609,8 @@ def person_linkage_cases(
             else:
                 continue
             if keep_preview(preview):
+                if held_by_round(case_id, group_map):
+                    preview = _round_safe_preview(preview)
                 cases.append(_with_decision_meta(preview, latest.get(case_id)))
         cache.close()
         # Newest decision first: "what did I just do" is the question here.
@@ -5316,6 +5336,33 @@ def _person_blind_case_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_PERSON_GROUP_IN_ROUND_DETAIL = (
+    "This group is part of the open labeling round: some of its pairs are waiting "
+    "under Judge blind, where the scores stay hidden. Decide them there, or finish "
+    "the round, to review the group here."
+)
+
+
+def _refuse_group_in_open_round(case: dict[str, Any], frozen: set[str]) -> None:
+    """A group with a frozen pair is closed, by its link and by decision, while the
+    round is open (review_2026-10-23 M2). The lanes (group_in_open_round) and the
+    Database hints already hide such a group; this is the same pair test for the
+    case URL, the group URL and the decision. Refused rather than blinded: the
+    group is itself the model's clustering, a two-entry group IS its packet pair,
+    and Judge blind labels pairs only, so a blinded group could be read but never
+    decided."""
+    if case.get("kind") != "group" or not frozen:
+        return
+    # A group already linked or kept apart (before the round began) stays open,
+    # so its decision can be read and undone: none of its pairs can take a blind
+    # label any more. After an undo it reads open again and is refused.
+    if case.get("status") in {"same_as", "distinct"}:
+        return
+    edge_keys = (case.get("group") or {}).get("edge_pair_keys_json") or []
+    if any(f"pair:{key}" in frozen for key in edge_keys):
+        raise HTTPException(status_code=409, detail=_PERSON_GROUP_IN_ROUND_DETAIL)
+
+
 @app.get("/api/person-linkage/cases/{case_id}")
 def person_linkage_case(case_id: str) -> dict[str, Any]:
     payload = _person_case_payload(case_id)
@@ -5324,7 +5371,9 @@ def person_linkage_case(case_id: str) -> dict[str, Any]:
         latest = _latest_person_events(clog)
     finally:
         clog.close()
-    if payload["case_id"] in _person_labeling_frozen_case_ids(payload["run"], latest):
+    frozen = _person_labeling_frozen_case_ids(payload["run"], latest)
+    _refuse_group_in_open_round(payload, frozen)
+    if payload["case_id"] in frozen:
         return _person_blind_case_payload(payload)
     return payload
 
@@ -5379,10 +5428,11 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
     finally:
         clog.close()
     round_open_ids = _person_labeling_open_case_ids(case["run"], latest)
-    if (
-        case_id not in round_open_ids
-        and case_id in _person_labeling_frozen_case_ids(case["run"], latest)
-    ):
+    frozen = _person_labeling_frozen_case_ids(case["run"], latest)
+    # A decision on such a group would settle its packet pairs without a blind
+    # label (their status turns same_as while the round still counts them open).
+    _refuse_group_in_open_round(case, frozen)
+    if case_id not in round_open_ids and case_id in frozen:
         # A co-minted sibling pair: not itself a labeling case, but both of
         # its persons are — deciding it mid-round would settle the family
         # the labeler is judging blind. It thaws as the packet cases decide.
@@ -5577,7 +5627,9 @@ def revoke_person_decision(event_id: str, action: ReviewerOnly) -> dict[str, Any
 
 @app.get("/api/person-linkage/groups/{group_id}")
 def person_linkage_group(group_id: str) -> dict[str, Any]:
-    return _person_case_payload(f"group:{group_id}")
+    # Same gate as the case URL: no page calls this, but it must not be the one
+    # door that skips the blind round.
+    return person_linkage_case(f"group:{group_id}")
 
 
 # ---- Analysis: read-only query execution (builder / library / console) ----

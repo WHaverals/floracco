@@ -1386,14 +1386,14 @@ export default function PersonLinkagePrimer() {
       <section className="pl-primer-panel pl-primer-body">
         <h3>Four ways to answer</h3>
         <p>
-          Under every case sits the same question, do these entries describe
-          the same historical person, and the same four answers.
+          Every case asks the same question, do these entries describe the
+          same historical person, and under every case sit the same four
+          answers.
         </p>
         <div className="pl-primer-dock" aria-hidden="true">
           <div className="pl-decision-bar">
             <div className="pl-decision-question">
               <span>Your decision</span>
-              <strong>Do these entries describe the same historical person?</strong>
               <small>The entries themselves stay unchanged · every decision can be undone</small>
             </div>
             <div className="pl-decision-action-area">

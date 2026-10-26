@@ -198,7 +198,9 @@ export default function Database() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("");
   const [results, setResults] = useState<DbSearchResult[]>([]);
-  const [total, setTotal] = useState(0);
+  // null until the first list answer lands: the rail reads "Loading…", not "No
+  // records match" (#45). Later searches keep the last total until they answer.
+  const [total, setTotal] = useState<number | null>(null);
   // Browse filters (contract & sub_contract only) + their facet values.
   const [facets, setFacets] = useState<DbFacets | null>(null);
   const [facetsFailed, setFacetsFailed] = useState(false);
@@ -300,7 +302,9 @@ export default function Database() {
   const beginRecord = useLatest();
   const beginList = useLatest();
   const beginFlags = useLatest();
-  const [flagTotal, setFlagTotal] = useState(0);
+  // null until the first flags answer lands (the tab badge reads "(…)"); a
+  // refresh keeps the last total, so the badge and "All clear" never flash (#45).
+  const [flagTotal, setFlagTotal] = useState<number | null>(null);
   // True until the first flags response lands (and again during a refresh) so we
   // never show "All clear" while the check is still running — only once it has
   // genuinely come back with nothing.
@@ -668,12 +672,12 @@ export default function Database() {
               onClick={() => navigate(routeId ? `/database/${routeTable}/${routeId}?review=1` : "/database?review=1")}
               title="Records the data flags as possibly needing a fix"
             >
-              ⚑ Needs review{flagTotal ? ` (${flagTotal})` : ""}
+              ⚑ Needs review{flagTotal === null ? (flagsFailed && !flagsLoading ? "" : " (…)") : flagTotal ? ` (${flagTotal})` : ""}
             </button>
           </div>
           {reviewMode ? (
             <p className={flagsFailed && !flagsLoading ? "db-count error-text" : "db-count muted"}>
-              {flagsLoading && flagTotal === 0
+              {flagsLoading && (flagTotal === null || flagsFailed)
                 ? "Checking records…"
                 : flagsFailed
                 ? "The check for records that need review did not run."
@@ -719,7 +723,9 @@ export default function Database() {
               <p className={listError ? "db-count error-text" : "db-count muted"} aria-live="polite">
                 {listError
                   ? listError
-                  : searching
+                  : total === null
+                    ? "Loading…"
+                    : searching
                     ? "Searching…"
                     : total === 0
                       ? "No records match"
@@ -814,7 +820,7 @@ export default function Database() {
               </p>
             )}
             {flagGroups.length === 0 &&
-              (flagsLoading ? (
+              (flagsLoading && (flagTotal === null || flagsFailed) ? (
                 <p className="db-empty muted">Checking records for anything that needs review…</p>
               ) : flagsFailed ? null : (
                 <p className="db-empty muted">All clear.</p>
@@ -919,12 +925,13 @@ export default function Database() {
               </li>
             );
           })}
-          {results.length === 0 && !listError && (
+          {results.length === 0 && !listError && total !== null && (
             <li className="db-empty muted">No records match.</li>
           )}
-          {results.length > 0 && results.length < total && (
+          {results.length > 0 && total !== null && results.length < total && (
             <li className="db-load-more">
-              <button type="button" className="db-load-more-btn" onClick={loadMore}>
+              {/* Not while a new search runs: its next page would land under the old rows. */}
+              <button type="button" className="db-load-more-btn" onClick={loadMore} disabled={searching}>
                 Load more <span className="db-load-more-count">({(total - results.length).toLocaleString()} more)</span>
               </button>
             </li>

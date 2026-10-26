@@ -8470,12 +8470,12 @@ a.db-history-subject:hover {
     flex-wrap: wrap;
   }
 
-  .pl-decision-options {
-    grid-template-columns: repeat(2, minmax(150px, 1fr));
-  }
-
-  .pl-decision-options:not(.is-single-record) > :first-child {
-    grid-column: auto;
+  /* The label and the promise line need little room: a narrow column keeps the
+     three answers in one row down to about 990 px (UI review 2026-10-14, #41);
+     below that the bar wraps, with the answers still in one row. */
+  .pl-decision-question {
+    flex: 1 1 140px;
+    min-width: 0;
   }
 }
 

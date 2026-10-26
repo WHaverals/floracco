@@ -7,6 +7,7 @@ import {
   loadPersonLinkageSummary,
   revokePersonDecision,
 } from "../api";
+import CopyLinkButton from "../components/CopyLinkButton";
 import CareerSpanRibbon from "../components/person-linkage/CareerSpanRibbon";
 import PersonLinkagePrimer from "../components/person-linkage/PersonLinkagePrimer";
 import ModelWaterfall from "../components/person-linkage/ModelWaterfall";
@@ -42,6 +43,19 @@ const LANES: Array<{ id: PersonLinkageLane; label: string; note: string }> = [
 ];
 
 const LANE_LABEL: Record<string, string> = Object.fromEntries(LANES.map((entry) => [entry.id, entry.label]));
+
+// The lane the page opens on when neither the reader nor a case address has
+// named one (UI review 2026-10-14, #46): the first lane, in the rail's order,
+// with an open case in it. Only Judge blind holds cases back from other lanes,
+// and only while it has open cases of its own, so while the round is open it is
+// that lane; once it is empty, every other lane's count is what the lane lists.
+// Decided is a record, not a queue. With no open case anywhere, the old default.
+const DEFAULT_LANE: PersonLinkageLane = "likely_duplicates";
+
+function openingLane(summary: PersonLinkageSummary): PersonLinkageLane {
+  const first = LANES.find((entry) => entry.id !== "decided" && (summary.lanes?.[entry.id] ?? 0) > 0);
+  return first?.id ?? DEFAULT_LANE;
+}
 
 // Decided rows and the history drawer speak in the reviewer's words, not in
 // the stored action codes.
@@ -738,7 +752,10 @@ function EvidenceDrawer({
 export default function People() {
   const { caseId } = useParams();
   const navigate = useNavigate();
-  const [lane, setLane] = useState<PersonLinkageLane>("likely_duplicates");
+  const [lane, setLane] = useState<PersonLinkageLane>(DEFAULT_LANE);
+  // Whether the opening lane is still the page's to choose. The first summary
+  // settles it, and so does the reader picking a lane or a case address.
+  const laneChosenRef = useRef(Boolean(caseId));
   const [summary, setSummary] = useState<PersonLinkageSummary | null>(null);
   const [cases, setCases] = useState<PersonLinkagePreview[]>([]);
   const [total, setTotal] = useState(0);
@@ -753,6 +770,13 @@ export default function People() {
   const [showPrimer, setShowPrimer] = useState(!caseId);
   const showPrimerRef = useRef(showPrimer);
   showPrimerRef.current = showPrimer;
+  // What is open now, for a list reply that lands after the reader picked a case.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const caseIdRef = useRef(caseId);
+  caseIdRef.current = caseId;
+  // Clicking the lane already open reloads it (nothing else would change).
+  const [laneClicks, setLaneClicks] = useState(0);
   const [detail, setDetail] = useState<PersonLinkageCase | null>(null);
   const [query, setQuery] = useState("");
   const [priorityBand, setPriorityBand] = useState("All");
@@ -764,7 +788,14 @@ export default function People() {
   const [loading, setLoading] = useState(true);
   // The case list did not load: the count line must not read "No open cases".
   const [listFailed, setListFailed] = useState(false);
+  // Which list `total` last answered for ("search" or a lane), so the compact
+  // Queue button reads "…" until this lane's first answer instead of 0 or the
+  // previous lane's number (#45); a reload of the same list keeps its total.
+  const [totalFor, setTotalFor] = useState<string | null>(null);
   const [error, setError] = useState("");
+  // Why the selected case did not open (a group held for the round, a gone
+  // case). Kept apart from `error`, which the list reload clears when it lands.
+  const [caseError, setCaseError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [reviewer, setReviewer] = useState(() => localStorage.getItem(REVIEWER_KEY) ?? "");
@@ -804,9 +835,17 @@ export default function People() {
   const blindUnavailable =
     lane === "labeling_round" &&
     (summary?.labeling_packet_available === false || Boolean(summary?.labeling_packet_stale));
+  // A count from the summary (#45): "…" until the first summary lands, nothing
+  // when that load failed (the count line says so). A reload keeps the last
+  // summary on screen until the next one replaces it, so a refresh never flashes.
+  const summaryCount = (value: number | undefined): string | null =>
+    summary ? (value ?? 0).toLocaleString() : listFailed && !loading ? null : "…";
+  const inParens = (count: string | null) => (count === null ? "" : ` (${count})`);
 
   const changeLane = (nextLane: PersonLinkageLane) => {
     if (!confirmDiscard("people-note")) return; // a typed note on the open case
+    laneChosenRef.current = true;
+    setLaneClicks((n) => n + 1);
     setRationale("");
     beginDetailLoad(); // invalidate any in-flight case from the previous lane
     setLane(nextLane);
@@ -832,6 +871,7 @@ export default function People() {
   // Opening a search result selects its lane without disturbing the query or
   // the selection (the lane's own defaults for band and facets still apply).
   const adoptLane = (nextLane: PersonLinkageLane) => {
+    laneChosenRef.current = true;
     if (nextLane === lane) return;
     beginDetailLoad();
     setLane(nextLane);
@@ -848,8 +888,12 @@ export default function People() {
     const searchingAll = query.trim().length > 0;
     try {
       const pageSize = searchingAll ? 200 : lane === "rule_exclusions" ? 25 : 100;
+      // The summary is shown even when the list fails: a paused or missing Judge
+      // blind explains itself from it, and the lane counts stay right.
+      const summaryLoad = loadPersonLinkageSummary();
+      summaryLoad.then((value) => { if (fresh()) setSummary(value); }, () => undefined);
       const [nextSummary, nextCases] = await Promise.all([
-        loadPersonLinkageSummary(),
+        summaryLoad,
         loadPersonLinkageCases(
           searchingAll
             ? { lane: "all", q: query, offset, limit: pageSize }
@@ -866,9 +910,23 @@ export default function People() {
         ),
       ]);
       if (!fresh()) return;
+      if (!laneChosenRef.current && !searchingAll) {
+        laneChosenRef.current = true;
+        const opening = openingLane(nextSummary);
+        if (opening !== lane) {
+          // This reply was for the default lane; the opening lane's own load
+          // takes over, and "Loading…" stays up until it lands.
+          beginListLoad();
+          setSummary(nextSummary);
+          setLane(opening);
+          setPriorityBand(opening === "other_matches" ? "priority_1" : "All");
+          return;
+        }
+      }
       setSummary(nextSummary);
       setCases(nextCases.cases);
       setTotal(nextCases.total);
+      setTotalFor(searchingAll ? "search" : lane);
       setLaneCounts(nextCases.lane_counts ?? {});
       setReservedForLabeling(nextCases.reserved_for_labeling ?? 0);
       setError("");
@@ -877,7 +935,10 @@ export default function People() {
         // The reader stays on the primer; the rail updates around them. A
         // search never opens a result by itself either: opening one selects
         // its lane, and that is the reader's choice to make.
-      } else if (!selected || (!caseId && !nextCases.cases.some((item) => item.case_id === selected))) {
+      } else if (
+        !selectedRef.current ||
+        (!caseIdRef.current && !nextCases.cases.some((item) => item.case_id === selectedRef.current))
+      ) {
         const first = nextCases.cases[0]?.case_id ?? "";
         setSelected(first);
         if (first) navigate(`/people/${encodeURIComponent(first)}`, { replace: true });
@@ -890,13 +951,14 @@ export default function People() {
         setListFailed(true);
         setCases([]); // never leave the previous lane's rows under this lane's heading
         setTotal(0);
+        setTotalFor(null);
       }
     } finally {
       if (fresh()) setLoading(false);
     }
   }, [beginListLoad, caseId, lane, navigate, offset, priorityBand, query, selected, stranded, strandedAll, splitFacet]);
 
-  useEffect(() => { void reload(); }, [lane, priorityBand, offset, stranded, strandedAll, splitFacet]); // query: see below
+  useEffect(() => { void reload(); }, [lane, priorityBand, offset, stranded, strandedAll, splitFacet, laneClicks]); // query: see below
   // Live search: the queue reloads 400 ms after typing pauses (Enter still
   // fires at once). The refs keep the effect off `reload` itself, whose
   // identity changes with every keystroke.
@@ -915,12 +977,14 @@ export default function People() {
   }, [query, offset]);
   useEffect(() => {
     if (!caseId) return;
+    laneChosenRef.current = true; // a case address names its own lane (the detail load selects it)
     setSelected(caseId);
     // A note belongs to the case it was typed on (Back/Forward included: the
     // router guard has already asked before the address changed).
     setRationale("");
   }, [caseId]);
   useEffect(() => {
+    setCaseError("");
     if (!selected) {
       setDetail(null);
       return;
@@ -946,7 +1010,11 @@ export default function People() {
           setStrandedAll(false);
         }
       })
-      .catch((err: Error) => { if (fresh()) setError(err.message); });
+      .catch((err: Error) => {
+        if (!fresh()) return;
+        setCaseError(err.message);
+        setError(""); // an earlier case's error does not belong under this one
+      });
   // selectedIndex is intentionally read only to detect a deep link outside the lane.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [beginDetailLoad, caseId, selected]);
@@ -1243,7 +1311,7 @@ export default function People() {
             >
               {LANES.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.label} ({summary?.lanes?.[item.id]?.toLocaleString() ?? "…"})
+                  {item.label}{inParens(summaryCount(summary?.lanes?.[item.id]))}
                 </option>
               ))}
             </select>
@@ -1252,7 +1320,13 @@ export default function People() {
               onClick={() => setMobileQueueOpen((open) => !open)}
               type="button"
             >
-              {mobileQueueOpen ? "Close queue" : `Queue (${total})`}
+              {mobileQueueOpen
+                ? "Close queue"
+                : listFailed && !loading
+                  ? "Queue"
+                  : totalFor === (searching ? "search" : lane)
+                    ? `Queue (${total})`
+                    : "Queue (…)"}
             </button>
           </div>
           <div className="pl-lanes">
@@ -1265,7 +1339,7 @@ export default function People() {
                 aria-pressed={lane === item.id}
               >
                 <span>{item.label}</span>
-                <strong>{(summary?.lanes?.[item.id] ?? 0).toLocaleString()}</strong>
+                <strong>{summaryCount(summary?.lanes?.[item.id])}</strong>
                 <small>{item.note}</small>
               </button>
             ))}
@@ -1333,7 +1407,7 @@ export default function People() {
                     aria-pressed={splitFacet === "to_check"}
                     onClick={() => { setOffset(0); setSplitFacet("to_check"); }}
                   >
-                    To check ({(summary?.lanes?.possible_splits ?? 0).toLocaleString()})
+                    To check{inParens(summaryCount(summary?.lanes?.possible_splits))}
                   </button>
                   <button
                     type="button"
@@ -1341,7 +1415,7 @@ export default function People() {
                     aria-pressed={splitFacet === "flagged"}
                     onClick={() => { setOffset(0); setSplitFacet("flagged"); }}
                   >
-                    Flagged ({(summary?.flagged_entries ?? 0).toLocaleString()})
+                    Flagged{inParens(summaryCount(summary?.flagged_entries))}
                   </button>
                 </div>
                 <small className="pl-stranded-help">
@@ -1353,7 +1427,7 @@ export default function People() {
             ) : null}
           </form>
           <p className={listFailed && !loading && !blindUnavailable ? "pl-queue-count error-text" : "pl-queue-count"} aria-live="polite">
-            {loading
+            {loading || (!listFailed && totalFor !== (searching ? "search" : lane))
               ? searching ? "Searching…" : "Loading…"
               : lane === "labeling_round" && summary?.labeling_packet_available === false
                 ? "Judge blind is not set up on this site yet."
@@ -1417,7 +1491,7 @@ export default function People() {
                   : LANE_LABEL[item.lane] ?? "Review candidate";
             // Search results arrive sorted by lane; a heading opens each run.
             const heading =
-              searching && (index === 0 || cases[index - 1].lane !== item.lane)
+              searching && totalFor === "search" && (index === 0 || cases[index - 1].lane !== item.lane)
                 ? `${LANE_LABEL[item.lane] ?? "Other"} (${laneCounts[item.lane] ?? 0})`
                 : null;
             const isKnownLane = LANES.some((entry) => entry.id === item.lane);
@@ -1507,6 +1581,11 @@ export default function People() {
               <h2>Loading people…</h2>
             ) : showPrimer ? (
               <PersonLinkagePrimer />
+            ) : caseError ? (
+              <>
+                <h2>This case cannot be opened</h2>
+                <p>{caseError}</p>
+              </>
             ) : (
               <h2>Choose a case from the list</h2>
             )}
@@ -1519,7 +1598,16 @@ export default function People() {
                 <p className="eyebrow">{detail.kind === "split" ? "Possible combined identity" : "Identity review"}</p>
                 <p className="case-bar-question">{laneQuestion(detail)}</p>
               </div>
-              <span className="pl-case-position">{selectedIndex >= 0 ? `${selectedIndex + 1} / ${cases.length}` : ""}</span>
+              <div className="case-bar-tools">
+                <span className="pl-case-position">{selectedIndex >= 0 ? `${selectedIndex + 1} / ${cases.length}` : ""}</span>
+                {/* Never on Judge blind: a shared link must not hand a packet case to a second reader. */}
+                {detail.lane !== "labeling_round" && lane !== "labeling_round" ? (
+                  <CopyLinkButton
+                    path={`/people/${encodeURIComponent(detail.case_id)}`}
+                    title="Copy a link to this case, to send or to reopen later"
+                  />
+                ) : null}
+              </div>
             </header>
             <div className="pl-review-body">
               {detail.stale?.stale ? (
@@ -1790,13 +1878,9 @@ export default function People() {
                 </div>
               ) : (
                 <>
+                  {/* The question is the case bar's (laneQuestion); the bar keeps its label and promise (#41). */}
                   <div className="pl-decision-question">
                     <span>Your decision</span>
-                    <strong>
-                      {detail.person_ids.length > 1
-                        ? "Do these entries describe the same historical person?"
-                        : "Does this entry contain more than one historical person?"}
-                    </strong>
                     <small>The entries themselves stay unchanged · every decision can be undone</small>
                   </div>
                   <div className="pl-decision-action-area">
