@@ -19,6 +19,7 @@ import type {
   PersonLinkagePerson,
   PersonLinkagePreview,
   PersonLinkageSummary,
+  PersonSplitFlag,
 } from "../types";
 
 const REVIEWER_KEY = "floracco_reviewer";
@@ -32,12 +33,58 @@ const LANES: Array<{ id: PersonLinkageLane; label: string; note: string }> = [
   { id: "high_concordance", label: "Name and context agree", note: "The same name, or one letter off, with the father, the years or a firm agreeing" },
   { id: "read_source", label: "Check the contract", note: "The fields cannot settle it; the act itself decides" },
   { id: "other_matches", label: "Other possible matches", note: "Every pair the model ranks, best first" },
-  { id: "possible_splits", label: "One entry, two people?", note: "An entry that may hold two different people" },
+  { id: "possible_splits", label: "One entry, two people?", note: "Entries that may hold two people, and the ones you have flagged" },
   { id: "decided", label: "Decided", note: "What has been answered, with its history and an undo" },
   { id: "rule_exclusions", label: "Ruled out by the rules", note: "Refused by the sixty-year rule or by an explicit generation marker" },
 ];
 
 const LANE_LABEL: Record<string, string> = Object.fromEntries(LANES.map((entry) => [entry.id, entry.label]));
+
+// Decided rows and the history drawer speak in the reviewer's words, not in
+// the stored action codes.
+const STATUS_LABEL: Record<string, string> = {
+  same_as: "Linked as one person",
+  distinct: "Kept as different people",
+  defer: "Set aside",
+  flag_split: "Flagged: possibly two people",
+  revoke: "Undone",
+  revoked: "Undone",
+  reopen: "Reopened",
+  bulk_rule_ack: "Rule sample inspected",
+};
+
+function plainDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/* The chip under a flagged entry's name: who flagged it and when, the note on
+   hover, and the one-click way back (a reopen on the flag's own case). */
+function FlagChip({
+  flag,
+  busy,
+  onLift,
+}: {
+  flag: PersonSplitFlag;
+  busy: boolean;
+  onLift: (flag: PersonSplitFlag) => void;
+}) {
+  return (
+    <span className="pl-split-status" title={flag.rationale || undefined}>
+      Flagged by {flag.created_by || "a reviewer"}, {plainDate(flag.created_at)}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => onLift(flag)}
+        title="Lift this flag; the note stays in the history"
+      >
+        Lift
+      </button>
+    </span>
+  );
+}
 
 const FIELD_LABELS: Array<[keyof PersonLinkagePerson["fields"], string]> = [
   ["first_name", "Given name"],
@@ -90,12 +137,17 @@ function laneQuestion(detail: PersonLinkageCase): string {
 function PersonMatrix({
   persons,
   pair,
-  splitFlaggedPersonIds,
+  splitFlags,
+  busy,
+  onLiftFlag,
 }: {
   persons: PersonLinkagePerson[];
   pair: PersonLinkageCase["pairs"][number] | null;
-  splitFlaggedPersonIds: number[];
+  splitFlags: PersonSplitFlag[];
+  busy: boolean;
+  onLiftFlag: (flag: PersonSplitFlag) => void;
 }) {
+  const flagsById = new Map(splitFlags.map((flag) => [flag.person_id, flag]));
   const nameReview = (
     pair?.evidence_json as {
       name_review?: Record<string, {
@@ -137,8 +189,12 @@ function PersonMatrix({
                     <Link className="pl-record-button" to={`/database/person/${person.person_id}`}>
                       View database entry
                     </Link>
-                    {splitFlaggedPersonIds.includes(person.person_id) ? (
-                      <span className="pl-split-status">Flagged for split review</span>
+                    {flagsById.has(person.person_id) ? (
+                      <FlagChip
+                        flag={flagsById.get(person.person_id) as PersonSplitFlag}
+                        busy={busy}
+                        onLift={onLiftFlag}
+                      />
                     ) : null}
                   </span>
                 </th>
@@ -614,7 +670,7 @@ function EvidenceDrawer({
                     && event.link_ids.some((linkId) => activeIds.has(linkId));
                   return (
                   <li key={event.event_id}>
-                    <strong>{event.action.replace("_", " ")}</strong>
+                    <strong>{STATUS_LABEL[event.action] ?? event.action.replace(/_/g, " ")}</strong>
                     <span>
                       {event.person_ids.map((personId) => `#${personId}`).join(" · ")}
                       {" · "}{event.created_by} · {event.created_at.slice(0, 16).replace("T", " ")}
@@ -646,7 +702,11 @@ function EvidenceDrawer({
                   disabled={busy || !reviewer.trim()}
                   onClick={onReopen}
                 >
-                  Reopen this case
+                  {detail.history[0].action === "flag_split"
+                    ? "Lift this flag"
+                    : detail.history[0].action === "revoke"
+                      ? "Put back in the queue"
+                      : "Reopen this case"}
                 </button>
               ) : null}
             </>
@@ -696,7 +756,17 @@ export default function People() {
   const [sourceEntryId, setSourceEntryId] = useState<string | null>(null);
   const [selectedCitations, setSelectedCitations] = useState<PersonCitation[]>([]);
   const [mobileQueueOpen, setMobileQueueOpen] = useState(false);
-  const [lastDecisionEventId, setLastDecisionEventId] = useState<string | null>(null);
+  // The decision just made, for the Undo on its message: a link is undone and
+  // reopened in one click; a flag is lifted (a reopen on its split case).
+  const [lastDecision, setLastDecision] = useState<{
+    action: "same_as" | "distinct" | "flag_split";
+    caseId: string;
+    eventId: string;
+    personIds: number[];
+  } | null>(null);
+  // "One entry, two people?": the rule's candidates, or the entries reviewers
+  // have flagged (any span, newest first).
+  const [splitFacet, setSplitFacet] = useState<"to_check" | "flagged">("to_check");
   const beginDetailLoad = useLatest();
   // Queue loads overlap while someone types; only the latest reply may land.
   const beginListLoad = useLatest();
@@ -714,6 +784,7 @@ export default function People() {
     setPriorityBand(nextLane === "other_matches" ? "priority_1" : "All");
     setStranded(false);
     setStrandedAll(false);
+    setSplitFacet("to_check");
     setOffset(0);
     setShowPrimer(false);
     setLoading(true);
@@ -722,7 +793,7 @@ export default function People() {
     setEvidenceDrawer(null);
     setMobileQueueOpen(false);
     setMessage("");
-    setLastDecisionEventId(null);
+    setLastDecision(null);
     // Picking a lane means "show me this lane": a running search ends here.
     lastQueryRef.current = "";
     setQuery("");
@@ -738,6 +809,7 @@ export default function People() {
     setPriorityBand(nextLane === "other_matches" ? "priority_1" : "All");
     setStranded(false);
     setStrandedAll(false);
+    setSplitFacet("to_check");
     setOffset(0);
   };
 
@@ -760,6 +832,7 @@ export default function People() {
                 limit: pageSize,
                 stranded: lane === "other_matches" && stranded,
                 strandedScope: lane === "other_matches" && stranded && strandedAll ? "all" : undefined,
+                facet: lane === "possible_splits" && splitFacet === "flagged" ? "flagged" : undefined,
               },
         ),
       ]);
@@ -784,9 +857,9 @@ export default function People() {
     } finally {
       if (fresh()) setLoading(false);
     }
-  }, [beginListLoad, caseId, lane, navigate, offset, priorityBand, query, selected, stranded, strandedAll]);
+  }, [beginListLoad, caseId, lane, navigate, offset, priorityBand, query, selected, stranded, strandedAll, splitFacet]);
 
-  useEffect(() => { void reload(); }, [lane, priorityBand, offset, stranded, strandedAll]); // query: see below
+  useEffect(() => { void reload(); }, [lane, priorityBand, offset, stranded, strandedAll, splitFacet]); // query: see below
   // Live search: the queue reloads 400 ms after typing pauses (Enter still
   // fires at once). The refs keep the effect off `reload` itself, whose
   // identity changes with every keystroke.
@@ -842,6 +915,10 @@ export default function People() {
   const selectCase = useCallback((id: string) => {
     setDetail(null);
     setSelected(id);
+    // A message belongs to the case it was made on; `act` re-sets its own
+    // right after advancing, so only a hand-picked case drops it.
+    setMessage("");
+    setLastDecision(null);
     setRationale("");
     setScopeKey("");
     setPendingDecision(null);
@@ -897,43 +974,52 @@ export default function People() {
       const secondarySplit = action === "flag_split" && detail.kind !== "split";
       const decisionCaseId = action === "flag_split" && ids.length === 1 ? `split:${ids[0]}` : detail.case_id;
       const sameCase = decisionCaseId === detail.case_id;
+      // A flag from a pair page lands on the entry's own split case, which
+      // this page has not loaded: read its state first, so a re-flag after a
+      // lift is not refused as "changed" and a standing flag is named.
+      const target = sameCase ? detail : await loadPersonLinkageCase(decisionCaseId);
       const saved = await decidePersonLinkage(decisionCaseId, {
         reviewer: reviewer.trim(),
         action,
         person_ids: ids,
         reason_code: action === "defer" ? "needs_more_evidence" : "",
         rationale: rationale.trim(),
-        expected_status: sameCase ? detail.status : "open",
-        expected_event_id: sameCase ? detail.latest_event_id ?? null : null,
+        expected_status: target.status,
+        expected_event_id: target.latest_event_id ?? null,
         citations: selectedCitations,
         review_mode: detail.lane === "labeling_round" ? "blind_labeling" : "standard",
       });
-      setLastDecisionEventId(
-        ["same_as", "distinct"].includes(action) ? saved.event_id : null,
-      );
-      setMessage(
-        action === "same_as" ? "Linked as the same person. Both entries remain unchanged."
-          : action === "distinct" ? "Recorded as different people. No entry changed."
+      // The message names its own entries, so it still reads right when it
+      // sits above the next case after the queue advances.
+      const label = ids.map((id) => `#${id}`).join(" and ");
+      const message =
+        action === "same_as" ? `Linked ${label} as one person. The entries stay as entered.`
+          : action === "distinct" ? `Kept ${label} as different people.`
             : action === "flag_split" ? (
               secondarySplit
-                ? `Flagged person #${ids[0]} for split review. Please still decide this identity case.`
-                : "Flagged for a future appearance-by-appearance split review."
+                ? `Flagged ${label} as possibly two people. The pair is still open: answer it as well.`
+                : `Flagged ${label} as possibly two people. The entry stays as it is; the note is kept for later.`
             )
-              : action === "reopen" ? "Case reopened for review."
+              : action === "reopen" ? "Reopened; the case is back in its lane."
               : action === "bulk_rule_ack"
                 ? "Recorded that this rule version was sampled. Individual cases were not marked distinct."
-              : "Deferred until more evidence is available.",
-      );
+              : `Set ${label} aside with your note until someone reopens it.`;
       setRationale("");
       setPendingDecision(null);
       setSplitPersonId(null);
       setSelectedCitations([]);
       await reload();
-      if (secondarySplit) {
+      if (secondarySplit || action === "reopen") {
         setDetail(await loadPersonLinkageCase(detail.case_id));
       } else if (action !== "bulk_rule_ack" && nextCase && nextCase !== detail.case_id) {
         selectCase(nextCase);
       }
+      setMessage(message);
+      setLastDecision(
+        action === "same_as" || action === "distinct" || action === "flag_split"
+          ? { action, caseId: decisionCaseId, eventId: saved.event_id, personIds: ids }
+          : null,
+      );
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -960,20 +1046,75 @@ export default function People() {
       return;
     }
     if (pendingDecision === "flag_split" && splitPersonId === null) {
-      setError("Choose which entry may contain several people.");
+      setError("Choose which entry may hold two people.");
+      return;
+    }
+    if (pendingDecision === "flag_split" && !rationale.trim()) {
+      setError("Say which contracts seem to belong to someone else, and why.");
       return;
     }
     const ids = pendingDecision === "flag_split" ? [splitPersonId!] : scopedIds;
     void act(pendingDecision, ids);
   };
 
-  const undoDecision = async (eventId: string) => {
+  // Lifting a flag is a reopen posted against the flag's own case and event;
+  // the flag note stays in the history. Used by the chip under an entry and
+  // by the Undo on the message right after flagging.
+  const liftFlag = async (flag: { case_id: string; event_id: string; person_id: number }) => {
+    if (!reviewer.trim()) {
+      setError("Enter your initials before lifting a flag.");
+      return;
+    }
+    setBusy(true);
+    try {
+      localStorage.setItem(REVIEWER_KEY, reviewer.trim());
+      await decidePersonLinkage(flag.case_id, {
+        reviewer: reviewer.trim(),
+        action: "reopen",
+        person_ids: [flag.person_id],
+        reason_code: "",
+        rationale: "",
+        expected_status: "flag_split",
+        expected_event_id: flag.event_id,
+        citations: [],
+        review_mode: "standard",
+      });
+      setMessage(`Flag lifted from #${flag.person_id}. The note stays in the history.`);
+      setLastDecision(null);
+      await reload();
+      if (selected) setDetail(await loadPersonLinkageCase(selected));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Undo a link decision and put the case back in its lane in one click. The
+  // server records two notes, "undone" and "reopened"; if the second call
+  // fails the case waits under Decided with the existing reopen button.
+  const undoDecision = async (eventId: string, caseId: string, personIds: number[]) => {
     if (!reviewer.trim()) return;
     setBusy(true);
     try {
-      await revokePersonDecision(eventId, { reviewer: reviewer.trim(), reason: rationale.trim() });
-      setMessage("The entire identity decision was undone. Its audit history was kept.");
-      setLastDecisionEventId(null);
+      const undone = await revokePersonDecision(eventId, { reviewer: reviewer.trim(), reason: rationale.trim() });
+      try {
+        await decidePersonLinkage(caseId, {
+          reviewer: reviewer.trim(),
+          action: "reopen",
+          person_ids: personIds,
+          reason_code: "",
+          rationale: "",
+          expected_status: "revoked",
+          expected_event_id: undone.event_id,
+          citations: [],
+          review_mode: "standard",
+        });
+        setMessage("Decision undone; the case is back in its lane. Both steps are in the history.");
+      } catch {
+        setMessage("Decision undone. Press “Put back in the queue” in the history to reopen it.");
+      }
+      setLastDecision(null);
       await reload();
       if (selected) setDetail(await loadPersonLinkageCase(selected));
       setSummary(await loadPersonLinkageSummary());
@@ -982,6 +1123,19 @@ export default function People() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const undoLast = async () => {
+    if (!lastDecision) return;
+    if (lastDecision.action === "flag_split") {
+      await liftFlag({
+        case_id: lastDecision.caseId,
+        event_id: lastDecision.eventId,
+        person_id: lastDecision.personIds[0],
+      });
+      return;
+    }
+    await undoDecision(lastDecision.eventId, lastDecision.caseId, lastDecision.personIds);
   };
 
   const primaryPair = useMemo(() => {
@@ -1139,6 +1293,33 @@ export default function People() {
                 ) : null}
               </div>
             ) : null}
+            {lane === "possible_splits" && !searching ? (
+              <div className="pl-stranded pl-split-facet" role="group" aria-label="Which entries to list">
+                <div className="pl-split-facet-chips">
+                  <button
+                    type="button"
+                    className={splitFacet === "to_check" ? "pl-stranded-chip is-active" : "pl-stranded-chip"}
+                    aria-pressed={splitFacet === "to_check"}
+                    onClick={() => { setOffset(0); setSplitFacet("to_check"); }}
+                  >
+                    To check ({(summary?.lanes?.possible_splits ?? 0).toLocaleString()})
+                  </button>
+                  <button
+                    type="button"
+                    className={splitFacet === "flagged" ? "pl-stranded-chip is-active" : "pl-stranded-chip"}
+                    aria-pressed={splitFacet === "flagged"}
+                    onClick={() => { setOffset(0); setSplitFacet("flagged"); }}
+                  >
+                    Flagged ({(summary?.flagged_entries ?? 0).toLocaleString()})
+                  </button>
+                </div>
+                <small className="pl-stranded-help">
+                  {splitFacet === "flagged"
+                    ? "Entries a reviewer has flagged, newest first. Open one to read or lift the flag."
+                    : "Entries whose contracts span more than sixty years."}
+                </small>
+              </div>
+            ) : null}
           </form>
           <p className="pl-queue-count" aria-live="polite">
             {loading
@@ -1183,9 +1364,11 @@ export default function People() {
             // decision, an Other-possible-matches pair its priority, the rest
             // the name of the lane they sit in.
             const queueTag =
-              item.status && item.status !== "open"
-                ? item.status.replace(/_/g, " ")
-                : item.lane === "other_matches" && item.priority_band
+              item.flag
+                ? STATUS_LABEL.flag_split
+                : item.status && item.status !== "open"
+                  ? STATUS_LABEL[item.status] ?? item.status.replace(/_/g, " ")
+                  : item.lane === "other_matches" && item.priority_band
                   ? item.priority_band.replace(/_/g, " ")
                   : LANE_LABEL[item.lane] ?? "Review candidate";
             // Search results arrive sorted by lane; a heading opens each run.
@@ -1220,6 +1403,12 @@ export default function People() {
                       ? ` · ${item.career.combined_span_years}-year span`
                       : ""}
                   </small>
+                  {item.decided_by ? (
+                    <small className="pl-case-note">
+                      {item.decided_by} · {plainDate(item.decided_at)}
+                      {item.note ? ` · ${item.note}` : ""}
+                    </small>
+                  ) : null}
                 </button>
               </li>
               </Fragment>
@@ -1297,9 +1486,9 @@ export default function People() {
               {message ? (
                 <div className="notice success pl-decision-toast" role="status">
                   <span>{message}</span>
-                  {lastDecisionEventId ? (
-                    <button type="button" onClick={() => void undoDecision(lastDecisionEventId)}>
-                      Undo last decision
+                  {lastDecision ? (
+                    <button type="button" disabled={busy || !reviewer.trim()} onClick={() => void undoLast()}>
+                      Undo
                     </button>
                   ) : null}
                 </div>
@@ -1308,7 +1497,9 @@ export default function People() {
               <PersonMatrix
                 persons={detail.persons}
                 pair={primaryPair}
-                splitFlaggedPersonIds={detail.split_flagged_person_ids ?? []}
+                splitFlags={detail.split_flags ?? []}
+                busy={busy}
+                onLiftFlag={(flag) => void liftFlag(flag)}
               />
               <GroupPairMatrix detail={detail} scopeKey={scopeKey} onSelectScope={setScopeKey} />
               <section className="pl-primary-visual" aria-labelledby="pl-career-heading">
@@ -1418,14 +1609,20 @@ export default function People() {
                             : `Link ${scopedIds.length} entries as one reviewed identity`
                         ) : pendingDecision === "distinct" ? `Keep ${scopedIds.length} entries different`
                           : pendingDecision === "defer" ? "Not enough evidence"
-                            : pendingDecision === "flag_split" ? "Possible combined identity"
+                            : pendingDecision === "flag_split" ? "Flag as possibly two people"
                               : "Record inspected rule sample"}
                       </strong>
                       {scopeSummary && ["same_as", "distinct"].includes(pendingDecision) ? (
                         <small className="pl-decision-scope">{scopeSummary}</small>
                       ) : null}
                       <small className="pl-decision-scope">
-                        Writes a signed note that can be undone later; the entries themselves stay unchanged.
+                        {pendingDecision === "flag_split"
+                          ? "Keeps a signed note on the entry; you can lift it later. Nothing is split."
+                          : pendingDecision === "defer"
+                            ? "Sets the case aside with your note until someone reopens it."
+                            : pendingDecision === "bulk_rule_ack"
+                              ? "Records that you inspected a sample of this rule; no case is decided."
+                              : "Writes a signed note that can be undone later; the entries themselves stay unchanged."}
                       </small>
                     </div>
                     <button
@@ -1436,19 +1633,38 @@ export default function People() {
                       Cancel
                     </button>
                   </div>
-                  {pendingDecision === "flag_split" && detail.persons.length > 1 ? (
-                    <div className="pl-split-choices" role="group" aria-label="Entry that may contain several people">
-                      {detail.persons.map((person) => (
-                        <button
-                          className={splitPersonId === person.person_id ? "is-selected" : ""}
-                          key={person.person_id}
-                          onClick={() => setSplitPersonId(person.person_id)}
-                          type="button"
-                        >
-                          #{person.person_id} · {person.display_name}
-                        </button>
-                      ))}
-                    </div>
+                  {pendingDecision === "flag_split" ? (
+                    <>
+                      {detail.persons.length > 1 ? (
+                        <div className="pl-split-choices" role="group" aria-label="Which entry may hold two people">
+                          {detail.persons.map((person, index) => (
+                            <button
+                              autoFocus={index === 0}
+                              className={splitPersonId === person.person_id ? "is-selected" : ""}
+                              key={person.person_id}
+                              onClick={() => setSplitPersonId(person.person_id)}
+                              type="button"
+                            >
+                              #{person.person_id} · {person.display_name}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      <p className="pl-decision-caution">
+                        {detail.persons.length > 1 ? "Which entry? " : ""}
+                        Nothing is split now; the note is kept for a later split.
+                      </p>
+                    </>
+                  ) : null}
+                  {pendingDecision === "same_as"
+                    && (detail.split_flags ?? []).some((flag) => scopedIds.includes(flag.person_id)) ? (
+                    <p className="pl-decision-caution">
+                      {(detail.split_flags ?? [])
+                        .filter((flag) => scopedIds.includes(flag.person_id))
+                        .map((flag) => `#${flag.person_id}`)
+                        .join(" and ")}
+                      {" "}is flagged as possibly two people. Linking it attaches all its contracts to one person.
+                    </p>
                   ) : null}
                   {selectedCitations.length ? (
                     <div className="pl-selected-citations" aria-label="Attached source evidence">
@@ -1487,6 +1703,8 @@ export default function People() {
                       placeholder={
                         pendingDecision === "defer"
                           ? "What evidence is still needed? (required)"
+                          : pendingDecision === "flag_split"
+                            ? "Which contracts seem to belong to someone else, and why? (required)"
                           : pendingDecision === "same_as" && lane === "rule_exclusions"
                             ? "Why does the source override the career rule? (required)"
                             : "Rationale or source note (optional)"
@@ -1495,12 +1713,16 @@ export default function People() {
                     />
                     <button
                       className="pl-confirm-button"
-                      disabled={busy || !reviewer.trim()}
+                      disabled={
+                        busy
+                        || !reviewer.trim()
+                        || (["flag_split", "defer"].includes(pendingDecision) && !rationale.trim())
+                      }
                       onClick={confirmDecision}
                       type="button"
                     >
                       {busy ? "Saving…" : pendingDecision === "flag_split" && detail.kind !== "split"
-                        ? "Flag entry"
+                        ? "Flag with this note"
                         : pendingDecision === "flag_split"
                           ? "Flag and continue"
                           : pendingDecision === "bulk_rule_ack"
@@ -1544,7 +1766,7 @@ export default function People() {
                         </>
                       ) : (
                         <button className="is-split" onClick={() => chooseDecision("flag_split")} type="button">
-                          <span aria-hidden="true">⑂</span>Confirm possible split
+                          <span aria-hidden="true">⑂</span>Flag as possibly two people
                         </button>
                       )}
                       <button className="is-uncertain" onClick={() => chooseDecision("defer")} type="button">
@@ -1557,7 +1779,7 @@ export default function People() {
                         onClick={() => chooseDecision("flag_split")}
                         type="button"
                       >
-                        Flag one entry as possibly containing multiple people…
+                        Flag one entry as possibly two people…
                       </button>
                     ) : null}
                   </div>
@@ -1576,7 +1798,7 @@ export default function People() {
           busy={busy}
           onClose={() => setEvidenceDrawer(null)}
           onOpenSource={setSourceEntryId}
-          onUndo={(eventId) => void undoDecision(eventId)}
+          onUndo={(eventId) => void undoDecision(eventId, detail.case_id, detail.person_ids)}
           onReopen={() => void act("reopen")}
         />
       ) : null}

@@ -5263,6 +5263,23 @@ progress {
   width: max-content;
 }
 
+/* The yellow block's controls: open in People, initials, lift the flag. */
+.pl-identity-split-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pl-identity-split-actions .inline-editor-initials {
+  width: 76px;
+}
+
+.pl-identity-split-error {
+  color: #8a2f20;
+  margin: 0;
+}
+
 .pl-identity-id {
   background: none;
   border: 0;
@@ -6995,7 +7012,51 @@ progress {
   display: inline-flex;
   font-size: 0.65rem;
   font-weight: 700;
+  gap: 8px;
   padding: 5px 9px;
+}
+
+/* "Lift" inside the flag chip: the one-click way back, kept in the chip's own
+   colour so it reads as part of the note, not as a second action. */
+.pl-split-status button {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.pl-split-status button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* Third line of a Decided or Flagged row: initials · date · the note. */
+.pl-case .pl-case-note {
+  color: #a99a88;
+  display: block;
+  font-size: 0.64rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "One entry, two people?": the rule's candidates or the reviewers' flags. */
+.pl-split-facet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* A quiet line inside the dark confirmation panel: what the flag does, or a
+   warning before linking a flagged entry. */
+.pl-decision-caution {
+  color: #e9d3b8;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  margin: 0;
 }
 
 .pl-record-button:hover {

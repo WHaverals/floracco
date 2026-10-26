@@ -173,6 +173,8 @@ export type PersonIdentityHint = {
 export type PersonSplitFlag = {
   person_id: number;
   case_id: string;
+  /** The flag event; lifting the flag is a reopen posted against it. */
+  event_id: string;
   created_by: string;
   created_at: string;
   rationale: string | null;
@@ -280,6 +282,8 @@ export type PersonLinkageSummary = {
   run?: Record<string, string | number>;
   stale: PersonLinkageStale;
   lanes: Record<string, number>;
+  /** Standing split flags of any span (the Flagged chip's count). */
+  flagged_entries?: number;
   // Blind labeling round: whether the frozen packet file is deployed, and
   // whether it was built against an older suggestion cache (stale → unusable).
   labeling_packet_available?: boolean;
@@ -318,6 +322,11 @@ export type PersonLinkagePreview = {
   reasons: string[];
   status: "open" | "same_as" | "distinct" | "defer" | "flag_split" | "revoked";
   guard_status?: string;
+  /** Decided rows and flagged entries: who decided, when, and the note. */
+  decided_by?: string | null;
+  decided_at?: string | null;
+  note?: string | null;
+  flag?: PersonSplitFlag;
 };
 
 export type PersonLinkageCasesResponse = {
@@ -351,6 +360,9 @@ export type PersonLinkageCasesRequest = {
   /** "all" widens the facet past the review tier to every zero-appearance
    * pair, both-zero pairs included. Only meaningful alongside `stranded`. */
   strandedScope?: "all";
+  /** "One entry, two people?" only: list the entries reviewers have flagged
+   * instead of the rule's over-sixty-year candidates. */
+  facet?: "flagged";
 };
 
 export type PersonAppearance = {
@@ -511,6 +523,7 @@ export type PersonLinkageCase = {
     }>;
   };
   split_flagged_person_ids?: number[];
+  split_flags?: PersonSplitFlag[];
   active_links?: PersonReferenceLink[];
   history: PersonReviewEvent[];
   tier?: string | null;

@@ -1368,7 +1368,7 @@ export default function PersonLinkagePrimer() {
             </div>
             <div>
               <dt>One entry, two people?</dt>
-              <dd>Entries that may hold two people. They can be flagged, not split.</dd>
+              <dd>Entries that may hold two people. They can be flagged with a note, not split; your flags are listed here too.</dd>
             </div>
             <div>
               <dt>Decided</dt>
@@ -1409,7 +1409,7 @@ export default function PersonLinkagePrimer() {
                 </button>
               </div>
               <button className="pl-split-secondary" type="button" tabIndex={-1}>
-                Flag one entry as possibly containing multiple people…
+                Flag one entry as possibly two people…
               </button>
             </div>
           </div>
@@ -1428,9 +1428,12 @@ export default function PersonLinkagePrimer() {
             a reason, until someone reopens it.
           </li>
           <li>
-            <strong>Flag one entry as possibly containing multiple people.</strong>{" "}
-            Marks a single entry that may hold two people, like the
-            Guicciardini entry of the second section. Nothing is split.
+            <strong>Flag one entry as possibly two people.</strong>{" "}
+            Marks a single entry that may hold two men, like the Guicciardini
+            entry above, with a note saying where the seam is. Nothing is
+            split; your flags are listed under &ldquo;One entry, two
+            people?&rdquo; and on the entry&rsquo;s page, and you can lift
+            them.
           </li>
         </ul>
         <p className="pl-primer-note">

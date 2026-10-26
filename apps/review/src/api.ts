@@ -165,6 +165,7 @@ export function loadPersonLinkageCases(
     // Scope only travels with the facet — alone it would mean nothing server-side.
     if (opts.strandedScope) params.set("stranded_scope", opts.strandedScope);
   }
+  if (opts.facet) params.set("facet", opts.facet);
   return request(`/api/person-linkage/cases?${params.toString()}`);
 }
 

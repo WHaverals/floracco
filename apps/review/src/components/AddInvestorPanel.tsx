@@ -262,8 +262,8 @@ export default function AddInvestorPanel({
             {pickedPerson.identity_hint?.split_flagged ? (
               <div className="pl-identity-split">
                 <p>
-                  Flagged as possibly containing several people — attaching another appearance would make a fused
-                  row worse.
+                  This entry is flagged as possibly two people. Adding another contract to it would make that
+                  worse; read the flag first.
                 </p>
               </div>
             ) : (

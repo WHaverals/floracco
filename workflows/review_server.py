@@ -3611,10 +3611,69 @@ def _person_split_flag(
     return {
         "person_id": wanted,
         "case_id": str(event.get("case_id") or f"split:{wanted}"),
+        "event_id": str(event.get("event_id") or ""),
         "created_by": event.get("created_by") or "",
         "created_at": event.get("created_at") or "",
         "rationale": event.get("rationale") or "",
     }
+
+
+def _person_standing_split_flags(latest: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every entered row with a standing flag, newest flag first.
+
+    The same scan `_person_split_flag` makes for one row, run once over the
+    latest events for all of them. A flag stands while its event is still the
+    latest on its case; a reopen (lifting the flag) clears it. This is what
+    the Flagged facet, the Decided lane and the Database worklist list — the
+    review of 2026-10-25 found a flag disappeared from every list the moment
+    it was written.
+    """
+    flags: dict[int, dict[str, Any]] = {}
+    for event in latest.values():
+        if event.get("action") != "flag_split":
+            continue
+        for value in event.get("person_ids") or []:
+            flag = _person_split_flag(latest, int(value))
+            if flag:
+                flags[int(value)] = flag
+    return sorted(
+        flags.values(),
+        key=lambda item: (str(item["created_at"]), str(item["event_id"])),
+        reverse=True,
+    )
+
+
+def _plain_date(iso: str) -> str:
+    """'2026-09-03T16:05:39+00:00' → '3 Sep 2026', for a sentence a reviewer reads."""
+    try:
+        parsed = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return str(iso)[:10]
+    return f"{parsed.day} {parsed.strftime('%b %Y')}"
+
+
+def _split_case_ids(latest: dict[str, dict[str, Any]]) -> list[int]:
+    """Entered rows that have a split case of their own in the event history."""
+    ids: list[int] = []
+    for case_id in latest:
+        if case_id.startswith("split:") and case_id.removeprefix("split:").isdigit():
+            ids.append(int(case_id.removeprefix("split:")))
+    return ids
+
+
+def _with_decision_meta(
+    preview: dict[str, Any], event: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Who decided, when, and the note — on Decided rows and flagged entries.
+
+    A reopen is not a decision: a case whose latest event is a reopen is open
+    again and shows no decision line.
+    """
+    if event and event.get("action") != "reopen":
+        preview["decided_by"] = event.get("created_by") or ""
+        preview["decided_at"] = event.get("created_at") or ""
+        preview["note"] = event.get("rationale") or ""
+    return preview
 
 
 def _person_identity_suppressed_case_ids(
@@ -3937,6 +3996,11 @@ def person_linkage_summary() -> dict[str, Any]:
                 lane = _person_group_preview(group_map[case_id], pair_by_key)["lane"]
             elif case_id in split_map:
                 lane = "possible_splits"
+            elif case_id.startswith("split:"):
+                # A flagged entry outside the rule's candidates: decided, but
+                # never part of the To-check count, so nothing to subtract.
+                decided += 1
+                continue
             elif case_id.startswith("pair:"):
                 row = cache.execute(
                     "SELECT * FROM person_pair_suggestion WHERE pair_key=?",
@@ -3958,6 +4022,8 @@ def person_linkage_summary() -> dict[str, Any]:
         "labeling_packet_stale": bool(packet_rows)
         and not _person_labeling_packet_matches_run(packet_rows, run),
         "lanes": dict(lane_counts),
+        # Standing flags of any span: the count behind the Flagged chip.
+        "flagged_entries": len(_person_standing_split_flags(latest)),
         "decisions": {
             "active_links": len(links),
             "same_as": sum(link["rel"] == "same_as" for link in links),
@@ -4032,6 +4098,76 @@ def _person_split_previews() -> list[dict[str, Any]]:
         connection.close()
 
 
+def _person_split_previews_for(person_ids: list[int]) -> dict[str, dict[str, Any]]:
+    """Split-case previews for given entered rows, whatever their span.
+
+    `_person_split_previews` lists the rule's candidates (a living span over
+    sixty years). A flagged entry can be any row, including one that appears
+    in no contract, so this builder takes ids and LEFT JOINs the appearances.
+    """
+    wanted = sorted({int(value) for value in person_ids})
+    if not wanted:
+        return {}
+    connection = open_db()
+    try:
+        marks = ",".join("?" for _ in wanted)
+        rows = connection.execute(
+            f"""
+            SELECT p.person_id, p.first_name, p.father_mother, p.grandfather,
+                   p.last_name, p.nickname,
+                   MIN(CASE WHEN COALESCE(i.heirs_of,0)=0
+                             AND c.registration_date NOT IN ('', '0000-00-00')
+                            THEN CAST(substr(c.registration_date,1,4) AS INTEGER) END) AS first_year,
+                   MAX(CASE WHEN COALESCE(i.heirs_of,0)=0
+                             AND c.registration_date NOT IN ('', '0000-00-00')
+                            THEN CAST(substr(c.registration_date,1,4) AS INTEGER) END) AS last_year,
+                   COUNT(c.contract_id) AS appearances
+            FROM person p
+            LEFT JOIN investor i ON i.person_id=p.person_id AND i.is_deleted=0
+            LEFT JOIN contract c ON c.contract_id=i.contract_id AND c.is_deleted=0
+            WHERE p.person_id IN ({marks}) AND p.is_deleted=0
+            GROUP BY p.person_id
+            """,
+            wanted,
+        ).fetchall()
+    finally:
+        connection.close()
+    previews: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        first_year, last_year = row["first_year"], row["last_year"]
+        span = (
+            int(last_year) - int(first_year)
+            if first_year is not None and last_year is not None
+            else None
+        )
+        previews[f"split:{row['person_id']}"] = {
+            "case_id": f"split:{row['person_id']}",
+            "kind": "split",
+            "person_ids": [int(row["person_id"])],
+            "names": [
+                person_display_name(
+                    row["first_name"],
+                    row["last_name"],
+                    row["nickname"],
+                    row["father_mother"],
+                    row["grandfather"],
+                )
+            ],
+            "lane": "possible_splits",
+            "tier": "career_span",
+            "source": "rule",
+            "score_band": None,
+            "match_probability": None,
+            "career": {
+                "first_year": first_year,
+                "last_year": last_year,
+                "combined_span_years": span,
+            },
+            "reasons": [],
+        }
+    return previews
+
+
 @app.get("/api/person-linkage/cases")
 def person_linkage_cases(
     lane: str = "likely_duplicates",
@@ -4040,6 +4176,7 @@ def person_linkage_cases(
     q: str = "",
     stranded: int = 0,
     stranded_scope: str = "",
+    facet: str = "",
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> dict[str, Any]:
@@ -4160,6 +4297,34 @@ def person_linkage_cases(
             return False
         return matches_query(case)
 
+    if lane == "possible_splits" and facet == "flagged":
+        # The reviewer's own flags, newest first, whatever the entry's span.
+        # Status is deliberately not filtered: a flag is the row's reason to
+        # be here, and the row shows who wrote it, when, and the note.
+        flags = _person_standing_split_flags(latest)
+        previews = _person_split_previews_for([int(flag["person_id"]) for flag in flags])
+        flagged: list[dict[str, Any]] = []
+        for flag in flags:
+            preview = previews.get(f"split:{flag['person_id']}")
+            if not preview:
+                continue
+            preview["status"] = _person_case_status(preview, parent, distinct, latest)
+            _with_decision_meta(preview, flag)
+            preview["flag"] = flag
+            if matches_query(preview):
+                flagged.append(preview)
+        cache.close()
+        return {
+            "available": True,
+            "run": run,
+            "stale": _person_cache_stale(run),
+            "total": len(flagged),
+            "offset": offset,
+            "cases": flagged[offset : offset + limit],
+            "reserved_for_labeling": 0,
+            "facet": "flagged",
+        }
+
     if lane == "all":
         # One search across every lane: the box finds a person or a number
         # wherever its cases sit, and the client groups the results under lane
@@ -4223,7 +4388,17 @@ def person_linkage_cases(
                 preview["lane"] = "likely_duplicates"
             if matches_query(preview) and is_open(preview):
                 found.append(preview)
-        for split_case in _person_split_previews():
+        rule_splits = _person_split_previews()
+        for split_case in rule_splits:
+            if matches_query(split_case) and is_open(split_case):
+                found.append(split_case)
+        # An entry with a split history of its own but no span to list it
+        # under the rule (a lifted flag) stays findable, so its note is not
+        # lost: it opens under "One entry, two people?" with its history.
+        listed_splits = {case["case_id"] for case in rule_splits}
+        for case_id, split_case in _person_split_previews_for(_split_case_ids(latest)).items():
+            if case_id in listed_splits:
+                continue
             if matches_query(split_case) and is_open(split_case):
                 found.append(split_case)
         # 3. Open pairs in the pair lanes, one query over the whole table; the
@@ -4248,7 +4423,7 @@ def person_linkage_cases(
         # 4. Decided cases of every kind, under Decided, so a search for a
         #    person also shows what has already been settled about them.
         group_map = {group["case_id"]: group for group in groups}
-        split_map = {case["case_id"]: case for case in _person_split_previews()}
+        split_map = _person_split_previews_for(_split_case_ids(latest))
         for case_id in latest:
             if case_id in group_map:
                 preview = _person_group_preview(group_map[case_id], pair_by_key)
@@ -4266,7 +4441,7 @@ def person_linkage_cases(
                 continue
             if matches_query(preview) and not is_open(preview):
                 preview["lane"] = "decided"
-                found.append(preview)
+                found.append(_with_decision_meta(preview, latest.get(case_id)))
         cache.close()
         rank = {name: index for index, name in enumerate(_PERSON_LANE_ORDER)}
         found.sort(
@@ -4342,7 +4517,9 @@ def person_linkage_cases(
 
     if lane == "decided":
         group_map = {group["case_id"]: group for group in groups}
-        split_map = {case["case_id"]: case for case in _person_split_previews()}
+        # Every decided split case, flagged entries of any span included —
+        # not only the rule's over-sixty-year candidates.
+        split_map = _person_split_previews_for(_split_case_ids(latest))
         cases: list[dict[str, Any]] = []
         for case_id in latest:
             if case_id in group_map:
@@ -4360,9 +4537,10 @@ def person_linkage_cases(
             else:
                 continue
             if keep_preview(preview):
-                cases.append(preview)
+                cases.append(_with_decision_meta(preview, latest.get(case_id)))
         cache.close()
-        cases.sort(key=lambda case: tuple(case.get("person_ids") or []))
+        # Newest decision first: "what did I just do" is the question here.
+        cases.sort(key=lambda case: str(case.get("decided_at") or ""), reverse=True)
         return {
             "available": True,
             "run": run,
@@ -4930,11 +5108,12 @@ def _person_case_payload(case_id: str) -> dict[str, Any]:
             if int(link["from_id"]) in ids or int(link["to_id"]) in ids
         ]
         history = corrections_db.person_review_events(clog, case_id=case_id)
-        split_flagged_person_ids = [
-            person_id
-            for person_id in ids
-            if _person_split_flag(latest, person_id)
+        split_flags = [
+            flag
+            for flag in (_person_split_flag(latest, person_id) for person_id in ids)
+            if flag
         ]
+        split_flagged_person_ids = [int(flag["person_id"]) for flag in split_flags]
     finally:
         clog.close()
     case_status = _person_case_status(
@@ -4982,6 +5161,8 @@ def _person_case_payload(case_id: str) -> dict[str, Any]:
         "shared_contracts": contracts,
         "business_context": business_context,
         "split_flagged_person_ids": split_flagged_person_ids,
+        # Who flagged, when, why, and the event to lift it with (a reopen).
+        "split_flags": split_flags,
         "active_links": links,
         "history": history,
         "status": case_status,
@@ -5128,6 +5309,13 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
             status_code=400,
             detail="Explain what evidence is still needed before deferring this case.",
         )
+    if action.action == "flag_split" and not action.rationale.strip():
+        # A flag changes nothing by itself; the note is its whole content and
+        # what a later split starts from.
+        raise HTTPException(
+            status_code=400,
+            detail="Say which contracts seem to belong to someone else, and why.",
+        )
     case = _person_case_payload(case_id)
     clog = open_corrections()
     try:
@@ -5163,6 +5351,18 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
         raise HTTPException(
             status_code=400,
             detail="Explain why the reviewed source overrides the career-conflict rule.",
+        )
+    if action.action == "flag_split" and case["status"] == "flag_split":
+        # Flagging an already-flagged entry used to fall through to the
+        # "case changed, reload" conflict below, which is false and alarming.
+        prior = latest.get(case_id) or {}
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Already flagged by {prior.get('created_by') or 'a reviewer'} on "
+                f"{_plain_date(str(prior.get('created_at') or ''))}. "
+                "Open the entry to read or lift the flag."
+            ),
         )
     if action.action != "bulk_rule_ack" and (
         action.expected_status != case["status"]
@@ -7169,17 +7369,97 @@ def _attach_flag_meta(connection: sqlite3.Connection, items: list[dict[str, Any]
         f["meta"] = meta.get((f["table"], str(f["pk"])), "")
 
 
+PERSON_SPLIT_GROUP_META = {
+    "label": "Flagged as possibly two people",
+    "severity": "medium",
+    "explanation": (
+        "A reviewer flagged this entry in People as possibly holding two different "
+        "people, with a note on where the seam is. Nothing has been split. Read the "
+        "note, then the contracts; lift the flag from the entry's page if it is wrong."
+    ),
+}
+
+
+def _person_split_flag_items(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Needs-review items for every standing split flag.
+
+    The first worklist group that reads the op-log rather than `main.db`:
+    read-only, a handful of rows, and the one place outside People where a
+    flag can be found by whoever later has to act on it.
+    """
+    if not person_linkage_enabled():
+        return []
+    clog = open_corrections()
+    try:
+        latest = _latest_person_events(clog)
+    finally:
+        clog.close()
+    flags = _person_standing_split_flags(latest)
+    if not flags:
+        return []
+    marks = ",".join("?" for _ in flags)
+    names = {
+        int(row["person_id"]): person_display_name(
+            row["first_name"],
+            row["last_name"],
+            row["nickname"],
+            row["father_mother"],
+            row["grandfather"],
+        )
+        for row in connection.execute(
+            "SELECT person_id, first_name, father_mother, grandfather, last_name, nickname "
+            f"FROM person WHERE person_id IN ({marks}) AND is_deleted=0",
+            [int(flag["person_id"]) for flag in flags],
+        )
+    }
+    items: list[dict[str, Any]] = []
+    for flag in flags:
+        person_id = int(flag["person_id"])
+        if person_id not in names:
+            continue
+        note = str(flag["rationale"] or "").strip()
+        items.append(
+            {
+                # The event id in the key: a lifted and later re-flagged entry
+                # is a new item, so an old dismissal cannot hide it.
+                "key": f"person:{person_id}:person_split_flagged:{flag['event_id']}",
+                "group": "person_split_flagged",
+                "table": "person",
+                "pk": str(person_id),
+                "title": (
+                    f"{names[person_id]} — {flag['created_by'] or 'a reviewer'}, "
+                    f"{_plain_date(str(flag['created_at']))}"
+                    + (f": {note}" if note else "")
+                ),
+                "severity": PERSON_SPLIT_GROUP_META["severity"],
+                "explanation": PERSON_SPLIT_GROUP_META["explanation"],
+                "fix": {"kind": "identity"},
+            }
+        )
+    return items
+
+
 @app.get("/api/db/flags")
 def db_flags() -> dict[str, Any]:
     dismissed = dismissed_flag_keys()
     connection = open_db()
     try:
-        items = data_quality.flags(connection) + _word_date_flags(connection) + jewish_review.flags(connection)
+        items = (
+            data_quality.flags(connection)
+            + _word_date_flags(connection)
+            + jewish_review.flags(connection)
+            + _person_split_flag_items(connection)
+        )
         items = [f for f in items if f["key"] not in dismissed]
         _attach_flag_meta(connection, items)
     finally:
         connection.close()
-    meta_lookup = {**data_quality.GROUP_META, **jewish_review.GROUP_META, "word_date_differs": WORD_DATE_GROUP_META}
+    meta_lookup = {
+        **data_quality.GROUP_META,
+        **jewish_review.GROUP_META,
+        "word_date_differs": WORD_DATE_GROUP_META,
+        "person_split_flagged": PERSON_SPLIT_GROUP_META,
+    }
     groups: dict[str, dict[str, Any]] = {}
     for f in items:
         meta = meta_lookup[f["group"]]

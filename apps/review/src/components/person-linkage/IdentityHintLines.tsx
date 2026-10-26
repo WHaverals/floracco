@@ -5,7 +5,7 @@ export default function IdentityHintLines({ hint }: { hint?: PersonIdentityHint 
   if (!hint) return null;
   const lines: { text: string; split?: boolean }[] = [];
   if (hint.split_flagged) {
-    lines.push({ text: "Flagged as possibly containing several people", split: true });
+    lines.push({ text: "Flagged: possibly two people in one entry", split: true });
   }
   if (hint.linked_count > 1) {
     lines.push({ text: `Reviewed identity family · ${hint.linked_count} entered records` });

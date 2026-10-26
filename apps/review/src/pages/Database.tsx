@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   addPlace,
+  decidePersonLinkage,
   dismissFlag,
   editPlaceAddress,
   hideRecord,
@@ -49,6 +50,7 @@ import type {
   DbRelink,
   DbSearchResult,
   PersonIdentityHint,
+  PersonSplitFlag,
 } from "../types";
 
 // Word summaries are frozen provenance attached to DB records; the statuses
@@ -78,7 +80,7 @@ function identityHintKind(hint?: PersonIdentityHint): "split" | "family" | "wait
 }
 
 function identityHintLabel(kind: ReturnType<typeof identityHintKind>): string {
-  if (kind === "split") return "Flagged as possibly containing several people";
+  if (kind === "split") return "Flagged: possibly two people in one entry";
   if (kind === "family") return "Reviewed identity family";
   if (kind === "waiting") return "Possible related records awaiting review";
   return "";
@@ -86,7 +88,90 @@ function identityHintLabel(kind: ReturnType<typeof identityHintKind>): string {
 
 function formatIdentityWhen(iso: string): string {
   if (!iso) return "";
-  return iso.slice(0, 16).replace("T", " ");
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/* The yellow block on a flagged person: who flagged it, when, the note, and
+   the two things a reviewer can do about it — read it in People, or lift it
+   here with their initials. Lifting is a reopen on the flag's own case; the
+   note stays in the history. */
+function SplitFlagBlock({
+  flag,
+  reviewer,
+  onReviewerChange,
+  onOpenIdentity,
+  onLifted,
+}: {
+  flag: PersonSplitFlag;
+  reviewer: string;
+  onReviewerChange: (value: string) => void;
+  onOpenIdentity: (caseId: string) => void;
+  onLifted: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const lift = async () => {
+    if (!reviewer.trim()) {
+      setError("Initials needed to lift the flag.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      localStorage.setItem("floracco_reviewer", reviewer.trim());
+      await decidePersonLinkage(flag.case_id, {
+        reviewer: reviewer.trim(),
+        action: "reopen",
+        person_ids: [flag.person_id],
+        reason_code: "",
+        rationale: "",
+        expected_status: "flag_split",
+        expected_event_id: flag.event_id,
+        citations: [],
+        review_mode: "standard",
+      });
+      onLifted();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const note = (flag.rationale ?? "").trim();
+  return (
+    <div className="pl-identity-split">
+      <p>
+        Possibly two people in one entry — flagged by {flag.created_by || "a reviewer"}
+        {flag.created_at ? ` on ${formatIdentityWhen(flag.created_at)}` : ""}
+        {note ? <>: &ldquo;{note}&rdquo;</> : "."}
+      </p>
+      <div className="pl-identity-split-actions">
+        <button type="button" className="pill-button" onClick={() => onOpenIdentity(flag.case_id)}>
+          Open in People →
+        </button>
+        <input
+          className="inline-editor-initials"
+          aria-label="Your initials"
+          placeholder="Initials"
+          value={reviewer}
+          onChange={(event) => onReviewerChange(event.target.value)}
+          disabled={busy}
+        />
+        <button
+          type="button"
+          className="pill-button"
+          disabled={busy || !reviewer.trim()}
+          onClick={() => void lift()}
+          title="Lift this flag; the note stays in the history"
+        >
+          {busy ? "Lifting…" : "Lift this flag"}
+        </button>
+      </div>
+      {error ? <p className="pl-identity-split-error">{error}</p> : null}
+    </div>
+  );
 }
 
 export default function Database() {
@@ -2142,7 +2227,7 @@ function RecordDetail({
           <div className="db-block-head">
             <h3>Reviewed identity</h3>
             {record.identity_status.split_flags && record.identity_status.split_flags.length > 0 ? (
-              <span className="status-chip status-review">Possibly several people</span>
+              <span className="status-chip status-review">Possibly two people</span>
             ) : record.identity_status.person_ids.length > 1 ? (
               <span className="status-chip status-strong">
                 {record.identity_status.person_ids.length} entered records linked
@@ -2150,22 +2235,14 @@ function RecordDetail({
             ) : null}
           </div>
           {(record.identity_status.split_flags ?? []).map((flag) => (
-            <div className="pl-identity-split" key={flag.case_id}>
-              <p>
-                Flagged as possibly containing several people
-                {flag.created_by || flag.created_at ? " — " : ""}
-                {[flag.created_by, formatIdentityWhen(flag.created_at)].filter(Boolean).join(", ")}
-                {flag.rationale ? `: ${flag.rationale}` : ""}
-                {flag.rationale && flag.rationale.endsWith(".") ? "" : "."}
-              </p>
-              <button
-                type="button"
-                className="pill-button"
-                onClick={() => onOpenIdentity(flag.case_id)}
-              >
-                Review this record in People →
-              </button>
-            </div>
+            <SplitFlagBlock
+              key={flag.event_id || flag.case_id}
+              flag={flag}
+              reviewer={reviewer}
+              onReviewerChange={onReviewerChange}
+              onOpenIdentity={onOpenIdentity}
+              onLifted={onRefresh}
+            />
           ))}
           {record.identity_status.person_ids.length > 1 ? (
             <p>
