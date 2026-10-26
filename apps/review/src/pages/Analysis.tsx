@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import CopyLinkButton from "../components/CopyLinkButton";
 import { loadAnalysisLibrary, runAnalysisBuild, runAnalysisLibrary } from "../api";
 import { useLatest } from "../utils/latest";
 import { roleLabel } from "../utils/roles";
@@ -360,16 +361,68 @@ function ResultView({
 
 type SpecFilter = { field: string; value: string };
 
+/* What the page shows lives in the address (UI review 2026-10-14, #44), so a
+ * question can be linked to and Back returns to it: /analysis/<query id>,
+ * /analysis/build?subject=…&measure=…&group=…&<filter>=<value>…, and
+ * /analysis/console?sql=<the SQL that last ran>. Picking a query or a tab adds a
+ * history step; builder changes and console runs replace the current one. */
+const RESERVED = ["subject", "measure", "group"];
+const MAX_LINK_LENGTH = 6000; // longer console links are not offered (request-size limits)
+
+function builderSearch(subject: Subject, measure: string, group: string, filters: SpecFilter[]): string {
+  const query = new URLSearchParams();
+  if (subject !== "contracts") query.set("subject", subject);
+  if (measure !== "count") query.set("measure", measure);
+  if (measure !== "list" && group) query.set("group", group);
+  for (const f of filters) query.append(f.field, f.value);
+  return query.toString();
+}
+
+/** A builder link read back against today's lists; anything unknown is left out and named. */
+function parseBuilder(search: string) {
+  const query = new URLSearchParams(search);
+  const dropped: string[] = [];
+  const subjectRaw = query.get("subject");
+  const subject: Subject = SUBJECTS.some((s) => s.key === subjectRaw) ? (subjectRaw as Subject) : "contracts";
+  if (subjectRaw && subjectRaw !== subject) dropped.push(`subject “${subjectRaw}”`);
+  const measures = MEASURES[subject].filter((m) => m.key !== "distinct_people_reviewed" || !isToolHidden("people"));
+  const measureRaw = query.get("measure");
+  const measure = measures.some((m) => m.key === measureRaw) ? (measureRaw as string) : "count";
+  if (measureRaw && measureRaw !== measure) dropped.push(`measure “${measureRaw}”`);
+  const groupRaw = query.get("group");
+  const group = GROUPS[subject].some((g) => g.key === groupRaw) ? (groupRaw as string) : "";
+  if (groupRaw && groupRaw !== group) dropped.push(`grouping “${groupRaw}”`);
+  const filters: SpecFilter[] = [];
+  for (const [key, value] of query.entries()) {
+    if (RESERVED.includes(key)) continue;
+    const def = FILTER_DEFS[subject].find((d) => d.key === key);
+    if (def) filters.push({ field: key, value: def.value ? value : "" });
+    else dropped.push(`filter “${key}”`);
+  }
+  return { subject, measure, group, filters, dropped };
+}
+
+function consolePath(sql: string): string {
+  return `/analysis/console?${new URLSearchParams({ sql }).toString()}`;
+}
+
 const SAMPLE_SQL = "SELECT cu.currency, COUNT(*) AS contracts, ROUND(AVG(CAST(c.total AS REAL))) AS avg_capital\nFROM contract c JOIN currency cu ON cu.currency_id = c.currency_id\nWHERE c.is_deleted = 0 AND c.total GLOB '[0-9]*'\nGROUP BY cu.currency_id\nORDER BY contracts DESC";
 
 export default function Analysis() {
-  const [mode, setMode] = useState<"library" | "builder" | "console">("library");
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { view } = useParams<{ view?: string }>();
+  const mode: "library" | "builder" | "console" = view === "build" ? "builder" : view === "console" ? "console" : "library";
+  const selectedId = mode === "library" ? (view ?? null) : null;
 
   // library state
   const [queries, setQueries] = useState<AnalysisQuery[]>([]);
   const [libraryFailed, setLibraryFailed] = useState(false);
   const [libraryAttempt, setLibraryAttempt] = useState(0);
-  const [selected, setSelected] = useState<AnalysisQuery | null>(null);
+  const selected = useMemo(
+    () => (selectedId ? (queries.find((q) => q.id === selectedId) ?? null) : null),
+    [selectedId, queries],
+  );
   const [libResult, setLibResult] = useState<AnalysisResult | null>(null);
   const beginLib = useLatest();
   const beginBuild = useLatest();
@@ -384,25 +437,77 @@ export default function Analysis() {
   const [buildResult, setBuildResult] = useState<{ result: AnalysisResult; chart: AnalysisChart; sql: string } | null>(null);
   const [buildError, setBuildError] = useState("");
 
+  const [dropped, setDropped] = useState<string[]>([]);
+
   // console state
   const [sqlText, setSqlText] = useState(SAMPLE_SQL);
   const [consoleResult, setConsoleResult] = useState<AnalysisResult | null>(null);
   const [consoleError, setConsoleError] = useState("");
   const [consoleRunning, setConsoleRunning] = useState(false);
-  const runConsole = () => {
+  const [ranSql, setRanSql] = useState(""); // the SQL behind the result (and its link), not the edited text
+  const beginConsole = useLatest();
+
+  // Where each tab was, so switching tabs returns there (and the address follows).
+  const builderWritten = useRef<string | null>(null);
+  const consoleWritten = useRef<string | null>(null);
+  const lastLibrary = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedId) lastLibrary.current = selectedId;
+  }, [selectedId]);
+
+  const runConsole = (sql: string, fromLink = false) => {
+    const fresh = beginConsole();
     setConsoleRunning(true);
     setConsoleError("");
-    runAnalysisLibrary(sqlText)
+    if (!fromLink) {
+      const path = consolePath(sql);
+      if (path.length <= MAX_LINK_LENGTH) {
+        consoleWritten.current = path.slice("/analysis/console?".length);
+        navigate(path, { replace: true });
+      } else {
+        consoleWritten.current = ""; // too long to carry: the address must not keep an older query
+        navigate("/analysis/console", { replace: true });
+      }
+    }
+    runAnalysisLibrary(sql)
       .then((r) => {
+        if (!fresh()) return;
         setConsoleResult(r);
+        setRanSql(sql);
         setConsoleError("");
       })
       .catch((e: Error) => {
+        if (!fresh()) return;
         setConsoleError(e.message);
         setConsoleResult(null);
       })
-      .finally(() => setConsoleRunning(false));
+      .finally(() => fresh() && setConsoleRunning(false));
   };
+
+  // Read a link (or Back/Forward) into the builder or the console. Our own
+  // address updates are remembered, so they never re-read themselves.
+  const search = location.search.replace(/^\?/, "");
+  useEffect(() => {
+    if (mode === "builder" && search !== builderWritten.current) {
+      const spec = parseBuilder(search);
+      setSubject(spec.subject);
+      setMeasure(spec.measure);
+      setGroup(spec.group);
+      setFilters(spec.filters);
+      setDropped(spec.dropped);
+      builderWritten.current = builderSearch(spec.subject, spec.measure, spec.group, spec.filters);
+    }
+    if (mode === "console" && search !== consoleWritten.current) {
+      consoleWritten.current = search;
+      const sql = new URLSearchParams(search).get("sql");
+      if (sql) {
+        setSqlText(sql);
+        runConsole(sql, true);
+      }
+    }
+    // runConsole is recreated each render; the address is the only trigger here
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, search]);
 
   useEffect(() => {
     setLibraryFailed(false);
@@ -411,15 +516,21 @@ export default function Analysis() {
       .catch(() => setLibraryFailed(true)); // shown in the rail, where the library would be
   }, [libraryAttempt]);
 
+  const ranFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || ranFor.current === selected.id) return;
+    ranFor.current = selected.id;
     setLibRunning(true);
     setError("");
     setLibResult(null);
     const fresh = beginLib();
     runAnalysisLibrary(selected.sql)
       .then((r) => fresh() && setLibResult(r))
-      .catch((e: Error) => fresh() && setError(e.message))
+      .catch((e: Error) => {
+        if (!fresh()) return;
+        setError(e.message);
+        ranFor.current = null; // reopening the query tries again
+      })
       .finally(() => fresh() && setLibRunning(false));
   }, [selected, beginLib]);
 
@@ -428,6 +539,18 @@ export default function Analysis() {
     const def = filterDefs.find((d) => d.key === f.field);
     return def?.value && !f.value.trim();
   });
+
+  // The builder's address follows its controls (replacing the current entry).
+  const currentBuild = builderSearch(subject, measure, group, filters);
+  useEffect(() => {
+    if (mode !== "builder" || currentBuild === builderWritten.current) return;
+    const handle = window.setTimeout(() => {
+      builderWritten.current = currentBuild;
+      setDropped([]);
+      navigate(`/analysis/build${currentBuild ? `?${currentBuild}` : ""}`, { replace: true });
+    }, 350);
+    return () => window.clearTimeout(handle);
+  }, [mode, currentBuild, navigate]);
 
   // auto-run the builder (debounced) whenever the spec is complete
   useEffect(() => {
@@ -472,13 +595,30 @@ export default function Analysis() {
         <div className="db-rail-head">
           <p className="eyebrow">Analysis</p>
           <div className="db-tabs an-mode">
-            <button type="button" className={mode === "library" ? "db-tab is-active" : "db-tab"} onClick={() => setMode("library")}>
+            <button
+              type="button"
+              className={mode === "library" ? "db-tab is-active" : "db-tab"}
+              onClick={() => mode !== "library" && navigate(lastLibrary.current ? `/analysis/${lastLibrary.current}` : "/analysis")}
+            >
               Library
             </button>
-            <button type="button" className={mode === "builder" ? "db-tab is-active" : "db-tab"} onClick={() => setMode("builder")}>
+            <button
+              type="button"
+              className={mode === "builder" ? "db-tab is-active" : "db-tab"}
+              onClick={() =>
+                mode !== "builder" && navigate(`/analysis/build${builderWritten.current ? `?${builderWritten.current}` : ""}`)
+              }
+            >
               Build a query
             </button>
-            <button type="button" className={mode === "console" ? "db-tab is-active" : "db-tab"} onClick={() => setMode("console")}>
+            <button
+              type="button"
+              className={mode === "console" ? "db-tab is-active" : "db-tab"}
+              onClick={() =>
+                mode !== "console" &&
+                navigate(`/analysis/console${consoleWritten.current ? `?${consoleWritten.current}` : ""}`)
+              }
+            >
               SQL console
             </button>
           </div>
@@ -491,7 +631,11 @@ export default function Analysis() {
                 <ul>
                   {items.map((q) => (
                     <li key={q.id}>
-                      <button type="button" className={selected?.id === q.id ? "an-query is-active" : "an-query"} onClick={() => setSelected(q)}>
+                      <button
+                        type="button"
+                        className={selectedId === q.id ? "an-query is-active" : "an-query"}
+                        onClick={() => selectedId !== q.id && navigate(`/analysis/${q.id}`)}
+                      >
                         <span className="an-query-title">{q.title}</span>
                         <span className="an-query-desc muted">{q.description}</span>
                       </button>
@@ -530,7 +674,27 @@ export default function Analysis() {
 
       <section className="db-detail">
         {mode === "library" ? (
-          !selected ? (
+          selectedId && !selected ? (
+            <div className="an-empty">
+              <p className="eyebrow">Analysis</p>
+              {queries.length === 0 ? (
+                libraryFailed ? (
+                  <p className="error-text an-note">
+                    The query library could not be loaded, so this query cannot be shown yet. Use Try again in the list.
+                  </p>
+                ) : (
+                  <p className="muted an-note">Loading…</p>
+                )
+              ) : (
+                <>
+                  <h2>This query is not in the library</h2>
+                  <p className="muted an-note">
+                    The link asks for “{selectedId}”, which may have been renamed or removed. Pick a query from the list.
+                  </p>
+                </>
+              )}
+            </div>
+          ) : !selected ? (
             <div className="an-empty">
               <p className="eyebrow">Analysis</p>
               <h2>Ask a question of the corpus</h2>
@@ -541,8 +705,16 @@ export default function Analysis() {
             </div>
           ) : (
             <div className="an-result">
-              <p className="eyebrow">{selected.group}</p>
-              <h2>{selected.title}</h2>
+              <div className="page-head">
+                <div>
+                  <p className="eyebrow">{selected.group}</p>
+                  <h2>{selected.title}</h2>
+                </div>
+                <CopyLinkButton
+                  path={`/analysis/${selected.id}`}
+                  title="Copy a link to this query, to send or to reopen later. It runs on the current data when opened."
+                />
+              </div>
               <p className="muted an-note">{selected.description}</p>
               {selected.notes && <p className="an-notes">{selected.notes}</p>}
               {error && <p className="error-text">{error}</p>}
@@ -554,7 +726,18 @@ export default function Analysis() {
           )
         ) : mode === "builder" ? (
           <div className="an-result">
-            <p className="eyebrow">Build a query</p>
+            <div className="page-head">
+              <p className="eyebrow">Build a query</p>
+              <CopyLinkButton
+                path={`/analysis/build${currentBuild ? `?${currentBuild}` : ""}`}
+                title="Copy a link to this question, to send or to reopen later. It runs on the current data when opened."
+              />
+            </div>
+            {dropped.length > 0 && (
+              <p className="muted an-note">
+                Part of this link no longer matches the query builder and was left out: {dropped.join(", ")}.
+              </p>
+            )}
             <div className="an-builder">
               <div className="an-sentence">
                 <span>Show</span>
@@ -631,8 +814,19 @@ export default function Analysis() {
           </div>
         ) : (
           <div className="an-result">
-            <p className="eyebrow">SQL console</p>
-            <h2>Read-only SQL</h2>
+            <div className="page-head">
+              <div>
+                <p className="eyebrow">SQL console</p>
+                <h2>Read-only SQL</h2>
+              </div>
+              {ranSql && consoleResult && !consoleRunning && (
+                <CopyLinkButton
+                  path={consolePath(ranSql)}
+                  title="Copy a link that runs this SQL, to send or to reopen later. It runs on the current data when opened."
+                  disabledReason={consolePath(ranSql).length > MAX_LINK_LENGTH ? "Too long to share as a link" : undefined}
+                />
+              )}
+            </div>
             <p className="muted an-note">
               For anything the builder can't express. <strong>SELECT</strong> / <strong>WITH</strong> only —
               the connection is opened read-only, so writes are impossible; multiple statements and any
@@ -646,18 +840,18 @@ export default function Analysis() {
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                   e.preventDefault();
-                  runConsole();
+                  runConsole(sqlText);
                 }
               }}
             />
             <div className="an-toolbar">
-              <button type="button" className="pill-button is-primary" onClick={runConsole} disabled={consoleRunning || !sqlText.trim()}>
+              <button type="button" className="pill-button is-primary" onClick={() => runConsole(sqlText)} disabled={consoleRunning || !sqlText.trim()}>
                 {consoleRunning ? "Running…" : "Run query"}
               </button>
             </div>
             {consoleError && <p className="error-text">{consoleError}</p>}
             {consoleResult && !consoleRunning && (
-              <ResultView result={consoleResult} chart="none" sql={sqlText} csvName="query.csv" />
+              <ResultView result={consoleResult} chart="none" sql={ranSql} csvName="query.csv" />
             )}
           </div>
         )}

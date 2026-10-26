@@ -854,22 +854,40 @@ export type WordEntryDetail = {
   images: WordEntryImage[];
 };
 
-export type ChangeHistoryEvent = { event: string; at: string; by: string; note: string | null };
-
-export type ChangeHistoryItem = {
-  request_id: string;
-  op: string; // update | relink | create | delete | restore
+/** One line of a record's change history, worded by the server: one user action
+ * (which may have written several rows), or a Needs-review "Not an issue". */
+export type HistoryEntry = {
+  id: string;
+  kind: "edit" | "added" | "removed" | "restored" | "created" | "hidden" | "dismissed";
+  /** Contract, Sub-contract, Person entry, Partner, Stake, Place, Needs review. */
+  tag: string;
+  /** Whom or what the line is about when it is not the record itself. */
+  subject: string | null;
+  link: { kind: "person" | "contract" | "sub_contract" | "place"; id: string } | null;
+  /** An edit: the field's label and its values as the page shows them (null = empty). */
   field: string | null;
-  before_value: unknown;
-  after_value: unknown;
-  /** Present on re-pointed lookups: the phrase each logged id names (null = none). */
-  before_display?: string | null;
-  after_display?: string | null;
-  status: string; // applied | reverted | conflict | proposed | ...
+  before: string | null;
+  after: string | null;
+  /** Repeated saves of one field merged into one line: every value in order. */
+  chain: (string | null)[] | null;
+  edits: number;
+  /** Anything that is not a field edit: "added as general partner, 500". */
+  text: string | null;
+  detail: string | null;
+  by: string;
+  at: string;
   reason: string | null;
-  created_by: string;
-  created_at: string;
-  events: ChangeHistoryEvent[];
+  source: string | null;
+  status: "applied" | "conflict" | "mixed";
+  status_note: string | null;
+  undone: { by: string | null; at: string | null } | null;
+  request_ids: string[];
+};
+
+export type RecordHistory = {
+  entries: HistoryEntry[];
+  /** The record's own creation on the platform (the provenance banner). */
+  created: { by: string; at: string; source: string | null; reason: string | null } | null;
 };
 
 export type DbRecord = {
@@ -894,7 +912,7 @@ export type DbRecord = {
   word_sources_note?: string | null;
   is_deleted?: boolean;
   dependents?: Record<string, number>;
-  change_history?: ChangeHistoryItem[];
+  history?: RecordHistory;
   identity_status?: {
     available: boolean;
     person_ids: number[];

@@ -29,6 +29,8 @@ import DbFilters from "../components/DbFilters";
 import InlineFieldEditor from "../components/InlineFieldEditor";
 import ManuscriptLightbox from "../components/ManuscriptLightbox";
 import PersonPicker, { type PersonPick } from "../components/PersonPicker";
+import RecordHistory, { historyDay } from "../components/RecordHistory";
+import CopyLinkButton from "../components/CopyLinkButton";
 import WordSourceDrawer from "../components/WordSourceDrawer";
 import WordSummaryInline from "../components/WordSummaryInline";
 import { manuscriptImageCaption } from "../utils/manuscriptImages";
@@ -43,7 +45,6 @@ import {
 import { ROLE_LABELS, roleLabel } from "../utils/roles";
 import { isToolHidden } from "../features";
 import type {
-  ChangeHistoryItem,
   DbBrowseTable,
   DbEditableCell,
   DbFacets,
@@ -526,6 +527,15 @@ export default function Database() {
   const [dismissSaving, setDismissSaving] = useState(false);
   const [undoBusy, setUndoBusy] = useState(false);
   const [flagActionError, setFlagActionError] = useState("");
+  // A decision about the open record also adds a line to its change history.
+  const reloadAfterFlag = useCallback(
+    (key: string) => {
+      const [flagTable, flagPk] = key.split(":");
+      if (flagTable === routeTable && flagPk === routeId) refreshRecord();
+      else loadFlagsNow();
+    },
+    [routeTable, routeId, refreshRecord, loadFlagsNow],
+  );
   const openDismiss = useCallback((key: string | null) => {
     if (!confirmDiscard("worklist-dismiss")) return;
     setFlagActionError("");
@@ -544,9 +554,9 @@ export default function Database() {
       }
       setDismissingKey((k) => (k === flag.key ? null : k));
       setLastDismissed({ key: flag.key, title: flag.title, reviewer });
-      loadFlagsNow();
+      reloadAfterFlag(flag.key);
     },
-    [loadFlagsNow],
+    [reloadAfterFlag],
   );
   const undoDismiss = useCallback(() => {
     if (!lastDismissed || undoBusy) return;
@@ -556,19 +566,19 @@ export default function Database() {
     restoreFlag(key, { reviewer })
       .then(() => {
         setLastDismissed((cur) => (cur?.key === key ? null : cur));
-        loadFlagsNow();
+        reloadAfterFlag(key);
       })
       .catch((err: Error & { status?: number }) => {
         if (err.status === 409) {
           // Already back (a retried Undo whose first reply was lost): show the list as it is.
           setLastDismissed((cur) => (cur?.key === key ? null : cur));
-          loadFlagsNow();
+          reloadAfterFlag(key);
           return;
         }
         setFlagActionError(`The item could not be brought back: ${err.message}`);
       })
       .finally(() => setUndoBusy(false));
-  }, [lastDismissed, undoBusy, loadFlagsNow]);
+  }, [lastDismissed, undoBusy, reloadAfterFlag]);
   // Opening another record, another item of the same record or leaving the
   // worklist closes an open confirmation, so the leave question about a typed
   // reason is true.
@@ -976,36 +986,6 @@ export default function Database() {
     </div>
   );
 }
-
-/** One Change-history line in the reviewer's words: the field's on-page label,
- * Yes/No for yes/no fields, the phrase (not its number) for a re-pointed lookup. */
-function historyLabel(item: ChangeHistoryItem, fields: DbField[]): string {
-  if (item.op === "delete") return "Hidden";
-  if (item.op === "restore") return "Restored";
-  if (item.op === "create") return "Created";
-  if (item.op !== "update" && item.op !== "relink") return "Changed";
-  if (item.field === "document") return "Narrative edited";
-  const field = fields.find((f) => (f.column ?? f.relink?.field) === item.field);
-  const label = field?.label ?? (item.field ?? "").replaceAll("_", " ");
-  const show = (raw: unknown, display: string | null | undefined): string => {
-    if (display !== undefined) return display ?? "(empty)";
-    const text = raw == null ? "" : String(raw);
-    if (text.trim() === "") return "(empty)";
-    if (field?.input_type === "bool") return proposedLabel(text, "bool");
-    if (text === "0000-00-00") return "not recorded";
-    return text;
-  };
-  return `${label}: ${show(item.before_value, item.before_display)} → ${show(item.after_value, item.after_display)}`;
-}
-
-/** Change-history statuses other than "applied", in plain words. */
-const HISTORY_STATUS: Record<string, string> = {
-  reverted: "undone",
-  conflict: "not in effect: the value had changed before it could be applied",
-  proposed: "proposed, not applied",
-  approved: "approved, not applied",
-  rejected: "rejected",
-};
 
 function partnerChipLabel(c: NonNullable<DbEditableCell["correction"]>, column: string): string {
   const shown = column === "type" ? roleLabel(c.proposed_value) : (c.proposed_value ?? "");
@@ -2346,10 +2326,12 @@ function RecordDetail({
   // that stake; the key remounts the panel so the preset takes effect.
   const [attachInvestmentId, setAttachInvestmentId] = useState<string | null>(null);
   const [investorMessage, setInvestorMessage] = useState("");
-  const history = record.change_history ?? [];
+  const historyEntries = record.history?.entries ?? [];
+  const lastChange = historyEntries.find((entry) => entry.kind !== "dismissed") ?? null;
   // A DB-native row was created on the platform after the Word-corpus freeze:
-  // its provenance is the create op's source line, not a Word summary.
-  const createdOp = history.find((item) => item.op === "create");
+  // its provenance is its own create op's source line, not a Word summary
+  // (never a partner or stake created on it).
+  const created = record.history?.created ?? null;
   const hasSubSection = record.sections.some((s) => s.title.startsWith("Sub-contracts"));
   const manuscriptImages = record.manuscript_images ?? [];
   const documentEditable = !record.is_deleted && (record.table === "contract" || record.table === "sub_contract");
@@ -2431,6 +2413,7 @@ function RecordDetail({
       ? [{ id: "rec-wordctx", label: "Word & manuscript" }]
       : []),
     ...(manuscriptImages.length > 0 ? [{ id: "rec-manuscript", label: "Manuscript" }] : []),
+    ...(historyEntries.length > 0 ? [{ id: "rec-history", label: `Changes (${historyEntries.length})` }] : []),
   ];
 
   return (
@@ -2442,7 +2425,24 @@ function RecordDetail({
             {record.title}
             {record.is_deleted && <span className="db-hidden-badge">Hidden</span>}
           </h2>
+          {historyEntries.length > 0 && (
+            <p className="db-record-changed muted">
+              {lastChange ? `Last changed ${historyDay(lastChange.at)} by ${lastChange.by} · ` : ""}
+              <button
+                type="button"
+                className="link-like"
+                onClick={() =>
+                  document.getElementById("rec-history")?.scrollIntoView({ behavior: "smooth", block: "start" })
+                }
+              >
+                Change history ({historyEntries.length})
+              </button>
+            </p>
+          )}
         </div>
+        <div className="db-record-head-actions">
+        {/* A clean link: never the ?review / ?fix worklist state. */}
+        <CopyLinkButton path={`/database/${record.table}/${record.id}`} title="Copy a link to this record, to send or to reopen later" />
         {!record.is_deleted && (
           <details className="db-actions">
             <summary>Hide this record…</summary>
@@ -2479,6 +2479,7 @@ function RecordDetail({
             </div>
           </details>
         )}
+        </div>
       </header>
 
       {actionMessage && <div className="notice success">{actionMessage}</div>}
@@ -2845,11 +2846,10 @@ function RecordDetail({
               ))}
             </div>
           )}
-          {record.table !== "person" && record.word_sources.length === 0 && createdOp && (
+          {record.table !== "person" && record.word_sources.length === 0 && created && (
             <p className="db-native-provenance muted">
-              Added directly to the database by <strong>{createdOp.created_by}</strong> ·{" "}
-              {createdOp.created_at.slice(0, 10)}
-              {createdOp.reason ? <> · {createdOp.reason}</> : null} — no Word summary exists for
+              Added directly to the database by <strong>{created.by}</strong> · {historyDay(created.at)}
+              {created.source ? <> · source: {created.source}</> : null} — no Word summary exists for
               this record (the Word corpus is frozen); this narrative is its primary text.
             </p>
           )}
@@ -2924,22 +2924,8 @@ function RecordDetail({
         </section>
       )}
 
-      {history.length > 0 && (
-        <section className="db-block db-history">
-          <h3>Change history</h3>
-          <ul className="db-history-list">
-            {history.map((item) => (
-              <li key={item.request_id} className={`db-history-item op-${item.op} status-${item.status}`}>
-                <span className="db-history-op">{historyLabel(item, record.fields)}</span>
-                <span className="db-history-meta">
-                  {item.created_by} · {item.created_at.slice(0, 16).replace("T", " ")}
-                  {item.status !== "applied" ? ` · ${HISTORY_STATUS[item.status] ?? item.status}` : ""}
-                </span>
-                {item.reason && <span className="db-history-reason">“{item.reason}”</span>}
-              </li>
-            ))}
-          </ul>
-        </section>
+      {historyEntries.length > 0 && (
+        <RecordHistory key={record.row_id} entries={historyEntries} table={record.table} />
       )}
 
       {manuscriptPath && (

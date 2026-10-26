@@ -86,7 +86,10 @@ export default function App() {
           <Route path="/people" element={isToolHidden("people") ? NOT_IN_PILOT : <People />} />
           <Route path="/people/:caseId" element={isToolHidden("people") ? NOT_IN_PILOT : <People />} />
           <Route path="/reference" element={isToolHidden("reference") ? NOT_IN_PILOT : <Reference />} />
+          <Route path="/reference/:kind" element={isToolHidden("reference") ? NOT_IN_PILOT : <Reference />} />
+          <Route path="/reference/:kind/:termId" element={isToolHidden("reference") ? NOT_IN_PILOT : <Reference />} />
           <Route path="/analysis" element={isToolHidden("analysis") ? NOT_IN_PILOT : <Analysis />} />
+          <Route path="/analysis/:view" element={isToolHidden("analysis") ? NOT_IN_PILOT : <Analysis />} />
           <Route path="*" element={<ComingSoon title="Page not found" blurb="That route does not exist." />} />
         </Routes>
         </ErrorBoundary>

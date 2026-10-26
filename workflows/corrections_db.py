@@ -14,10 +14,13 @@ Design: docs/workflows/db_corrections_design.md
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import sqlite3
 import uuid
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -158,6 +161,23 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# One user action (one write request) can log several operations: adding a
+# partner logs the person, the stake, the partner and the link between them.
+# Inside action_scope() every operation's first event carries the same run_id
+# ("action-…"), so the record pages can show the action as one line. Only the
+# event's run_id is used; the request rows and the replay are unchanged.
+_ACTION_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar("floracco_action_id", default=None)
+
+
+@contextmanager
+def action_scope() -> Iterator[str]:
+    token = _ACTION_ID.set(f"action-{uuid.uuid4().hex}")
+    try:
+        yield _ACTION_ID.get() or ""
+    finally:
+        _ACTION_ID.reset(token)
+
+
 def pk_json(pk: dict[str, Any]) -> str:
     """Stable JSON for a (possibly composite) primary key."""
     return json.dumps({k: pk[k] for k in sorted(pk)}, separators=(",", ":"))
@@ -208,6 +228,7 @@ def record_operation(
                 )
     request_id = str(uuid.uuid4())
     at = now_iso()
+    run_id = run_id or _ACTION_ID.get()  # an explicit run_id (apply-…, replay-…) wins
     with conn:
         conn.execute(
             """INSERT INTO change_request
@@ -273,6 +294,43 @@ def history_for_row(conn: sqlite3.Connection, db_table: str, pk: dict[str, Any])
         item["after_value"] = _dec_for(item["op"], item.get("after_value"))
         item["events"] = [dict(e) for e in events]
         out.append(item)
+    return out
+
+
+def history_for_rows(conn: sqlite3.Connection, targets: dict[str, Iterable[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """All operations on the given rows ({db_table: [pk, …]}), oldest first, each
+    with its event trail, `run_id` (its first event's) and `first_event_id` (the
+    tie-break when two operations share a timestamp). Uses ix_request_target."""
+    out: list[dict[str, Any]] = []
+    for db_table, pks in targets.items():
+        keys = sorted({pk_json(pk) for pk in pks})
+        for start in range(0, len(keys), 500):
+            chunk = keys[start : start + 500]
+            marks = ",".join("?" * len(chunk))
+            out.extend(
+                dict(row)
+                for row in conn.execute(
+                    f"SELECT * FROM change_request WHERE db_table=? AND pk IN ({marks})", (db_table, *chunk)
+                )
+            )
+    events: dict[str, list[dict[str, Any]]] = {}
+    ids = [item["request_id"] for item in out]
+    for start in range(0, len(ids), 500):
+        chunk = ids[start : start + 500]
+        marks = ",".join("?" * len(chunk))
+        for row in conn.execute(
+            f"SELECT event_id, request_id, event, at, by, run_id, note FROM change_event "
+            f"WHERE request_id IN ({marks}) ORDER BY event_id",
+            chunk,
+        ):
+            events.setdefault(row["request_id"], []).append(dict(row))
+    for item in out:
+        item["before_value"] = _dec_for(item["op"], item.get("before_value"))
+        item["after_value"] = _dec_for(item["op"], item.get("after_value"))
+        item["events"] = events.get(item["request_id"], [])
+        item["run_id"] = item["events"][0]["run_id"] if item["events"] else None
+        item["first_event_id"] = item["events"][0]["event_id"] if item["events"] else 0
+    out.sort(key=lambda item: (item["created_at"], item["first_event_id"]))
     return out
 
 

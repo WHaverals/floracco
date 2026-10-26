@@ -22,7 +22,7 @@ import time
 import unicodedata
 import uuid
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache, wraps
 from pathlib import Path
 from typing import Any
@@ -498,7 +498,8 @@ def serialized_write(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
-            with locks.write_lock():
+            # One request = one user action: every operation it logs shares a run_id.
+            with locks.write_lock(), corrections_db.action_scope():
                 return func(*args, **kwargs)
         except locks.WriteLockBusy:
             raise HTTPException(
@@ -2778,6 +2779,9 @@ def db_reference_records(
     try:
         row = connection.execute(f"SELECT {name_col} AS v FROM {table} WHERE {id_col} = ?", (term_id,)).fetchone()
         value = row["v"] if row else ""
+        if not (value or "").strip():
+            # A link to a term that is gone (or a blank row): the page says so.
+            raise HTTPException(status_code=404, detail="This term is not in the list.")
         cids: set[int] = set()
         if kind == "place":
             for r in connection.execute(
@@ -6407,38 +6411,816 @@ def db_record(table: str, record_id: str, include_hidden: bool = False) -> dict[
         record["is_deleted"] = bool(flag and flag["is_deleted"])
         clog = open_corrections()
         try:
-            history = corrections_db.history_for_row(clog, table, {col: int(record_id)})
+            # Resolved while main.db is open: names, phrases and stakes are read here.
+            record["history"] = record_history(connection, clog, table, record_id)
         finally:
             clog.close()
-        # Resolved while main.db is open: a re-pointed lookup is logged as row ids.
-        record["change_history"] = history_for_reading(connection, table, history)
     finally:
         connection.close()
     return record
 
 
-def history_for_reading(
-    connection: sqlite3.Connection, table: str, items: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Change-history items for reading. A re-pointed lookup (currency, economic
-    activity, title, place) is logged as row ids; add before_display/after_display
-    with the verbatim phrase each id names. None means no value; an id with no
-    lookup row reads "not in the list" (the broken-link case Needs review flags).
-    The op-log itself is unchanged."""
-    for item in items:
-        kind = RELINK_FIELDS.get((table, item.get("field") or ""))
-        if item.get("op") not in ("update", "relink") or not kind:
-            continue
+# ---- Record change history ---------------------------------------------------
+# A record page lists every logged change that concerns it, not only changes to
+# its own row (UI review 2026-10-14; LOG 2026-10-27). A contract: its own row,
+# its partners (removed ones too), their stakes and stake links, its places, the
+# arrival, hiding and restoring of its sub-contracts, and its partners' person
+# entries while they are partners on it. A person: their entry, their
+# appearances on contracts and the stakes they hold. A sub-contract: its own row.
+# "Not an issue" decisions from Needs review show as quiet lines. Pure reading:
+# the op-log is never changed. One user action (several rows) reads as one line.
+
+# Labels for columns that are not in CORRECTABLE_FIELDS (the page builders name
+# them inline: relink fields, the editorial attribution, a place's address).
+HISTORY_LABELS: dict[tuple[str, str], str] = {
+    ("contract", "economic_sector"): "Economic activity",
+    ("contract", "currency_id"): "Currency",
+    ("investor", "title"): "Title",
+    ("investor", "title_father_mother"): "Father/mother's title",
+    ("investor", "title_grandfather"): "Grandfather's title",
+    ("investor", "title_husband"): "Husband's title",
+    ("investor", "place_of_residence"): "Place of residence",
+    ("investor", "place_of_origin"): "Place of origin",
+    ("investor", "jewish_db"): "Jewish — editorial attribution",
+    ("contract_place", "address"): "Address",
+}
+# Reasons the server or the editor writes by itself: not shown as a quoted reason.
+_MACHINE_REASONS = {"Edited directly on the record page.", "Cleared on the record page.", "added a place", "relink", "revert"}
+_MACHINE_REASON_PREFIXES = ("is_joint re-derived", "joint stake gained a partner")
+_ACTION_GAP_SECONDS = 2.0  # older operations of one action are 11–17 ms apart; separate actions ≥ 8.7 s
+_MERGE_EDITS_SECONDS = 600  # repeated saves of one field within 10 minutes read as one line
+
+
+def _history_time(value: Any) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _reader_reason(reason: Any) -> tuple[str | None, str | None]:
+    """(reason a person typed, provenance line) from a logged reason."""
+    text = str(reason or "").strip()
+    if not text or text in _MACHINE_REASONS or text.startswith(_MACHINE_REASON_PREFIXES):
+        return None, None
+    for prefix in ("added partner on contract", "added investor on contract"):
+        if text.startswith(prefix):
+            _, _, note = text.partition("; ")
+            return (note.strip() or None), None
+    if text.startswith("created with contract"):
+        text = text.partition("; ")[2].strip()
+    if text.startswith("source:"):
+        return None, text[len("source:"):].strip() or None
+    return text, None
+
+
+def _history_field_label(table: str, field: str | None) -> str:
+    if not field:
+        return ""
+    spec = CORRECTABLE_FIELDS.get(table, {}).get(field)
+    if spec:
+        return spec["label"]
+    return HISTORY_LABELS.get((table, field), field.replace("_", " "))
+
+
+def _history_value(connection: sqlite3.Connection, table: str, field: str | None, raw: Any) -> str | None:
+    """A logged value as the page shows it: Yes/No, the phrase (not its number),
+    role words, "not recorded" for the placeholder date; None for empty."""
+    if raw is None or str(raw).strip() == "":
+        return None
+    text = str(raw)
+    kind = RELINK_FIELDS.get((table, field or ""))
+    if kind:
+        if text in ("0", "0.0"):
+            return None
         meta = LOOKUP_KINDS[kind]
-        for side in ("before", "after"):
-            raw = item.get(f"{side}_value")
-            if raw in (None, "", "0", 0):
-                item[f"{side}_display"] = None
+        return lookup_value(connection, meta["table"], meta["id"], raw, meta["value"]) or "not in the list"
+    spec = CORRECTABLE_FIELDS.get(table, {}).get(field or "", {})
+    if spec.get("input_type") == "bool" or (table, field) == ("investor", "jewish_db"):
+        return "Yes" if text.strip().lower() in ("1", "true", "yes") else "No"
+    if (table, field) == ("investment", "type"):
+        return data_quality.ROLE_WORDS.get(text, text)
+    if text == "0000-00-00":
+        return "not recorded"
+    return text
+
+
+def _cash_text(value: Any) -> str:
+    if value is None or str(value).strip() == "":
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _role_text(code: Any, cash: Any) -> str:
+    """'external investor (accomandante), 6000' — role in prose with its capital."""
+    role = data_quality.ROLE_WORDS.get(str(code or ""), str(code or "")).lower()
+    cash_text = _cash_text(cash)
+    return ", ".join(part for part in (role, cash_text) if part)
+
+
+def _pk_value(op: dict[str, Any], column: str) -> int | None:
+    try:
+        return int(json.loads(op["pk"]).get(column))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+class _HistoryScope:
+    """What one record page gathers, plus the names its lines need. Rows are read
+    in any state (hidden, removed, created on the platform)."""
+
+    def __init__(
+        self, connection: sqlite3.Connection, table: str, record_id: str, clog: sqlite3.Connection | None = None
+    ) -> None:
+        self.connection = connection
+        self.clog = clog
+        self.table = table
+        self.record_id = int(record_id)
+        self.targets: dict[str, list[dict[str, int]]] = {}
+        self.investors: dict[int, dict[str, Any]] = {}  # investor_id -> person_id, contract_id, is_deleted
+        self.investments: dict[int, dict[str, Any]] = {}  # investment_id -> contract_id, type, cash
+        self.links: list[tuple[int, int, int]] = []  # (investor_id, investment_id, is_deleted)
+        self.sub_contracts: dict[int, dict[str, Any]] = {}
+        self.person_windows: dict[int, tuple[datetime | None, datetime | None] | None] = {}
+        self._persons: dict[int, str] = {}
+        self._contracts: dict[int, str] = {}
+        own_column = PRIMARY_KEY_COLUMN[table]
+        self.targets[table] = [{own_column: self.record_id}]
+        if table == "contract":
+            self._gather_contract()
+        elif table == "person":
+            self._gather_person()
+
+    def _rows(self, sql: str, params: tuple[Any, ...]) -> list[sqlite3.Row]:
+        return self.connection.execute(sql, params).fetchall()
+
+    def _gather_links(self, investor_ids: list[int], investment_ids: list[int]) -> None:
+        seen: set[tuple[int, int]] = set()
+        for column, ids in (("investor_id", investor_ids), ("investment_id", investment_ids)):
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                if not chunk:
+                    continue
+                marks = ",".join("?" * len(chunk))
+                for row in self._rows(
+                    f"SELECT investor_id, investment_id, is_deleted FROM investor_group WHERE {column} IN ({marks})",
+                    tuple(chunk),
+                ):
+                    key = (int(row["investor_id"]), int(row["investment_id"]))
+                    if key not in seen:
+                        seen.add(key)
+                        self.links.append((key[0], key[1], int(row["is_deleted"] or 0)))
+        self.targets["investor_group"] = [{"investor_id": a, "investment_id": b} for a, b, _ in self.links]
+
+    def _gather_contract(self) -> None:
+        cid = self.record_id
+        for row in self._rows(
+            "SELECT investor_id, person_id, contract_id, is_deleted FROM investor WHERE contract_id = ?", (cid,)
+        ):
+            self.investors[int(row["investor_id"])] = dict(row)
+        for row in self._rows(
+            "SELECT investment_id, contract_id, type, investment_cash, is_deleted FROM investment WHERE contract_id = ?",
+            (cid,),
+        ):
+            self.investments[int(row["investment_id"])] = dict(row)
+        self._gather_links(list(self.investors), list(self.investments))
+        self.targets["investor"] = [{"investor_id": i} for i in self.investors]
+        self.targets["investment"] = [{"investment_id": i} for i in self.investments]
+        self.targets["contract_place"] = [
+            {"contract_id": cid, "place_id": int(row["place_id"])}
+            for row in self._rows("SELECT place_id FROM contract_place WHERE contract_id = ?", (cid,))
+        ]
+        for row in self._rows(
+            "SELECT contract_id, sub_type FROM sub_contract WHERE main_contract_id = ?", (cid,)
+        ):
+            self.sub_contracts[int(row["contract_id"])] = dict(row)
+        self.targets["sub_contract"] = [{"contract_id": i} for i in self.sub_contracts]
+        persons = sorted({int(r["person_id"]) for r in self.investors.values() if r["person_id"] is not None})
+        self.targets["person"] = [{"person_id": p} for p in persons]
+
+    def _gather_person(self) -> None:
+        pid = self.record_id
+        for row in self._rows(
+            "SELECT investor_id, person_id, contract_id, is_deleted FROM investor WHERE person_id = ?", (pid,)
+        ):
+            self.investors[int(row["investor_id"])] = dict(row)
+        self._gather_links(list(self.investors), [])
+        stake_ids = sorted({b for a, b, _ in self.links if a in self.investors})
+        for start in range(0, len(stake_ids), 500):
+            chunk = stake_ids[start : start + 500]
+            marks = ",".join("?" * len(chunk))
+            for row in self._rows(
+                f"SELECT investment_id, contract_id, type, investment_cash, is_deleted FROM investment "
+                f"WHERE investment_id IN ({marks})",
+                tuple(chunk),
+            ):
+                self.investments[int(row["investment_id"])] = dict(row)
+        self.targets["investor"] = [{"investor_id": i} for i in self.investors]
+        self.targets["investment"] = [{"investment_id": i} for i in self.investments]
+
+    # -- names ------------------------------------------------------------------
+    def person_name(self, person_id: Any) -> str:
+        try:
+            pid = int(person_id)
+        except (TypeError, ValueError):
+            return "an unnamed person"
+        if pid not in self._persons:
+            row = self.connection.execute(
+                "SELECT first_name, last_name, nickname, father_mother, grandfather FROM person WHERE person_id = ?",
+                (pid,),
+            ).fetchone()
+            self._persons[pid] = (
+                person_display_name(row["first_name"], row["last_name"], row["nickname"], row["father_mother"], row["grandfather"])
+                if row
+                else f"person entry #{pid}"
+            )
+        return self._persons[pid]
+
+    def contract_label(self, contract_id: Any) -> str:
+        try:
+            cid = int(contract_id)
+        except (TypeError, ValueError):
+            return "a contract"
+        if cid not in self._contracts:
+            row = self.connection.execute(
+                "SELECT firm_name, registration_date FROM contract WHERE contract_id = ?", (cid,)
+            ).fetchone()
+            firm = (row["firm_name"] or "").strip() if row else ""
+            date = display_date(row["registration_date"]) if row else ""
+            self._contracts[cid] = firm or (f"contract {cid} ({date})" if date else f"contract {cid}")
+        return self._contracts[cid]
+
+    def investor_person(self, investor_id: Any) -> int | None:
+        try:
+            iid = int(investor_id)
+        except (TypeError, ValueError):
+            return None
+        if iid not in self.investors:
+            row = self.connection.execute(
+                "SELECT investor_id, person_id, contract_id, is_deleted FROM investor WHERE investor_id = ?", (iid,)
+            ).fetchone()
+            if not row:
+                return None
+            self.investors[iid] = dict(row)
+        person = self.investors[iid].get("person_id")
+        return int(person) if person is not None else None
+
+    def stake_holders(self, investment_id: int, *, exclude: int | None = None) -> list[str]:
+        names: list[str] = []
+        for investor_id, stake_id, _deleted in self.links:
+            if stake_id == investment_id and investor_id != exclude:
+                person = self.investor_person(investor_id)
+                name = self.person_name(person)
+                if name not in names:
+                    names.append(name)
+        if not names:
+            for row in self._rows(
+                "SELECT investor_id FROM investor_group WHERE investment_id = ?", (investment_id,)
+            ):
+                if int(row["investor_id"]) != exclude:
+                    name = self.person_name(self.investor_person(row["investor_id"]))
+                    if name not in names:
+                        names.append(name)
+        return names
+
+    def holders_at(self, investment_id: int, at: datetime, *, exclude: int | None = None) -> list[str]:
+        """Who held a stake at a moment: its partner links that existed then and
+        were not removed (with or without their partner) before it."""
+        links = self._rows(
+            "SELECT g.investor_id, g.is_deleted AS link_deleted, i.is_deleted AS investor_deleted "
+            "FROM investor_group g LEFT JOIN investor i ON i.investor_id = g.investor_id WHERE g.investment_id = ?",
+            (investment_id,),
+        )
+        ops: list[dict[str, Any]] = []
+        if self.clog is not None and links:
+            ops = corrections_db.history_for_rows(self.clog, {
+                "investor_group": [{"investor_id": int(r["investor_id"]), "investment_id": investment_id} for r in links],
+                "investor": [{"investor_id": int(r["investor_id"])} for r in links],
+            })
+        names: list[str] = []
+        for row in links:
+            iid = int(row["investor_id"])
+            if iid == exclude:
+                continue
+            mine = [
+                op for op in ops
+                if (op["db_table"] == "investor_group" and _pk_value(op, "investor_id") == iid)
+                or (op["db_table"] == "investor" and _pk_value(op, "investor_id") == iid)
+            ]
+            created = [op for op in mine if op["db_table"] == "investor_group" and op["op"] == "create"]
+            if created and _history_time(created[0]["created_at"]) >= at:
+                continue  # joined later
+            switches = [op for op in mine if op["op"] in ("delete", "restore")]
+            before = [op for op in switches if _history_time(op["created_at"]) < at]
+            after = [op for op in switches if _history_time(op["created_at"]) >= at]
+            if before:
+                live = before[-1]["op"] == "restore"
+            elif after:
+                live = after[0]["op"] == "delete"
             else:
-                item[f"{side}_display"] = (
-                    lookup_value(connection, meta["table"], meta["id"], raw, meta["value"]) or "not in the list"
+                live = not int(row["link_deleted"] or 0) and not int(row["investor_deleted"] or 0)
+            if live:
+                name = self.person_name(self.investor_person(iid))
+                if name not in names:
+                    names.append(name)
+        return names
+
+    def stake(self, investment_id: int) -> dict[str, Any]:
+        if investment_id not in self.investments:
+            row = self.connection.execute(
+                "SELECT investment_id, contract_id, type, investment_cash, is_deleted FROM investment WHERE investment_id = ?",
+                (investment_id,),
+            ).fetchone()
+            self.investments[investment_id] = dict(row) if row else {}
+        return self.investments[investment_id]
+
+
+def _join_names(names: list[str]) -> str:
+    if len(names) <= 1:
+        return "".join(names)
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _person_windows(scope: _HistoryScope, ops: list[dict[str, Any]]) -> None:
+    """On a contract page a partner's person-entry changes count while the person
+    is a partner on it: from their addition on the platform (if they were added
+    here) to their last removal (if all their rows here are removed)."""
+    margin = timedelta(seconds=_ACTION_GAP_SECONDS)
+    by_person: dict[int, list[int]] = {}
+    for iid, row in scope.investors.items():
+        if row.get("person_id") is not None:
+            by_person.setdefault(int(row["person_id"]), []).append(iid)
+    for person, rows in by_person.items():
+        created: dict[int, datetime] = {}
+        removed: dict[int, datetime] = {}
+        for op in ops:
+            if op["db_table"] != "investor":
+                continue
+            iid = _pk_value(op, "investor_id")
+            if iid not in rows:
+                continue
+            at = _history_time(op["created_at"])
+            if op["op"] == "create":
+                created[iid] = min(at, created.get(iid, at))
+            elif op["op"] == "delete":
+                removed[iid] = max(at, removed.get(iid, at))
+            elif op["op"] == "restore":
+                removed.pop(iid, None)
+        start = min(created.values()) - margin if len(created) == len(rows) else None
+        if all(int(scope.investors[i].get("is_deleted") or 0) for i in rows):
+            if len(removed) < len(rows):
+                scope.person_windows[person] = None  # hidden before the platform: never a partner here
+                continue
+            end: datetime | None = max(removed.values()) + margin
+        else:
+            end = None
+        scope.person_windows[person] = (start, end)
+
+
+def _in_scope(scope: _HistoryScope, op: dict[str, Any]) -> bool:
+    if scope.table == "contract":
+        if op["db_table"] == "sub_contract":
+            return op["op"] in ("create", "delete", "restore")
+        if op["db_table"] == "person":
+            window = scope.person_windows.get(_pk_value(op, "person_id") or -1)
+            if window is None:
+                return False
+            start, end = window
+            at = _history_time(op["created_at"])
+            return (start is None or at >= start) and (end is None or at <= end)
+    if op["db_table"] == "investor" and op.get("field") == "is_joint" and op["op"] == "update":
+        return False  # a derived flag: a step of its action, never a line of its own
+    return True
+
+
+def _lookup_creates(clog: sqlite3.Connection, ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A phrase minted by an action (a new place, title, …) is logged on its own
+    row; fetch those creates so they fold into the action that minted them."""
+    wanted: dict[str, set[int]] = {}
+
+    def want(kind: str, value: Any) -> None:
+        try:
+            ident = int(value)
+        except (TypeError, ValueError):
+            return
+        if ident:
+            wanted.setdefault(kind, set()).add(ident)
+
+    for op in ops:
+        if op["op"] in ("update", "relink"):
+            kind = RELINK_FIELDS.get((op["db_table"], op.get("field") or ""))
+            if kind:
+                want(kind, op.get("after_value"))
+        elif op["op"] == "create" and isinstance(op.get("after_value"), dict):
+            snap = op["after_value"]
+            if op["db_table"] == "contract_place":
+                want("place", snap.get("place_id"))
+            for (table, field), kind in RELINK_FIELDS.items():
+                if table == op["db_table"]:
+                    want(kind, snap.get(field))
+    targets = {
+        LOOKUP_KINDS[kind]["table"]: [{LOOKUP_KINDS[kind]["id"]: i} for i in ids] for kind, ids in wanted.items()
+    }
+    return [op for op in corrections_db.history_for_rows(clog, targets) if op["op"] == "create"] if targets else []
+
+
+def _group_actions(ops: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """One user action per group: by its action id, or (older operations, logged
+    before action ids existed) by the same author within two seconds."""
+    groups: list[list[dict[str, Any]]] = []
+    by_action: dict[str, list[dict[str, Any]]] = {}
+    previous: dict[str, Any] | None = None
+    previous_group: list[dict[str, Any]] | None = None
+    for op in ops:
+        run_id = str(op.get("run_id") or "")
+        if run_id.startswith("action-"):
+            group = by_action.get(run_id)
+            if group is None:
+                group = by_action[run_id] = []
+                groups.append(group)
+            group.append(op)
+            previous, previous_group = op, None
+            continue
+        # The two-second rule is for operations logged before action ids, which
+        # carry no run_id; an inline save ("apply-…") is always its own action.
+        if (
+            previous_group is not None
+            and previous is not None
+            and not run_id
+            and not previous.get("run_id")
+            and previous["created_by"] == op["created_by"]
+            and (_history_time(op["created_at"]) - _history_time(previous["created_at"])).total_seconds()
+            <= _ACTION_GAP_SECONDS
+        ):
+            previous_group.append(op)
+        else:
+            previous_group = [op]
+            groups.append(previous_group)
+        previous = op
+    return groups
+
+
+def _describe_action(scope: _HistoryScope, group: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """One history line for one action, in the reader's words."""
+    connection = scope.connection
+
+    def ops_of(table: str, *kinds: str) -> list[dict[str, Any]]:
+        return [op for op in group if op["db_table"] == table and (not kinds or op["op"] in kinds)]
+
+    lookup_tables = {meta["table"]: kind for kind, meta in LOOKUP_KINDS.items()}
+    lookups = [op for op in group if op["db_table"] in lookup_tables and op["op"] == "create"]
+    new_phrases = []
+    for op in lookups:
+        meta = LOOKUP_KINDS[lookup_tables[op["db_table"]]]
+        snap = op.get("after_value") if isinstance(op.get("after_value"), dict) else {}
+        phrase = snap.get(meta["value"]) or lookup_value(
+            connection, meta["table"], meta["id"], _pk_value(op, meta["id"]), meta["value"]
+        )
+        if phrase:
+            new_phrases.append(f"“{phrase}”")
+    details: list[str] = []
+    if new_phrases:
+        details.append(f"new to the list: {', '.join(new_phrases)}")
+    entry: dict[str, Any] = {
+        "kind": "edit", "tag": "", "subject": None, "link": None, "field": None,
+        "before": None, "after": None, "text": None, "detail": None,
+    }
+    own_column = PRIMARY_KEY_COLUMN[scope.table]
+    own_pk = corrections_db.pk_json({own_column: scope.record_id})
+    on_person_page = scope.table == "person"
+
+    def partner_subject(investor_id: int | None) -> None:
+        if on_person_page:
+            row = scope.investors.get(investor_id or -1, {})
+            entry["tag"] = "Partner"
+            entry["subject"] = f"on {scope.contract_label(row.get('contract_id'))}"
+            entry["link"] = {"kind": "contract", "id": str(row.get("contract_id"))} if row.get("contract_id") else None
+        else:
+            person = scope.investor_person(investor_id)
+            entry["tag"] = "Partner"
+            entry["subject"] = scope.person_name(person)
+            entry["link"] = {"kind": "person", "id": str(person)} if person is not None else None
+
+    def stake_subject(investment_id: int) -> None:
+        stake = scope.stake(investment_id)
+        holders = scope.stake_holders(investment_id)
+        entry["tag"] = "Stake"
+        if on_person_page:
+            entry["subject"] = f"on {scope.contract_label(stake.get('contract_id'))}"
+            entry["link"] = {"kind": "contract", "id": str(stake.get("contract_id"))} if stake.get("contract_id") else None
+        else:
+            entry["subject"] = _join_names(holders) or _role_text(stake.get("type"), stake.get("investment_cash")).capitalize()
+
+    def edit(op: dict[str, Any]) -> None:
+        entry["field"] = _history_field_label(op["db_table"], op.get("field"))
+        if op.get("field") == "document":
+            entry["kind"], entry["field"], entry["text"] = "edit", None, "narrative edited"
+            return
+        entry["before"] = _history_value(connection, op["db_table"], op.get("field"), op.get("before_value"))
+        entry["after"] = _history_value(connection, op["db_table"], op.get("field"), op.get("after_value"))
+
+    investor_life = ops_of("investor", "create", "delete", "restore")
+    own_life = [op for op in group if op["db_table"] == scope.table and op["pk"] == own_pk and op["op"] in ("create", "delete", "restore")]
+    sub_life = ops_of("sub_contract", "create", "delete", "restore") if scope.table == "contract" else []
+    place_ops = ops_of("contract_place")
+    stake_life = ops_of("investment", "create", "delete", "restore")
+    updates = [op for op in group if op["op"] in ("update", "relink") and not (op["db_table"] == "investor" and op.get("field") == "is_joint")]
+    person_creates = ops_of("person", "create")
+
+    if investor_life:
+        lead = investor_life[0]
+        iid = _pk_value(lead, "investor_id")
+        partner_subject(iid)
+        if lead["op"] == "create":
+            entry["kind"] = "added"
+            own_stake = ops_of("investment", "create")
+            joined = ops_of("investor_group", "create")
+            if own_stake:
+                snap = own_stake[0].get("after_value") if isinstance(own_stake[0].get("after_value"), dict) else {}
+                entry["text"] = f"added as {_role_text(snap.get('type'), snap.get('investment_cash'))}"
+            elif joined:
+                stake_id = _pk_value(joined[0], "investment_id") or 0
+                stake = scope.stake(stake_id)
+                others = scope.holders_at(stake_id, _history_time(lead["created_at"]), exclude=iid)
+                role = _role_text(stake.get("type"), stake.get("investment_cash"))
+                entry["text"] = (
+                    f"added, sharing the stake of {_join_names(others)} ({role})" if others else f"added, holding an existing stake ({role})"
                 )
-    return items
+            else:
+                entry["text"] = "added"
+            if on_person_page:
+                entry["text"] = entry["text"].replace("added", "added to the contract", 1)
+            if person_creates:
+                details.insert(0, "new person entry")
+        elif lead["op"] == "delete":
+            entry["kind"] = "removed"
+            had_stake = bool(ops_of("investor_group")) or any(a == iid for a, _b, _d in scope.links)
+            if not had_stake:
+                entry["text"] = "removed (an entry with no role or stake)"
+            elif ops_of("investment", "delete"):
+                entry["text"] = "removed from the contract, with the stake"
+            else:
+                entry["text"] = "removed from the contract; the stake stayed"
+        else:
+            entry["kind"], entry["text"] = "restored", "restored to the contract"
+    elif own_life:
+        lead = own_life[0]
+        entry["tag"] = {"contract": "Contract", "sub_contract": "Sub-contract", "person": "Person entry"}[scope.table]
+        entry["kind"], entry["text"] = {
+            "create": ("created", "added to the database"),
+            "delete": ("hidden", "hidden"),
+            "restore": ("restored", "restored from hidden"),
+        }[lead["op"]]
+    elif sub_life:
+        lead = sub_life[0]
+        sid = _pk_value(lead, "contract_id") or 0
+        sub_type = (scope.sub_contracts.get(sid) or {}).get("sub_type")
+        entry["tag"] = "Sub-contract"
+        entry["subject"] = f"Sub-contract {sid}" + (f" ({sub_type})" if sub_type else "")
+        entry["link"] = {"kind": "sub_contract", "id": str(sid)}
+        entry["kind"], entry["text"] = {
+            "create": ("added", "added"), "delete": ("hidden", "hidden"), "restore": ("restored", "restored from hidden"),
+        }[lead["op"]]
+    elif place_ops:
+        lead = next((op for op in place_ops if op["op"] in ("create", "delete", "restore")), place_ops[0])
+        place_id = _pk_value(lead, "place_id")
+        entry["tag"] = "Place"
+        entry["subject"] = lookup_value(connection, "place", "place_id", place_id, "place_name") or f"place #{place_id}"
+        entry["link"] = {"kind": "place", "id": str(place_id)} if place_id else None
+        if lead["op"] == "update":
+            edit(lead)
+        else:
+            entry["kind"], entry["text"] = {
+                "create": ("added", "added"), "delete": ("removed", "removed"), "restore": ("restored", "restored"),
+            }[lead["op"]]
+            address = next((op for op in place_ops if op["op"] == "update"), None)
+            if address:
+                edit(address)
+    elif stake_life:
+        lead = stake_life[0]
+        stake_id = _pk_value(lead, "investment_id") or 0
+        stake = scope.stake(stake_id)
+        entry["tag"] = "Stake"
+        role = _role_text(stake.get("type"), stake.get("investment_cash"))
+        if on_person_page:
+            stake_subject(stake_id)
+        else:
+            entry["subject"] = role.capitalize() if role else "A stake"
+        holders = scope.stake_holders(stake_id)
+        if lead["op"] == "delete":
+            entry["kind"] = "removed"
+            entry["text"] = f"removed; it had been held by {_join_names(holders)}" if holders else "removed; no partner was attached"
+            if on_person_page:
+                entry["text"] = f"removed ({role})"
+        elif lead["op"] == "restore":
+            entry["kind"], entry["text"] = "restored", "restored"
+        else:
+            entry["kind"], entry["text"] = "added", "added"
+    elif updates:
+        lead = updates[0]
+        table = lead["db_table"]
+        if table == "investor":
+            partner_subject(_pk_value(lead, "investor_id"))
+        elif table == "investment":
+            stake_subject(_pk_value(lead, "investment_id") or 0)
+        elif table == "person" and scope.table != "person":
+            person = _pk_value(lead, "person_id")
+            entry["tag"], entry["subject"] = "Person entry", scope.person_name(person)
+            entry["link"] = {"kind": "person", "id": str(person)}
+        elif table == "contract_place":
+            place_id = _pk_value(lead, "place_id")
+            entry["tag"] = "Place"
+            entry["subject"] = lookup_value(connection, "place", "place_id", place_id, "place_name") or f"place #{place_id}"
+            entry["link"] = {"kind": "place", "id": str(place_id)} if place_id else None
+        else:
+            entry["tag"] = {"contract": "Contract", "sub_contract": "Sub-contract", "person": "Person entry"}.get(table, "Record")
+        edit(lead)
+        if lead.get("field") == "jewish_db" and str(lead.get("after_value")) in ("0", "False"):
+            entry["text"], entry["field"], entry["before"], entry["after"] = "Jewish — editorial attribution refuted", None, None, None
+    elif scope.table != "person" and ops_of("person", "delete", "restore"):
+        lead = ops_of("person", "delete", "restore")[0]
+        person = _pk_value(lead, "person_id")
+        entry["tag"], entry["subject"] = "Person entry", scope.person_name(person)
+        entry["link"] = {"kind": "person", "id": str(person)}
+        entry["kind"], entry["text"] = ("hidden", "hidden") if lead["op"] == "delete" else ("restored", "restored from hidden")
+    elif ops_of("investor_group", "create", "delete", "restore"):
+        lead = ops_of("investor_group", "create", "delete", "restore")[0]
+        iid = _pk_value(lead, "investor_id")
+        stake_subject(_pk_value(lead, "investment_id") or 0)
+        name = scope.person_name(scope.investor_person(iid))
+        entry["kind"], entry["text"] = {
+            "create": ("added", f"{name} now holds it"),
+            "delete": ("removed", f"{name} no longer holds it"),
+            "restore": ("restored", f"{name} holds it again"),
+        }[lead["op"]]
+    elif person_creates and scope.table == "person":
+        lead = person_creates[0]
+        entry["tag"], entry["kind"], entry["text"] = "Person entry", "created", "added to the database"
+    else:
+        return None  # only phrase creates or derived flags: nothing a reader did here
+
+    reason, source = None, None
+    for op in [lead] + [op for op in group if op is not lead]:
+        typed, src = _reader_reason(op.get("reason"))
+        reason = reason or typed
+        source = source or src
+    statuses = {op["status"] for op in group}
+    conflicts = [op for op in group if op["status"] == "conflict"]
+    note = None
+    if conflicts:
+        # Only a rebuild of the database marks an operation "conflict" (replay found
+        # the row changed, or the new row's number already taken).
+        if len(conflicts) < len(group):
+            note = "Part of this change was not re-applied when the database was last rebuilt. Check the record."
+        elif lead["op"] in ("update", "relink"):
+            note = (
+                "Not applied when the database was last rebuilt: the value had changed before it could be "
+                "applied. Check the field and edit it again if the change is still needed."
+            )
+        elif lead["op"] == "create":
+            note = "This addition was not re-applied when the database was last rebuilt. Check the record and add it again if needed."
+        else:
+            note = "This was not re-applied when the database was last rebuilt. Check the record."
+    entry.update(
+        {
+            "id": lead["request_id"],
+            "detail": "; ".join(details) or None,
+            "by": lead["created_by"],
+            "at": lead["created_at"],
+            "reason": reason,
+            "source": source,
+            "status": "conflict" if statuses == {"conflict"} else ("mixed" if conflicts else "applied"),
+            "status_note": note,
+            "undone": None,
+            "edits": 1,
+            "chain": None,
+            "request_ids": [op["request_id"] for op in group],
+            "_target": (lead["db_table"], lead["pk"], lead.get("field")),
+            "_order": lead.get("first_event_id") or 0,
+        }
+    )
+    return entry
+
+
+def _dismissal_entries(table: str, record_id: str) -> list[dict[str, Any]]:
+    """Needs-review items marked "Not an issue" for this record (decided 2026-10-27:
+    the only trace of why an item left the list). An undo marks the line undone."""
+    prefix = f"{table}:{record_id}:"
+    rows = [row for row in load_jsonl(FLAG_DISMISSALS_PATH) if str(row.get("key") or "").startswith(prefix)]
+    meta = flag_group_meta()
+    entries: list[dict[str, Any]] = []
+    open_by_key: dict[str, dict[str, Any]] = {}
+    for index, row in enumerate(rows):
+        key = str(row["key"])
+        if row.get("action") == "restore":
+            entry = open_by_key.pop(key, None)
+            if entry is not None:
+                entry["undone"] = {"by": row.get("reviewer"), "at": row.get("at")}
+            continue
+        group = key[len(prefix):].split(":", 1)[0]
+        label = (meta.get(group) or {}).get("label") or group.replace("_", " ")
+        entry = {
+            "id": f"dismissal-{index}",
+            "kind": "dismissed",
+            "tag": "Needs review",
+            "subject": None,
+            "link": None,
+            "field": None,
+            "before": None,
+            "after": None,
+            "text": f"“{label}” marked not an issue",
+            "detail": None,
+            "by": row.get("reviewer") or "",
+            "at": row.get("at") or "",
+            "reason": (row.get("reason") or "").strip() or None,
+            "source": None,
+            "status": "applied",
+            "status_note": None,
+            "undone": None,
+            "edits": 1,
+            "chain": None,
+            "request_ids": [],
+            "_target": None,
+            "_order": 0,
+        }
+        open_by_key[key] = entry
+        entries.append(entry)
+    return entries
+
+
+def _merge_repeated_edits(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Several saves of one field by one reviewer within ten minutes, with nothing
+    in between, read as one line with the chain of values ("Yes → No → Yes")."""
+    merged: list[dict[str, Any]] = []
+    for entry in entries:
+        prev = merged[-1] if merged else None
+        if (
+            prev is not None
+            and entry["kind"] == "edit" == prev["kind"]
+            and entry["_target"] == prev["_target"]
+            and entry["field"] and entry["field"] == prev["field"]
+            and entry["tag"] == prev["tag"] and entry["subject"] == prev["subject"]
+            and entry["by"] == prev["by"]
+            and entry["status"] == "applied" == prev["status"]
+            and not entry["undone"] and not prev["undone"]
+            and (_history_time(entry["at"]) - _history_time(prev["at"])).total_seconds() <= _MERGE_EDITS_SECONDS
+        ):
+            prev["chain"] = (prev["chain"] or [prev["before"], prev["after"]]) + [entry["after"]]
+            prev["after"] = entry["after"]
+            prev["edits"] += 1
+            prev["at"] = entry["at"]
+            if entry["reason"] and entry["reason"] != prev["reason"]:
+                prev["reason"] = f"{prev['reason']}; {entry['reason']}" if prev["reason"] else entry["reason"]
+            prev["request_ids"] += entry["request_ids"]
+            continue
+        merged.append(entry)
+    return merged
+
+
+def record_history(
+    connection: sqlite3.Connection, clog: sqlite3.Connection, table: str, record_id: str
+) -> dict[str, Any]:
+    """The record page's history: {entries (newest first), created}. `created` is
+    the record's own creation on the platform (for the provenance banner), never a
+    partner or stake created on it."""
+    scope = _HistoryScope(connection, table, record_id, clog)
+    ops = corrections_db.history_for_rows(clog, scope.targets)
+    if table == "contract":
+        _person_windows(scope, ops)
+    ops = [op for op in ops if _in_scope(scope, op)]
+    created = None
+    own_pk = corrections_db.pk_json({PRIMARY_KEY_COLUMN[table]: int(record_id)})
+    own_create = next((op for op in ops if op["db_table"] == table and op["pk"] == own_pk and op["op"] == "create"), None)
+    if own_create:
+        reason, source = _reader_reason(own_create.get("reason"))
+        created = {"by": own_create["created_by"], "at": own_create["created_at"], "source": source, "reason": reason}
+    known = {op["request_id"] for op in ops}
+    extra = [op for op in _lookup_creates(clog, ops) if op["request_id"] not in known]
+    combined = sorted(ops + extra, key=lambda op: (op["created_at"], op.get("first_event_id") or 0))
+    entries: list[dict[str, Any]] = []
+    for group in _group_actions(combined):
+        if not any(op["request_id"] in known for op in group):
+            continue  # a phrase minted by an action on another page
+        entry = _describe_action(scope, group)
+        if entry is None:
+            continue
+        # An undo ("revert", no longer offered on the pages) marks what it undid.
+        if any(op.get("reason") == "revert" for op in group if op["op"] == "update"):
+            target = next((e for e in reversed(entries) if e["_target"] == entry["_target"] and not e["undone"]), None)
+            if target is not None:
+                target["undone"] = {"by": entry["by"], "at": entry["at"]}
+                continue
+        entries.append(entry)
+    entries = _merge_repeated_edits(entries)
+    entries += _dismissal_entries(table, record_id)
+    entries.sort(key=lambda e: (_history_time(e["at"]), e["_order"]), reverse=True)
+    for entry in entries:
+        entry.pop("_target", None)
+        entry.pop("_order", None)
+    return {"entries": entries, "created": created}
 
 
 class RecordAction(BaseModel):
@@ -7534,6 +8316,16 @@ def _person_split_flag_items(connection: sqlite3.Connection) -> list[dict[str, A
     return items
 
 
+def flag_group_meta() -> dict[str, dict[str, Any]]:
+    """Every Needs-review group's label, severity and explanation, by group id."""
+    return {
+        **data_quality.GROUP_META,
+        **jewish_review.GROUP_META,
+        "word_date_differs": WORD_DATE_GROUP_META,
+        "person_split_flagged": PERSON_SPLIT_GROUP_META,
+    }
+
+
 @app.get("/api/db/flags")
 def db_flags() -> dict[str, Any]:
     dismissed = dismissed_flag_keys()
@@ -7549,12 +8341,7 @@ def db_flags() -> dict[str, Any]:
         _attach_flag_meta(connection, items)
     finally:
         connection.close()
-    meta_lookup = {
-        **data_quality.GROUP_META,
-        **jewish_review.GROUP_META,
-        "word_date_differs": WORD_DATE_GROUP_META,
-        "person_split_flagged": PERSON_SPLIT_GROUP_META,
-    }
+    meta_lookup = flag_group_meta()
     groups: dict[str, dict[str, Any]] = {}
     for f in items:
         meta = meta_lookup[f["group"]]

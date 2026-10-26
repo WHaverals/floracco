@@ -2,10 +2,61 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "review-api",
+      "runtimeExecutable": ".floracco/bin/python",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "workflows.review_server:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
+    },
+    {
       "name": "review-app",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "apps/review", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "apps/review",
+        "run",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "review-api-scratch",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "FLORACCO_DATA_DIR=/private/tmp/claude-501/-Users-wouter-gitrepos-floracco/4557e177-591b-4568-9621-6d261284ca09/scratchpad/flagdata",
+        ".floracco/bin/python",
+        "-m",
+        "uvicorn",
+        "workflows.review_server:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "review-api-ui-scratch",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "FLORACCO_DATA_DIR=/private/tmp/claude-501/-Users-wouter-gitrepos-floracco/71b1262b-1673-4b41-bedc-0b0545c68000/scratchpad/uidata",
+        ".floracco/bin/python",
+        "-m",
+        "uvicorn",
+        "workflows.review_server:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
     }
   ]
 }

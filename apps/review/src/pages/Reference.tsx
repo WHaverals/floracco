@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   createReferenceLink,
   loadReference,
@@ -9,6 +9,7 @@ import {
 } from "../api";
 import { useLatest } from "../utils/latest";
 import PlaceMap from "../components/PlaceMap";
+import CopyLinkButton from "../components/CopyLinkButton";
 import type {
   ReferenceDuplicatesResponse,
   ReferenceKind,
@@ -498,17 +499,63 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
   );
 }
 
+const KINDS: ReferenceKind[] = ["place", "title", "currency", "activity"];
+
+/* What the page shows lives in the address, so a term can be linked to and Back
+ * returns to it (UI review 2026-10-14, #44): /reference/<vocabulary>/<term id>,
+ * plus ?q= (search), ?sort=name, ?unused=1 and ?view=duplicates|map, each left out
+ * at its default. Opening a term, a vocabulary or a view adds a history step;
+ * typing, sort and "Unused only" replace the current one. */
+function referencePath(
+  kind: ReferenceKind,
+  termId: number | null,
+  opts: { q?: string; sort?: string; unused?: boolean; view?: "duplicates" | "map" } = {},
+): string {
+  const query = new URLSearchParams();
+  if (opts.q) query.set("q", opts.q);
+  if (opts.sort === "name") query.set("sort", "name");
+  if (opts.unused) query.set("unused", "1");
+  if (opts.view) query.set("view", opts.view);
+  const tail = query.toString();
+  return `/reference/${kind}${termId != null ? `/${termId}` : ""}${tail ? `?${tail}` : ""}`;
+}
+
 export default function Reference() {
   const navigate = useNavigate();
-  const [kind, setKind] = useState<ReferenceKind>("place");
-  const [mode, setMode] = useState<"browse" | "dupes" | "map">("browse");
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("usage");
-  const [orphansOnly, setOrphansOnly] = useState(false);
-  const [list, setList] = useState<ReferenceListResponse | null>(null);
-  const [terms, setTerms] = useState<ReferenceTerm[]>([]);
-  const [selected, setSelected] = useState<ReferenceTerm | null>(null);
+  const location = useLocation();
+  const params = useParams<{ kind?: string; termId?: string }>();
+  const [searchParams] = useSearchParams();
+  const kindParam = params.kind;
+  const unknownKind = kindParam !== undefined && !KINDS.includes(kindParam as ReferenceKind);
+  const kind: ReferenceKind = unknownKind || kindParam === undefined ? "place" : (kindParam as ReferenceKind);
+  const termParam = unknownKind ? null : (params.termId ?? null);
+  const termId = termParam !== null && /^\d+$/.test(termParam) ? Number(termParam) : null;
+  const view = searchParams.get("view");
+  const mode: "browse" | "dupes" | "map" =
+    view === "duplicates" ? "dupes" : view === "map" && kind === "place" ? "map" : "browse";
+  const sort = searchParams.get("sort") === "name" ? "name" : "usage";
+  const orphansOnly = searchParams.get("unused") === "1";
+  const urlQ = searchParams.get("q") ?? "";
+  // The search box keeps its own value (no cursor jumps) and is copied to ?q=.
+  const [search, setSearch] = useState(urlQ);
+  const writtenQ = useRef(urlQ);
+  useEffect(() => {
+    if (urlQ !== writtenQ.current) {
+      writtenQ.current = urlQ; // Back/Forward or a link changed it
+      setSearch(urlQ);
+    }
+  }, [urlQ]);
+  const [rawList, setList] = useState<ReferenceListResponse | null>(null);
+  const [rawTerms, setTerms] = useState<ReferenceTerm[]>([]);
+  // The rail shows only the open vocabulary's list: after Back across vocabularies
+  // the previous one's list never stands in for it while the new one loads.
+  const list = rawList?.kind === kind ? rawList : null;
+  const terms = list ? rawTerms : [];
+  // The page's current place, for the search timer and the Browse tab.
+  const live = useRef({ mode: "browse" as "browse" | "dupes" | "map", termId: null as number | null });
+  const lastBrowse = useRef<{ kind: ReferenceKind; path: string } | null>(null);
   const [detail, setDetail] = useState<ReferenceRecordsResponse | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [detailFailed, setDetailFailed] = useState(false);
   const [detailRetry, setDetailRetry] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -537,36 +584,54 @@ export default function Reference() {
 
   useEffect(() => {
     window.clearTimeout(debounce.current);
-    debounce.current = window.setTimeout(() => runList(kind, search, sort, orphansOnly, 0), 200);
+    debounce.current = window.setTimeout(() => {
+      runList(kind, search, sort, orphansOnly, 0);
+      if (search !== writtenQ.current) {
+        // Where the page is now (a click may have moved it since the typing began).
+        const { mode: nowMode, termId: nowTerm } = live.current;
+        writtenQ.current = search;
+        navigate(
+          referencePath(kind, nowMode === "browse" ? nowTerm : null, {
+            q: search, sort, unused: orphansOnly, view: nowMode === "dupes" ? "duplicates" : nowMode === "map" ? "map" : undefined,
+          }),
+          { replace: true },
+        );
+      }
+    }, 200);
     return () => window.clearTimeout(debounce.current);
+    // the address is written from live.current; mode and termId must not re-run the list
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, search, sort, orphansOnly, runList]);
 
   useEffect(() => {
     setLoadingMore(false); // a term switch abandons any in-flight "Load more"
     setMoreFailed(false);
     setDetailFailed(false);
-    if (!selected) {
+    setNotFound(false);
+    if (termId === null) {
       beginDetail();
       setDetail(null);
+      if (termParam !== null) setNotFound(true); // "/reference/place/abc"
       return;
     }
     setDetail(null); // never render term A's numbers under term B's heading
     const fresh = beginDetail();
-    loadReferenceRecords(kind, selected.id)
+    loadReferenceRecords(kind, termId)
       .then((d) => fresh() && setDetail(d))
-      .catch(() => {
+      .catch((err: Error & { status?: number }) => {
         if (!fresh()) return;
         setDetail(null);
-        setDetailFailed(true);
+        if (err.status === 404) setNotFound(true);
+        else setDetailFailed(true);
       });
-  }, [kind, selected, beginDetail, detailRetry]);
+  }, [kind, termId, termParam, beginDetail, detailRetry]);
 
   const loadMoreRecords = () => {
-    if (!selected || !detail) return;
+    if (termId === null || !detail) return;
     const fresh = beginDetail(); // a term switch (the effect above) invalidates this append
     setLoadingMore(true);
     setMoreFailed(false);
-    loadReferenceRecords(kind, selected.id, detail.records.length)
+    loadReferenceRecords(kind, termId, detail.records.length)
       .then((more) => {
         if (!fresh()) return;
         setDetail((prev) => {
@@ -583,13 +648,40 @@ export default function Reference() {
       .finally(() => fresh() && setLoadingMore(false));
   };
 
-  const switchKind = (k: ReferenceKind) => {
-    setKind(k);
-    setSearch("");
-    setOrphansOnly(false);
-    setSelected(null);
-    if (k !== "place" && mode === "map") setMode("browse");  // map is place-only
+  // The open term's text: the server's (a link has no rail row), the rail's meanwhile.
+  const termValue = detail?.value ?? terms.find((t) => t.id === termId)?.value ?? "";
+  const filters = { q: search, sort, unused: orphansOnly };
+  live.current = { mode, termId };
+  if (mode === "browse" && !unknownKind) lastBrowse.current = { kind, path: location.pathname + location.search };
+  const openTerm = (id: number) => {
+    if (id !== termId) navigate(referencePath(kind, id, filters));
   };
+  const switchKind = (k: ReferenceKind) => {
+    if (k === kind && !unknownKind) return;
+    // a new vocabulary starts with an empty search; the sort is kept; map is place-only
+    window.clearTimeout(debounce.current);
+    writtenQ.current = "";
+    setSearch("");
+    navigate(
+      referencePath(k, null, {
+        sort, view: mode === "dupes" ? "duplicates" : mode === "map" && k === "place" ? "map" : undefined,
+      }),
+    );
+  };
+  const setMode = (m: "browse" | "dupes" | "map") => {
+    if (m === mode) return;
+    if (m === "browse") {
+      // back to the list as it was: its search, sort, filter and open term
+      const back = lastBrowse.current;
+      navigate(back && back.kind === kind ? back.path : referencePath(kind, null, filters));
+      return;
+    }
+    navigate(referencePath(m === "map" ? "place" : kind, null, { view: m === "map" ? "map" : "duplicates" }));
+  };
+  const setSort = (value: string) =>
+    navigate(referencePath(kind, termId, { ...filters, sort: value }), { replace: true });
+  const setOrphansOnly = (value: boolean) =>
+    navigate(referencePath(kind, termId, { ...filters, unused: value }), { replace: true });
 
   return (
     <div className="db-browser">
@@ -704,8 +796,8 @@ export default function Reference() {
             <li key={t.id}>
               <button
                 type="button"
-                className={selected?.id === t.id ? "db-result is-active" : "db-result"}
-                onClick={() => setSelected(t)}
+                className={termId === t.id ? "db-result is-active" : "db-result"}
+                onClick={() => openTerm(t.id)}
               >
                 <span className="db-result-title">{t.value}</span>
                 <span className="db-result-meta muted" title={vocab.hint}>
@@ -732,15 +824,31 @@ export default function Reference() {
 
       <section className="db-detail">
         {mode === "map" ? (
-          <PlaceMap
-            onPick={(p) => {
-              setSelected({ id: p.id, value: p.value, count: p.count });
-              setMode("browse");
-            }}
-          />
+          <PlaceMap onPick={(p) => navigate(referencePath("place", p.id))} />
         ) : mode === "dupes" ? (
           <DuplicatesView kind={kind} label={vocab.label} noun={vocab.noun} />
-        ) : !selected ? (
+        ) : unknownKind ? (
+          <div className="ref-term">
+            <p className="eyebrow">Reference</p>
+            <h2>Not a list on this site</h2>
+            <p className="muted ref-note">
+              This link names a list that does not exist (“{kindParam}”). The lists are Places, Titles, Currencies and
+              Economic activities.
+            </p>
+          </div>
+        ) : notFound ? (
+          <div className="ref-term">
+            <p className="eyebrow">{vocab.singular}</p>
+            <h2>Not in the list</h2>
+            <p className="muted ref-note">
+              This link points to {vocab.aNoun} that is not in the list of {vocab.label.toLowerCase()}. The list may
+              have changed since the link was made.
+            </p>
+            <button type="button" className="link-like" onClick={() => navigate(referencePath(kind, null))}>
+              Show all {vocab.label.toLowerCase()}
+            </button>
+          </div>
+        ) : termId === null ? (
           <div className="ref-overview">
             <p className="eyebrow">Most-referenced</p>
             <h2>{vocab.label} by usage</h2>
@@ -755,14 +863,19 @@ export default function Reference() {
           </div>
         ) : (
           <div className="ref-term">
-            <p className="eyebrow">{vocab.singular} · verbatim term</p>
-            <h2 className="ref-term-value">{selected.value}</h2>
+            <div className="page-head">
+              <div>
+                <p className="eyebrow">{vocab.singular} · verbatim term</p>
+                <h2 className="ref-term-value">{termValue || "\u00a0"}</h2>
+              </div>
+              <CopyLinkButton path={referencePath(kind, termId)} title={`Copy a link to this ${vocab.noun}, to send or to reopen later`} />
+            </div>
             {detail && <p className="muted ref-term-meta">{usageSentence(kind, detail)}</p>}
             {detail && (
               <p className="muted ref-narrative-line">
                 {detail.narrative_mentions > 0 ? (
                   <>
-                    The text “{selected.value}” occurs in the narrative text of{" "}
+                    The text “{termValue}” occurs in the narrative text of{" "}
                     {[
                       detail.narrative_contracts > 0 ? fmtContracts(detail.narrative_contracts) : "",
                       detail.narrative_sub_contracts > 0
@@ -777,13 +890,13 @@ export default function Reference() {
                     <button
                       type="button"
                       className="link-like"
-                      onClick={() => navigate(`/explore?q=${encodeURIComponent(selected.value)}`)}
+                      onClick={() => navigate(`/explore?q=${encodeURIComponent(termValue)}`)}
                     >
                       view in corpus search →
                     </button>
                   </>
                 ) : (
-                  `The text “${selected.value}” does not occur in any narrative.`
+                  `The text “${termValue}” does not occur in any narrative.`
                 )}
               </p>
             )}
