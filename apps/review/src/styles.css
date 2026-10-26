@@ -4298,6 +4298,17 @@ progress {
   }
 }
 
+/* The add-investor panel and the create form borrow the pill for their own
+   buttons ("change", "back to search", "Create a new person", "back to the
+   list"). There it is the action itself, not an edit affordance on a record,
+   and no hover rule reveals it, so it is always shown. `justify-self` keeps it
+   pill-sized in the grid stacks it sits in (register fields, person search). */
+.add-investor-panel .field-fix,
+.create-form .field-fix {
+  justify-self: start;
+  opacity: 1;
+}
+
 .field-fix:hover {
   background: #d6aa7d;
   border-color: #d6aa7d;
