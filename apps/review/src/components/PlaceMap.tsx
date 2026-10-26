@@ -30,6 +30,8 @@ const EUROPE_BBOX: GeoJSON.MultiPoint = {
 export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => void }) {
   const [points, setPoints] = useState<PlaceMapPoint[] | null>(null);
   const [available, setAvailable] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [hover, setHover] = useState<{ p: PlaceMapPoint; x: number; y: number } | null>(null);
   const [query, setQuery] = useState("");
   const highlight = hover?.p.id ?? null;   // shared map↔list highlight, driven by hover
@@ -43,13 +45,14 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
   const justDragged = useRef(false);
 
   useEffect(() => {
+    setLoadFailed(false);
     loadPlaceMap()
       .then((res) => {
         setAvailable(res.available);
         setPoints(res.points);
       })
-      .catch(() => setAvailable(false));
-  }, []);
+      .catch(() => setLoadFailed(true)); // a failed request is not "no coordinates"
+  }, [attempt]);
 
   // track the map's rendered width: the SVG scales to fit (viewBox 920 → container),
   // so the legend must scale dots by the same factor to match what's on the map.
@@ -198,8 +201,7 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
         <p className="eyebrow">Map</p>
         <h2>Places on the map</h2>
         <p className="muted ref-note">
-          No coordinates yet. Run the historic-name resolution batch
-          (<code>workflows/place_resolve.py</code>) to place every term on the map.
+          No coordinates have been worked out for the places yet, so there is nothing to show on the map.
         </p>
       </div>
     );
@@ -221,10 +223,19 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
           </div>
         )}
       </div>
-      <p className="muted ref-note pm-caption">
-        {points ? `${shown.toLocaleString()} places in view` : "Loading…"} · dot size = contracts ·
-        hollow ring = approximate · scroll to zoom, drag to pan
-      </p>
+      {loadFailed && !points ? (
+        <p className="error-text ref-note pm-caption">
+          The places could not be loaded.{" "}
+          <button type="button" className="link-like" onClick={() => setAttempt((n) => n + 1)}>
+            Try again
+          </button>
+        </p>
+      ) : (
+        <p className="muted ref-note pm-caption">
+          {points ? `${shown.toLocaleString()} places in view` : "Loading…"} · dot size = times recorded ·
+          hollow ring = approximate · scroll to zoom, drag to pan
+        </p>
+      )}
 
       <div className="pm-body">
         <div
@@ -332,7 +343,11 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
                     {hover.p.approx ? " · approx." : ""}
                   </span>
                   <span className="pm-tip-meta">
-                    {hover.p.count > 0 ? `${hover.p.count.toLocaleString()} contract${hover.p.count === 1 ? "" : "s"}` : "unused"}
+                    {hover.p.count === 0
+                      ? "unused"
+                      : hover.p.count === 1
+                        ? "recorded once"
+                        : `recorded ${hover.p.count.toLocaleString()} times`}
                   </span>
                 </>
               )}
@@ -388,7 +403,7 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
               </span>
             );
           })}
-          <span className="muted pm-size-cap">contracts (log scale)</span>
+          <span className="muted pm-size-cap">times recorded (log scale)</span>
         </span>
       </div>
     </div>

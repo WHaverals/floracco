@@ -31,8 +31,10 @@ export default class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="error-boundary">
           <p className="eyebrow">Something went wrong</p>
-          <h2>This view hit an error</h2>
-          <p className="muted">{this.state.error.message}</p>
+          <h2>This part of the page could not be shown</h2>
+          <p className="muted" title={this.state.error.message}>
+            A display error stopped it. Try again, or reload the page.
+          </p>
           <div className="error-boundary-actions">
             <button type="button" className="pill-button is-primary" onClick={() => this.setState({ error: null })}>
               Try again

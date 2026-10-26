@@ -13,31 +13,70 @@ import type {
   WordEntryDetail,
 } from "./types";
 
+function apiError(message: string, status: number): Error & { status?: number } {
+  const error = new Error(message) as Error & { status?: number };
+  error.status = status;
+  return error;
+}
+
+/* Every failure reaches the reviewer as a plain sentence. A message the server
+ * wrote for the reviewer (a JSON `detail` string: a validation refusal, a
+ * maintenance notice, a "changed while you were editing" guard) passes through
+ * unchanged; network failures, unreadable replies and bare server errors do not.
+ * The technical detail goes to the browser console for diagnosis. */
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) },
-    ...options,
-  });
+  // Every write is a POST. A write that got no proper answer may or may not have
+  // landed, so its message says so instead of promising that nothing was saved.
+  // The Analysis queries are POSTs too but only read.
+  const writing = (options?.method ?? "GET").toUpperCase() !== "GET" && !path.startsWith("/api/analysis/");
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) },
+      ...options,
+    });
+  } catch (cause) {
+    // "Failed to fetch" / "Load failed" / "NetworkError…": no answer at all.
+    console.warn("API request did not reach the server:", path, cause);
+    throw apiError(
+      writing
+        ? "The server could not be reached, so the change may not have been saved. Reload the page to check before trying again."
+        : "The server could not be reached. Check the connection and try again.",
+      0,
+    );
+  }
   if (!response.ok) {
-    const text = await response.text();
-    let message = text;
+    const text = await response.text().catch(() => "");
+    let message = writing
+      ? "The server did not answer properly, so the change may not have been saved. Reload the page to check before trying again."
+      : "The server did not answer properly. Please try again.";
     try {
       const body = JSON.parse(text);
-      if (body && typeof body.detail === "string") message = body.detail;
-    } catch {
-      // not JSON: a proxy/host error page — never show raw HTML to the reviewer
-      if (text.trimStart().startsWith("<")) {
-        message = "The server did not answer properly — nothing was saved. Please try again.";
+      if (body && typeof body.detail === "string" && body.detail.trim()) {
+        message = body.detail; // the server's own wording
+      } else if (body && Array.isArray(body.detail)) {
+        // Field validation: refused before anything was written.
+        message = "The server did not accept what was entered, and nothing was saved. Check the fields and try again.";
       }
+    } catch {
+      // not JSON (a proxy or host error page, a bare "Internal Server Error", an empty body): keep the default
     }
     if (/database is locked/i.test(message)) {
       message = "The server is busy — nothing was lost. Please try again.";
     }
-    const error = new Error(message) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
+    console.warn("API request failed:", path, response.status, text.slice(0, 300));
+    throw apiError(message, response.status);
   }
-  return response.json() as Promise<T>;
+  try {
+    return (await response.json()) as T;
+  } catch (cause) {
+    // A success reply that is not JSON, typically a sign-in page served instead of the answer.
+    console.warn("API reply was not JSON:", path, cause);
+    throw apiError(
+      "The server sent a reply this page could not read. Reload the page; you may need to sign in again.",
+      response.status,
+    );
+  }
 }
 
 /** The signed-in reviewer (from Cloudflare Access), or unauthenticated in local dev. */
@@ -220,8 +259,10 @@ export function loadPlaceMap(): Promise<import("./types").PlaceMapResponse> {
 export function loadReferenceRecords(
   kind: import("./types").ReferenceKind,
   termId: number,
+  offset = 0,
 ): Promise<import("./types").ReferenceRecordsResponse> {
-  return request(`/api/db/reference/${kind}/${termId}/records`);
+  const qs = offset ? `?offset=${offset}` : "";
+  return request(`/api/db/reference/${kind}/${termId}/records${qs}`);
 }
 
 export function loadDbRecord(
@@ -438,20 +479,26 @@ export function createDbRecord(
   return request(`/api/db/create/${table}`, { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function searchGlobal(q: string, expand = ""): Promise<import("./types").SearchResponse> {
+export function searchGlobal(q: string, expand = "", limit = 0): Promise<import("./types").SearchResponse> {
   const params = new URLSearchParams({ q, expand });
+  if (expand && limit) params.set("limit", String(limit));
   return request(`/api/search?${params.toString()}`);
 }
 
 // --- Adding investors ---------------------------------------------------------
 
-export function searchPersonsRich(q: string): Promise<{ results: import("./types").PersonHit[] }> {
-  const params = new URLSearchParams({ q });
+export function searchPersonsRich(q: string, limit = 12): Promise<{ results: import("./types").PersonHit[] }> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
   return request(`/api/db/person-search?${params.toString()}`);
 }
 
-export function sameSurname(lastName: string): Promise<{ results: import("./types").PersonHit[] }> {
-  const params = new URLSearchParams({ last_name: lastName });
+/** Persons sharing a surname; those with the typed first name come first. `total`
+ * is the uncapped count (absent from an older server, hence optional). */
+export function sameSurname(
+  lastName: string,
+  firstName = "",
+): Promise<{ results: import("./types").PersonHit[]; total?: number }> {
+  const params = new URLSearchParams({ last_name: lastName, first_name: firstName });
   return request(`/api/db/same-surname?${params.toString()}`);
 }
 

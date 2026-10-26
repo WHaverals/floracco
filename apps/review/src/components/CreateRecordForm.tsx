@@ -3,7 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { checkNumber, createDbRecord, findSimilar, loadDbRecord, loadRegisters } from "../api";
 import { useLatest } from "../utils/latest";
 import type { DbRecord, NumberCheck, RegisterOption, SimilarRow } from "../types";
-import LookupCombobox from "./LookupCombobox";
+import LookupCombobox, { lookupCheckBlock, type LookupCheck } from "./LookupCombobox";
+import { LEAVE_UNSAVED, useUnsavedChange } from "../utils/unsavedChanges";
+import { recordedDate } from "../utils/dates";
 
 const SUB_TYPES = ["termination", "balance", "renewal", "variation"];
 
@@ -60,12 +62,25 @@ export default function CreateRecordForm({
   const beginSimilar = useLatest();
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [activityCheck, setActivityCheck] = useState<LookupCheck>("idle");
   const debounce = useRef<number | undefined>(undefined);
+  // Typed, unsaved input (the register select is left out: the sub-contract
+  // form pre-fills it from the parent).
+  const dirty =
+    [folio, date, registerNumber, endDate, renewalMonths, firmName, activity, total, docText, source].some(
+      (v) => v.trim() !== "",
+    ) ||
+    (customRegister && (series.trim() !== "" || folder.trim() !== ""));
+  useUnsavedChange(dirty && !saving, table === "contract" ? "the new contract" : "the new sub-contract");
 
+  const [registersFailed, setRegistersFailed] = useState(false);
   useEffect(() => {
     loadRegisters()
       .then((response) => setRegisters(response.registers))
-      .catch(() => setRegisters([]));
+      .catch(() => {
+        setRegisters([]);
+        setRegistersFailed(true); // otherwise the dropdown is just empty
+      });
   }, []);
 
   // The act form anchors on its parent: summary header + register default.
@@ -138,11 +153,16 @@ export default function CreateRecordForm({
     setError("");
     if (!reviewer.trim()) return setError("Your initials are needed.");
     if (!folder.trim()) return setError("Pick the register.");
-    if (!folio.trim()) return setError("The folio anchors the act in the register — required.");
+    if (!folio.trim())
+      return setError(`The folio is required: it locates the ${table === "contract" ? "contract" : "sub-contract"} in the register.`);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return setError("Registration date must be YYYY-MM-DD.");
     if (docText.trim().length < 10) return setError("Write the narrative (the regest) — it is the record's text.");
     if (source.trim().length < 3)
-      return setError("A source line is required: this row has no Word summary, so the source IS its provenance.");
+      return setError("A source line is required: this record has no Word summary, so the source is its provenance.");
+    if (table === "contract") {
+      const wait = lookupCheckBlock(activityCheck, "the economic activity");
+      if (wait) return setError(wait);
+    }
     localStorage.setItem("floracco_reviewer", reviewer.trim());
     setSaving(true);
     try {
@@ -180,7 +200,7 @@ export default function CreateRecordForm({
           document: docText,
         });
       }
-      navigate(`/database/${table}/${result.id}`);
+      navigate(`/database/${table}/${result.id}`, LEAVE_UNSAVED); // saved: nothing to warn about
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -189,7 +209,7 @@ export default function CreateRecordForm({
   }, [
     table, parentId, reviewer, folder, folio, date, docText, source, registerNumber,
     firmName, activity, total, subType, endDate, renewalMonths,
-    effectiveArchive, effectiveSeries, navigate,
+    effectiveArchive, effectiveSeries, navigate, activityCheck,
   ]);
 
   const numberTaken = numberCheck && !numberCheck.free ? numberCheck.existing : null;
@@ -199,13 +219,13 @@ export default function CreateRecordForm({
       <header className="db-record-head">
         <div className="db-record-titles">
           <p className="eyebrow">
-            {table === "contract" ? "New contract — added directly to the database" : "New act on an existing contract"}
+            {table === "contract" ? "New contract — added directly to the database" : "New sub-contract of an existing contract"}
           </p>
-          <h2>{table === "contract" ? "Add a contract" : `Add an act${parent ? ` · ${parent.title}` : ""}`}</h2>
+          <h2>{table === "contract" ? "Add a contract" : `Add a sub-contract${parent ? ` · ${parent.title}` : ""}`}</h2>
           {table === "sub_contract" && parent && (
             <p className="muted create-parent-line">
-              Parent: <strong>{parent.title}</strong> ({parent.subtitle}) — acts often sit in a{" "}
-              <em>later</em> register than their parent; check the register below.
+              Parent: <strong>{parent.title}</strong> ({parent.subtitle}) — sub-contracts often sit in a{" "}
+              <em>later</em> register than their contract; check the register below.
             </p>
           )}
         </div>
@@ -244,6 +264,11 @@ export default function CreateRecordForm({
               </button>
             </div>
           )}
+          {registersFailed && !customRegister && (
+            <span className="lookup-status error-text">
+              The list of registers could not be loaded. Choose “other register…” to type it in.
+            </span>
+          )}
         </label>
 
         <label className="create-field">
@@ -258,19 +283,19 @@ export default function CreateRecordForm({
 
         {table === "contract" ? (
           <label className="create-field">
-            <span className="create-label">Register act number (optional)</span>
+            <span className="create-label">Contract number in the register (optional)</span>
             <input
               value={registerNumber}
               onChange={(e) => setRegisterNumber(e.target.value)}
               placeholder="the [Nuova] number in the register"
             />
             {numberCheck?.free && registerNumber.trim() && (
-              <span className="lookup-status is-reuse">Free — will become the record id.</span>
+              <span className="lookup-status is-reuse">Free: it will become the contract number.</span>
             )}
           </label>
         ) : (
           <label className="create-field">
-            <span className="create-label">Act type</span>
+            <span className="create-label">Sub-contract type</span>
             <select value={subType} onChange={(e) => setSubType(e.target.value)}>
               {SUB_TYPES.map((t) => (
                 <option key={t} value={t}>
@@ -307,6 +332,7 @@ export default function CreateRecordForm({
               value={activity}
               onChange={setActivity}
               placeholder="e.g. negozio di arte di seta"
+              onCheckChange={setActivityCheck}
             />
             <label className="create-field">
               <span className="create-label">Total capital (optional, number only)</span>
@@ -319,12 +345,12 @@ export default function CreateRecordForm({
       {numberTaken && (
         <div className="create-warning">
           <strong>Contract {numberTaken.id} already exists</strong> — {numberTaken.title} ·{" "}
-          {numberTaken.date} · c. {numberTaken.folio} · reg. {numberTaken.folder}. If what you are
+          {recordedDate(numberTaken.date) || "no date"} · c. {numberTaken.folio} · reg. {numberTaken.folder}. If what you are
           adding is a sub-contract <em>of</em> it (modifica, disdetta, …):
           <button
             type="button"
             className="pill-button"
-            onClick={() => navigate(`/database/sub_contract/new?parent=${numberTaken.id}`)}
+            onClick={() => navigate(`/database/sub_contract/new?parent=${numberTaken.id}`, LEAVE_UNSAVED)}
           >
             Add as sub-contract of contract {numberTaken.id} →
           </button>
@@ -347,7 +373,7 @@ export default function CreateRecordForm({
                 <button type="button" className="link-like" onClick={() => navigate(`/database/${row.table}/${row.id}`)}>
                   {row.title}
                 </button>{" "}
-                · {row.date} · c. {row.folio} <span className="muted">(same {row.match})</span>
+                · {recordedDate(row.date) || "no date"} · c. {row.folio} <span className="muted">(same {row.match})</span>
               </li>
             ))}
           </ul>
@@ -360,12 +386,12 @@ export default function CreateRecordForm({
           rows={10}
           value={docText}
           onChange={(e) => setDocText(e.target.value)}
-          placeholder="Summarize the act as you would have in the Word regesti: parties, capital, activity, terms…"
+          placeholder="Summarize the document as the Word regesti do: parties, capital, activity, terms…"
         />
       </label>
 
       <label className="create-field">
-        <span className="create-label">Source (required — this row has no Word summary; the source is its provenance)</span>
+        <span className="create-label">Source (required — this record has no Word summary; the source is its provenance)</span>
         <input
           value={source}
           onChange={(e) => setSource(e.target.value)}
@@ -380,17 +406,28 @@ export default function CreateRecordForm({
           onChange={(e) => setReviewer(e.target.value)}
           placeholder="initials"
         />
-        <button type="button" className="pill-button" onClick={() => navigate(-1)} disabled={saving}>
+        <button
+          type="button"
+          className="pill-button"
+          // Cancel is a deliberate discard: back to where the form is opened from, without asking.
+          onClick={() =>
+            navigate(
+              table === "sub_contract" && parentId ? `/database/contract/${parentId}` : "/database/contract",
+              LEAVE_UNSAVED,
+            )
+          }
+          disabled={saving}
+        >
           Cancel
         </button>
         <button type="button" className="pill-button is-active" onClick={submit} disabled={saving}>
-          {saving ? "Creating…" : table === "contract" ? "Create contract" : "Create act"}
+          {saving ? "Creating…" : table === "contract" ? "Create contract" : "Create sub-contract"}
         </button>
       </div>
       {error && <p className="error-text">{error}</p>}
       <p className="inline-editor-foot muted">
-        Creation is one audited operation (full snapshot in the change log; survives a database
-        reseed). Add investors, places, and further details afterwards on the record page.
+        The new record is saved under your initials and listed in its change history. Add partners, places
+        and further details afterwards on the record page.
       </p>
     </article>
   );

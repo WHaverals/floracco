@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { loadContractPersons, searchPersons } from "../api";
 import { useEscapeLayer } from "../utils/escapeLayers";
+import { useLatest } from "../utils/latest";
 import type { ContractPerson, DbSearchResult } from "../types";
 import IdentityHintLines from "./person-linkage/IdentityHintLines";
 
@@ -28,12 +29,17 @@ export default function PersonPicker({
   const [error, setError] = useState("");
   const [searchResults, setSearchResults] = useState<DbSearchResult[] | null>(null);
   const [searching, setSearching] = useState(false);
+  // "No partner matches" only once the contract's partners have actually loaded.
+  const [loaded, setLoaded] = useState(false);
+  const [crossFailed, setCrossFailed] = useState(false);
+  const beginCross = useLatest();
 
   useEffect(() => {
     loadContractPersons(contractId)
       .then((res) => {
         setPersons(res.persons);
         setContractTitle(res.contract_title);
+        setLoaded(true);
       })
       .catch((err: Error) => setError(err.message));
   }, [contractId]);
@@ -49,11 +55,13 @@ export default function PersonPicker({
   const runCrossSearch = () => {
     const q = filter.trim();
     if (q.length < 2) return;
+    const fresh = beginCross();
     setSearching(true);
+    setCrossFailed(false);
     searchPersons(q)
-      .then((res) => setSearchResults(res.results))
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setSearching(false));
+      .then((res) => fresh() && setSearchResults(res.results))
+      .catch(() => fresh() && setCrossFailed(true))
+      .finally(() => fresh() && setSearching(false));
   };
 
   return (
@@ -74,7 +82,7 @@ export default function PersonPicker({
           {error && <p className="error-text">{error}</p>}
           <p className="muted">
             The same name can belong to many different people across the corpus — pick the exact person, don't
-            free-type. These are the investors recorded on this contract.
+            free-type. These are the partners recorded on this contract.
           </p>
           <input
             className="db-search"
@@ -83,6 +91,9 @@ export default function PersonPicker({
             onChange={(event) => {
               setFilter(event.target.value);
               setSearchResults(null);
+              beginCross(); // a cross-search for the old text must not land under the new one
+              setSearching(false);
+              setCrossFailed(false);
             }}
           />
           <ul className="picker-list">
@@ -95,14 +106,15 @@ export default function PersonPicker({
                 >
                   <span className="picker-name">{p.display_name}</span>
                   <span className="picker-detail">
-                    {p.detail ? `${p.detail} · ` : ""}#{p.person_id} · on {p.appears_on_contracts} contract
+                    {p.detail ? `${p.detail} · ` : ""}Entry #{p.person_id} · on {p.appears_on_contracts} contract
                     {p.appears_on_contracts === 1 ? "" : "s"}
                   </span>
                   <IdentityHintLines hint={p.identity_hint} />
                 </button>
               </li>
             ))}
-            {filtered.length === 0 && <li className="db-empty muted">No investor on this contract matches.</li>}
+            {!loaded && !error && <li className="db-empty muted">Loading the partners on this contract…</li>}
+            {loaded && filtered.length === 0 && <li className="db-empty muted">No partner on this contract matches.</li>}
           </ul>
 
           <div className="picker-cross">
@@ -114,6 +126,9 @@ export default function PersonPicker({
             >
               {searching ? "Searching…" : "Search the whole database"}
             </button>
+            {crossFailed && (
+              <p className="error-text">The search across the database did not run. Click the button to try again.</p>
+            )}
             {searchResults && (
               <ul className="picker-list">
                 {searchResults.map((r) => (
@@ -137,8 +152,8 @@ export default function PersonPicker({
           </div>
 
           <p className="muted propose-foot">
-            Not listed, or a genuinely new person? That needs entity resolution we don't do yet — record it in the
-            correction rationale and flag for review rather than guessing.
+            Not listed? Search the whole database above. A person who is not in the database yet is added from the
+            contract’s Partners block, with “+ Add partner”.
           </p>
         </div>
       </aside>

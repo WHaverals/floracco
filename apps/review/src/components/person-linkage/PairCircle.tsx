@@ -155,7 +155,7 @@ export default function PairCircle({ data }: { data: CircleData }) {
           .
         </>
       ) : (
-        "; the act names no firm."
+        "; the contract names no firm."
       )}
     </span>
   );
@@ -177,7 +177,7 @@ export default function PairCircle({ data }: { data: CircleData }) {
     <>
       {nameLine(candidate.name, candidate.id)}
       <span>
-        <b className="pl-circle-tip-year">{candidate.acts}</b> acts from{" "}
+        <b className="pl-circle-tip-year">{candidate.acts}</b> contracts from{" "}
         {candidate.active.replace("–", " to ")}, {candidate.role}.
       </span>
     </>

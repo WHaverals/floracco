@@ -174,7 +174,7 @@ const PRIMER_NOTES: ReactNode[] = [
   (
     <>
       A hand-made list of 83 spelling variants was built and set aside. For
-      example, it paired <em>Iacob</em> with <em>Jacob</em>, <em>Cammillo</em> with <em>Camillo</em> and
+      example, it paired <em>Iacob</em> with <em>Jacob</em>, <em>Cammillo</em> with <em>Camillo</em> and{" "}
       <em>Laldadio</em> with <em>Laudadio</em>; the one-letter rule finds all three by itself. The rule
       also sweeps in <em>Mario</em> and <em>Marco</em>, which are two names. The project measured that error and
       accepted it: a one-letter difference earns only <Bits v={3.9} unit />, and such
@@ -433,7 +433,7 @@ const CORSINI_ROWS: PairRow[] = [
   { field: "Grandfather", a: null, b: "Lorenzo" },
   { field: "Family name", a: "Corsini", b: "Corsini" },
   { field: "Active", a: "1631\u20131644", b: "1645\u20131657" },
-  { field: "Acts", a: "5", b: "3" },
+  { field: "Contracts", a: "5", b: "3" },
   { field: "Role", a: "external investor in all 5", b: "external investor in all 3" },
   { field: "Firms", a: "5 firms, among them Benedetto Nomi e Tommaso Pandolfini e compagni (1638)", b: "3 firms, among them Benedetto Nomi e Tommaso Pandolfini e compagni (1645)" },
   { field: "Shared partners", span: "7 by entry number, among them Benedetto Nomi, Tommaso Pandolfini, Luca and Agostino Franceschi, Carlo and Giovanni Rinuccini" },
@@ -643,7 +643,7 @@ function RecordPairs({
             <span>Grandfather</span>
             <span>Family name</span>
             <span>Active</span>
-            <span>Acts</span>
+            <span>Contracts</span>
           </span>
           <span />
           <span />
@@ -1016,7 +1016,7 @@ export default function PersonLinkagePrimer() {
           father&rsquo;s name and family name, comes back every second
           generation.<Fn n={8} /> The Torrigiani family shows how this works
           over the course of roughly a century, and the figure below places
-          its five person entries on one time line. The given names <em>Raffaello</em>
+          its five person entries on one time line. The given names <em>Raffaello</em>{" "}
           and <em>Luca</em> alternate, and with them the whole chain: a Raffaello di
           Luca di Raffaello,
           active from 1532; a Luca di Raffaello di Luca, from 1546; a Raffaello
@@ -1048,13 +1048,13 @@ export default function PersonLinkagePrimer() {
         />
         <p>
           Spelling misleads in different directions. <em>Riccardi</em> and <em>Ricciardi</em>, in
-          the first example, are one letter apart and one man. <em>Antonio</em> and
+          the first example, are one letter apart and one man. <em>Antonio</em> and{" "}
           <em>Antonia</em> are one letter apart and a man and a woman (in Italian the
           final vowel marks the gender). A simple edit-distance measure such
           as Levenshtein, which counts the letters that must change to turn
           one spelling into the other, cannot tell the two cases apart: one
           letter in each. Nor can the finer score the tool uses for whole
-          names (on which <em>Riccardi</em> and <em>Ricciardi</em> reach 0.93 and <em>Antonio</em>
+          names (on which <em>Riccardi</em> and <em>Ricciardi</em> reach 0.93 and <em>Antonio</em>{" "}
           and <em>Antonia</em> 0.94).<Fn n={10} /> The tool does two things so that
           spellings can still be compared. First, closeness is graded: two
           names that agree exactly are a strong clue that the entries
@@ -1065,7 +1065,7 @@ export default function PersonLinkagePrimer() {
           names: a change of the final letter alone is not a spelling
           variant, because <em>-o</em> and <em>-a</em> mark
           gender and <em>-i</em> and <em>-o</em> mark a family
-          against an individual. <em>Pagolo</em> and <em>Paolo</em> are one name; <em>Francesco</em> and
+          against an individual. <em>Pagolo</em> and <em>Paolo</em> are one name; <em>Francesco</em> and{" "}
           <em>Francesca</em> are two.<Fn n={11} />
         </p>
       </section>

@@ -142,12 +142,13 @@ export default function Hub() {
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="firm, person, place, activity, narrative text, or an act number…"
+              placeholder="firm, person, place, activity, narrative text, or a number…"
               aria-label="Search the corpus"
             />
           </form>
           <p className="muted hub-search-hint">
-            Press Enter to search the full corpus · words combine with AND · "quotes" for exact phrases.
+            Press Enter to search the full corpus · words combine with AND · "quotes" for exact phrases · a
+            number also finds the contract, sub-contract and person entry that carry it.
           </p>
           <div className="hub-grid home-explore-grid">
             {TOOLS.filter((tool) => !isToolHidden(tool.key)).map((tool) => (

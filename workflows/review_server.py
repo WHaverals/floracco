@@ -963,7 +963,7 @@ DB_BROWSE_TABLES = {"contract", "sub_contract", "person"}
 def open_db() -> sqlite3.Connection:
     path = db_path()
     if not path.exists():
-        raise HTTPException(status_code=503, detail="SQLite database not found.")
+        raise HTTPException(status_code=503, detail="The database is not available on the server right now.")
     # 15 s busy wait: a write queued behind a long Analysis read (≤6 s cap) waits
     # and then succeeds instead of erroring (docs/multi_user_safety.md §0 A3).
     connection = sqlite3.connect(path, timeout=15.0)
@@ -1010,6 +1010,17 @@ def display_text(value: Any) -> str:
     if value in (None, ""):
         return "—"
     return str(value)
+
+
+PLACEHOLDER_DATE = "0000-00-00"
+
+
+def display_date(value: Any) -> str:
+    """A stored date for reading. The archive export wrote 0000-00-00 where no
+    date was recorded; it reads "not recorded". The stored value is unchanged."""
+    if str(value or "").strip() == PLACEHOLDER_DATE:
+        return "not recorded"
+    return display_text(value)
 
 
 def yes_no(value: Any) -> str:
@@ -1965,8 +1976,8 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
     corrections = proposals_for_row(f"contract:{raw_id}")
     fields = [
         record_field("Firm name", "contract", "firm_name", data.get("firm_name"), display_text(data.get("firm_name")), corrections),
-        record_field("Registration date", "contract", "registration_date", data.get("registration_date"), display_text(data.get("registration_date")), corrections),
-        record_field("Start date", "contract", "start_date", data.get("start_date"), display_text(data.get("start_date")), corrections),
+        record_field("Registration date", "contract", "registration_date", data.get("registration_date"), display_date(data.get("registration_date")), corrections),
+        record_field("Start date", "contract", "start_date", data.get("start_date"), display_date(data.get("start_date")), corrections),
         # Capital amount + its currency unit are one concept ("1000" + "fiorini
         # d'oro"); kept consecutive (and a row-start pair at the usual width) so
         # they read and edit together, not 10 fields apart.
@@ -1982,7 +1993,7 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         record_field("Economic activity at discretion", "contract", "ec_discretion", data.get("ec_discretion"), yes_no(data.get("ec_discretion")), corrections),
         record_field("Administrators named", "contract", "administrators", data.get("administrators"), yes_no(data.get("administrators")), corrections),
         record_field("Additional documents", "contract", "additional_docs", data.get("additional_docs"), yes_no(data.get("additional_docs")), corrections),
-        relink_field(connection, "Economic sector", "contract", raw_id, "economic_sector", "economic_activity", data.get("economic_sector")),
+        relink_field(connection, "Economic activity", "contract", raw_id, "economic_sector", "economic_activity", data.get("economic_sector")),
     ]
     _attach_word_check(connection, fields, f"contract:{raw_id}")
 
@@ -2012,7 +2023,7 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
                         "id": str(s["contract_id"]),
                         "cells": [
                             display_text(s["sub_type"]),
-                            display_text(s["registration_date"]),
+                            display_date(s["registration_date"]),
                             display_text(s["folio"]),
                             display_text(s["sub_firm_name"]),
                         ],
@@ -2054,8 +2065,8 @@ def sub_contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str
     fields = [
         record_field("Sub-firm name", "sub_contract", "sub_firm_name", data.get("sub_firm_name"), display_text(data.get("sub_firm_name")), corrections),
         record_field("Type", "sub_contract", "sub_type", data.get("sub_type"), display_text(data.get("sub_type")), corrections),
-        record_field("Registration date", "sub_contract", "registration_date", data.get("registration_date"), display_text(data.get("registration_date")), corrections),
-        record_field("End date", "sub_contract", "end_date", data.get("end_date"), display_text(data.get("end_date")), corrections),
+        record_field("Registration date", "sub_contract", "registration_date", data.get("registration_date"), display_date(data.get("registration_date")), corrections),
+        record_field("End date", "sub_contract", "end_date", data.get("end_date"), display_date(data.get("end_date")), corrections),
         record_field("Renewal (months)", "sub_contract", "renewal_months", data.get("renewal_months"), display_text(data.get("renewal_months")), corrections),
         record_field("Folio", "sub_contract", "folio", data.get("folio"), display_text(data.get("folio")), corrections),
         record_field("Archive / series / folder", "sub_contract", None, None, display_text(archive_ref), corrections),
@@ -2080,7 +2091,7 @@ def sub_contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str
                             "id": str(main["contract_id"]),
                             "cells": [
                                 display_text(main["firm_name"]),
-                                display_text(main["registration_date"]),
+                                display_date(main["registration_date"]),
                                 display_text(main["folio"]),
                             ],
                         }
@@ -2153,7 +2164,7 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
                         "id": str(c["contract_id"]),
                         "cells": [
                             display_text(c["firm_name"]),
-                            display_text(c["registration_date"]),
+                            display_date(c["registration_date"]),
                             display_text(c["profession"]),
                         ],
                     }
@@ -2185,8 +2196,8 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
     else:
         word_sources_note = (
             "Indirect: these are the Word entries (and folio images) for the "
-            f"{len(targets)} contract(s) where this person is recorded as an "
-            "investor."
+            f"{len(targets)} contract(s) where this person is recorded as a "
+            "partner."
         )
         if total > cap:
             word_sources_note += f" Showing the first {cap} of {total}."
@@ -2214,7 +2225,7 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
             data.get("father_mother"),
             data.get("grandfather"),
         ),
-        "subtitle": f"Person #{raw_id} · {appearances}",
+        "subtitle": f"Person entry #{raw_id} · {appearances}",
         "fields": fields,
         "sections": sections,
         "document": None,
@@ -2260,7 +2271,7 @@ def _person_search_meta(person_id: Any, contract_count: Any) -> str:
         suffix = "1 contract"
     else:
         suffix = f"{count} contracts"
-    return f"#{person_id} · {suffix}"
+    return f"Entry #{person_id} · {suffix}"
 
 
 # Whitelisted ORDER BY bodies (after the exact-id-float lead key). No user text is
@@ -2662,28 +2673,44 @@ REFERENCE_KINDS: dict[str, tuple[str, str, str]] = {
 }
 
 
-def _reference_counts(connection: sqlite3.Connection, kind: str) -> dict[int, int]:
-    """How many live record-references each term has — pure counting, no judgement."""
-    counts: dict[int, int] = {}
+# Each vocabulary's kinds of use. Every part counts links on LIVE contracts only
+# (joined to contract), so links on hidden contracts, or on contract numbers that
+# do not exist, never count: the same population the term page and Analysis use.
+_LIVE_INVESTOR = "FROM investor i JOIN contract c ON c.contract_id = i.contract_id AND c.is_deleted = 0 "
+_REFERENCE_PARTS: dict[str, list[tuple[str, str]]] = {
+    "place": [
+        (
+            "activity",
+            "SELECT cp.place_id k, COUNT(*) n FROM contract_place cp "
+            "JOIN contract c ON c.contract_id = cp.contract_id AND c.is_deleted = 0 "
+            "WHERE cp.is_deleted = 0 GROUP BY cp.place_id",
+        ),
+        ("residence", f"SELECT i.place_of_residence k, COUNT(*) n {_LIVE_INVESTOR}WHERE i.is_deleted = 0 GROUP BY i.place_of_residence"),
+        ("origin", f"SELECT i.place_of_origin k, COUNT(*) n {_LIVE_INVESTOR}WHERE i.is_deleted = 0 GROUP BY i.place_of_origin"),
+    ],
+    "title": [
+        (col, f"SELECT i.{col} k, COUNT(*) n {_LIVE_INVESTOR}WHERE i.is_deleted = 0 GROUP BY i.{col}")
+        for col in ("title", "title_husband", "title_father_mother", "title_grandfather")
+    ],
+    "currency": [("contract", "SELECT currency_id k, COUNT(*) n FROM contract WHERE is_deleted = 0 GROUP BY currency_id")],
+    "activity": [("contract", "SELECT economic_sector k, COUNT(*) n FROM contract WHERE is_deleted = 0 GROUP BY economic_sector")],
+}
 
-    def add(sql: str) -> None:
+
+def _reference_parts(connection: sqlite3.Connection, kind: str) -> dict[int, dict[str, int]]:
+    """Per term, its live references split by kind of use — pure counting, no judgement."""
+    parts: dict[int, dict[str, int]] = {}
+    for part, sql in _REFERENCE_PARTS.get(kind, []):
         for row in connection.execute(sql):
             key = row["k"]
             if key not in (None, 0, ""):
-                counts[int(key)] = counts.get(int(key), 0) + row["n"]
+                parts.setdefault(int(key), {})[part] = row["n"]
+    return parts
 
-    if kind == "place":
-        add("SELECT place_id k, COUNT(*) n FROM contract_place WHERE is_deleted = 0 GROUP BY place_id")
-        add("SELECT place_of_residence k, COUNT(*) n FROM investor WHERE is_deleted = 0 GROUP BY place_of_residence")
-        add("SELECT place_of_origin k, COUNT(*) n FROM investor WHERE is_deleted = 0 GROUP BY place_of_origin")
-    elif kind == "title":
-        for col in ("title", "title_husband", "title_grandfather", "title_father_mother"):
-            add(f"SELECT {col} k, COUNT(*) n FROM investor WHERE is_deleted = 0 GROUP BY {col}")
-    elif kind == "currency":
-        add("SELECT currency_id k, COUNT(*) n FROM contract WHERE is_deleted = 0 GROUP BY currency_id")
-    elif kind == "activity":
-        add("SELECT economic_sector k, COUNT(*) n FROM contract WHERE is_deleted = 0 GROUP BY economic_sector")
-    return counts
+
+def _reference_counts(connection: sqlite3.Connection, kind: str) -> dict[int, int]:
+    """How many live record-references each term has: the sum of its parts."""
+    return {k: sum(v.values()) for k, v in _reference_parts(connection, kind).items()}
 
 
 @app.get("/api/db/reference/{kind}")
@@ -2733,10 +2760,15 @@ def db_reference(
 
 @app.get("/api/db/reference/{kind}/{term_id}/records")
 def db_reference_records(
-    kind: str, term_id: int, limit: int = Query(default=120, ge=1, le=500)
+    kind: str,
+    term_id: int,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=120, ge=1, le=500),
 ) -> dict[str, Any]:
     """The contracts that reference a term — the live index + a by-decade histogram
-    (when the term is attested). All derived by following foreign keys; no inference."""
+    (when the term is attested). All derived by following foreign keys; no inference.
+    Paged by offset/limit over the full date-ordered list; record_total, by_decade
+    and narrative_mentions always describe the whole set."""
     if kind not in REFERENCE_KINDS:
         raise HTTPException(status_code=400, detail="Unknown vocabulary.")
     table, id_col, name_col = REFERENCE_KINDS[kind]
@@ -2782,7 +2814,7 @@ def db_reference_records(
                 f"SELECT contract_id, firm_name, registration_date, folio, folder FROM contract "
                 f"WHERE contract_id IN ({marks}) AND is_deleted = 0 "
                 "ORDER BY CASE WHEN registration_date IS NULL OR registration_date IN ('', '0000-00-00') "
-                "THEN 1 ELSE 0 END, registration_date",
+                "THEN 1 ELSE 0 END, registration_date, contract_id",
                 tuple(cids),
             ):
                 records.append(
@@ -2800,16 +2832,19 @@ def db_reference_records(
         # How often the term's text appears in the free narrative — a different,
         # honest signal from the structured links above. For an unused term this
         # shows whether it is a genuine missing-link candidate (in the text) or a
-        # stray spelling (absent). Case-insensitive substring; a rough but useful count.
-        narrative_mentions = 0
+        # stray spelling (absent). Case-insensitive substring; a rough but useful count,
+        # kept apart for contracts and sub-contracts so the page can say which.
+        narrative_contracts = narrative_sub_contracts = 0
         if (value or "").strip():
             like = f"%{value}%"
-            narrative_mentions = connection.execute(
+            narrative_contracts = connection.execute(
                 "SELECT COUNT(*) FROM contract WHERE is_deleted = 0 AND document LIKE ? COLLATE NOCASE", (like,)
             ).fetchone()[0]
-            narrative_mentions += connection.execute(
+            narrative_sub_contracts = connection.execute(
                 "SELECT COUNT(*) FROM sub_contract WHERE is_deleted = 0 AND document LIKE ? COLLATE NOCASE", (like,)
             ).fetchone()[0]
+        # The rail's number for this term, split by kind of use (same SQL as the rail).
+        parts = _reference_parts(connection, kind).get(term_id, {})
         # Machine resolution + coordinate (place only, if the batch has run).
         resolution = None
         if kind == "place" and place_cache.exists():
@@ -2825,8 +2860,13 @@ def db_reference_records(
             # show), not the raw id set — which can include hidden contracts and
             # the phantom-contract links catalogued in the integrity report.
             "record_total": len(records),
-            "narrative_mentions": narrative_mentions,
-            "records": records[:limit],
+            "usage_parts": parts,
+            "usage_total": sum(parts.values()),
+            "narrative_mentions": narrative_contracts + narrative_sub_contracts,
+            "narrative_contracts": narrative_contracts,
+            "narrative_sub_contracts": narrative_sub_contracts,
+            "offset": offset,
+            "records": records[offset : offset + limit],
             "by_decade": [{"decade": k, "count": v} for k, v in sorted(decade.items())],
             "resolution": resolution,
         }
@@ -3187,7 +3227,8 @@ def _person_labeling_open_case_ids(
     yields no members: half-blinding a mismatched round would stamp labels
     with the wrong sampling provenance, so the round simply suspends and
     normal review behaviour returns. A case leaves the round once its latest
-    event is a decision, and re-enters it on reopen.
+    event is a decision, and re-enters it when that decision is undone or
+    the case is reopened.
     """
     rows = _person_labeling_packet_rows()
     if not _person_labeling_packet_matches_run(rows, run):
@@ -3196,7 +3237,7 @@ def _person_labeling_open_case_ids(
     for row in rows:
         case_id = f"pair:{row['pair_key']}"
         event = latest.get(case_id)
-        if event is None or event["action"] == "reopen":
+        if event is None or event["action"] in {"reopen", "revoke"}:
             open_ids.add(case_id)
     return open_ids
 
@@ -3365,7 +3406,7 @@ def _person_group_preview(
         "case_id": group["case_id"],
         "kind": "group",
         "person_ids": ids,
-        "names": [names_by_id.get(value, f"Person {value}") for value in ids],
+        "names": [names_by_id.get(value, f"Entry #{value}") for value in ids],
         "lane": (
             "possible_splits"
             if guarded
@@ -3463,8 +3504,10 @@ def _person_case_status(
     event = latest_events.get(case["case_id"])
     if event and event["action"] in {"defer", "flag_split"}:
         return str(event["action"])
-    if event and event["action"] == "revoke":
-        return "revoked"
+    # An undone decision ("revoke") is not a status of its own: the revoke
+    # cleared the links, so the fall-through below reads the case as open
+    # again and it returns to its lane (2026-10-26; before, it parked under
+    # Decided as "revoked" until someone pressed reopen).
     ids = [int(value) for value in case.get("person_ids") or []]
     if len(ids) >= 2:
         roots = {parent.get(value, value) for value in ids}
@@ -3666,10 +3709,10 @@ def _with_decision_meta(
 ) -> dict[str, Any]:
     """Who decided, when, and the note — on Decided rows and flagged entries.
 
-    A reopen is not a decision: a case whose latest event is a reopen is open
-    again and shows no decision line.
+    A reopen or an undo is not a decision: a case whose latest event is one
+    of those is open again and shows no decision line.
     """
-    if event and event.get("action") != "reopen":
+    if event and event.get("action") not in {"reopen", "revoke"}:
         preview["decided_by"] = event.get("created_by") or ""
         preview["decided_at"] = event.get("created_at") or ""
         preview["note"] = event.get("rationale") or ""
@@ -3989,7 +4032,7 @@ def person_linkage_summary() -> dict[str, Any]:
     cache = open_person_cache()
     try:
         for case_id, event in latest.items():
-            if event["action"] in {"reopen", "bulk_rule_ack"}:
+            if event["action"] in {"reopen", "revoke", "bulk_rule_ack"}:
                 continue
             lane = None
             if case_id in group_map:
@@ -4082,7 +4125,7 @@ def _person_split_previews() -> list[dict[str, Any]]:
                     "combined_span_years": row["last_year"] - row["first_year"],
                 },
                 "reasons": [
-                    f"the entered record spans {row['last_year']-row['first_year']} years"
+                    f"the entry spans {row['last_year']-row['first_year']} years"
                 ],
             }
             for row in rows
@@ -4475,7 +4518,10 @@ def person_linkage_cases(
             cache.close()
             raise HTTPException(
                 status_code=409,
-                detail="The frozen labeling packet does not match this suggestion cache. Regenerate it before review.",
+                detail=(
+                    "Judge blind is paused: its cases were drawn from an earlier set of suggestions, "
+                    "and a new set has to be drawn before judging can resume."
+                ),
             )
         for packet_row in packet_rows:
             pair_key_value = str(packet_row["pair_key"])
@@ -4649,10 +4695,12 @@ def person_linkage_cases(
             "(lower(evidence_json) LIKE ? OR CAST(person_id_l AS TEXT)=? OR CAST(person_id_r AS TEXT)=?)"
         )
         params.extend([f"%{query}%", query, query])
+    # A pair whose latest note is a reopen or an undo is open again and stays
+    # in its lane; any other latest note is a decision that moves it out.
     decided_pair_keys = [
         case_id.removeprefix("pair:")
         for case_id, event in latest.items()
-        if case_id.startswith("pair:") and event.get("action") != "reopen"
+        if case_id.startswith("pair:") and event.get("action") not in {"reopen", "revoke"}
     ]
     if status == "open" and decided_pair_keys:
         marks = ",".join("?" for _ in decided_pair_keys)
@@ -4718,7 +4766,7 @@ def _person_card(connection: sqlite3.Connection, person_id: int) -> dict[str, An
     if not person:
         return {
             "person_id": person_id,
-            "display_name": f"Person {person_id} (no longer present)",
+            "display_name": f"Entry #{person_id} (no longer present)",
             "fields": {
                 "first_name": None,
                 "father_mother": None,
@@ -4840,7 +4888,7 @@ def _person_pair_by_key(cache: sqlite3.Connection, key: str) -> dict[str, Any]:
         "SELECT * FROM person_pair_suggestion WHERE pair_key=?", (key,)
     ).fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="Person-linkage case not found.")
+        raise HTTPException(status_code=404, detail="This case is no longer in the list of suggestions.")
     return _decode_person_pair(row)
 
 
@@ -4971,7 +5019,7 @@ def _person_business_context(
                         partner["grandfather"],
                     )
                     if partner
-                    else f"Person {partner_id}"
+                    else f"Entry #{partner_id}"
                 ),
                 "connections_by_person": connections,
             }
@@ -5350,7 +5398,7 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
     ):
         raise HTTPException(
             status_code=400,
-            detail="Explain why the reviewed source overrides the career-conflict rule.",
+            detail="Explain why the sources override the rule.",
         )
     if action.action == "flag_split" and case["status"] == "flag_split":
         # Flagging an already-flagged entry used to fall through to the
@@ -5373,8 +5421,10 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
             detail="This case changed after you opened it. Reload before deciding.",
         )
     if action.action == "reopen":
-        if case["status"] not in {"defer", "flag_split", "revoked"}:
-            raise HTTPException(status_code=409, detail="Only a closed or deferred case can be reopened.")
+        # An undone link is already open; only a deferral or a flag closes a
+        # case in a way that reopen can undo.
+        if case["status"] not in {"defer", "flag_split"}:
+            raise HTTPException(status_code=409, detail="Only a deferred or flagged case can be reopened.")
     elif action.action != "bulk_rule_ack" and case["status"] != "open":
         raise HTTPException(
             status_code=409,
@@ -5391,8 +5441,13 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
                 "FROM person WHERE person_id=?",
                 (person_id,),
             ).fetchone()
-            if not row or row["is_deleted"]:
-                raise HTTPException(status_code=409, detail=f"Person {person_id} is unavailable.")
+            if not row:
+                raise HTTPException(status_code=409, detail=f"Person entry #{person_id} is no longer in the database.")
+            if row["is_deleted"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Person entry #{person_id} is hidden. Restore it under Database before deciding.",
+                )
             if (
                 classify_entity_kind(
                     row["first_name"],
@@ -5404,7 +5459,10 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
             ):
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Record {person_id} is not classified as a person.",
+                    detail=(
+                        f"Person entry #{person_id} does not name a person "
+                        "(it reads as an institution, an estate or a placeholder)."
+                    ),
                 )
     finally:
         connection.close()
@@ -5423,7 +5481,7 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
         if not labeling_metadata:
             raise HTTPException(
                 status_code=400,
-                detail="This case is not in the active frozen labeling packet.",
+                detail="This case is not in the current Judge blind round.",
             )
     snapshot = {
         **case["evidence_basis"],
@@ -5614,7 +5672,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "location_frequency",
         "group": "Geography",
         "title": "Most-frequent places of activity",
-        "description": "How often each place is recorded as a firm's place of activity.",
+        "description": "How many contracts record each place as a place of activity. Partners' residences and places of origin are not counted here.",
         "chart": "bar",
         "sql": "SELECT p.place_name, COUNT(*) AS contracts\n"
         "FROM contract_place cp JOIN place p ON p.place_id = cp.place_id\n"
@@ -5624,8 +5682,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "investors_per_contract",
         "group": "Structure",
-        "title": "Contracts ranked by number of investors",
-        "description": "Each contract with its count of investors, most first.",
+        "title": "Contracts ranked by number of partners",
+        "description": "Each contract with the number of partner appearances recorded on it, most first. "
+        "A person entered twice on one contract counts twice.",
         "chart": "none",
         "sql": "SELECT i.contract_id, COUNT(*) AS investors FROM investor i\n"
         "JOIN contract c ON c.contract_id = i.contract_id AND c.is_deleted = 0\n"
@@ -5637,15 +5696,16 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "title": "Contracts ranked by number of sub-contracts",
         "description": "Each contract with its count of sub-contracts (terminations, variations, …).",
         "chart": "none",
-        "sql": "SELECT s.main_contract_id AS contract_id, COUNT(*) AS later_acts FROM sub_contract s\n"
+        "sql": "SELECT s.main_contract_id AS contract_id, COUNT(*) AS sub_contracts FROM sub_contract s\n"
         "JOIN contract c ON c.contract_id = s.main_contract_id AND c.is_deleted = 0\n"
-        "WHERE s.is_deleted = 0 GROUP BY s.main_contract_id ORDER BY later_acts DESC",
+        "WHERE s.is_deleted = 0 GROUP BY s.main_contract_id ORDER BY sub_contracts DESC",
     },
     {
         "id": "investments_by_role",
         "group": "Structure",
-        "title": "Investments by role (general vs limited)",
-        "description": "Count of investments held as general partner (gp) vs limited partner (lp).",
+        "title": "Stakes by role (general vs limited partner)",
+        "description": "Number of stakes recorded for general partners and for limited partners. "
+        "A stake shared by several partners counts once.",
         "chart": "bar",
         "sql": "SELECT type AS role, COUNT(*) AS investments FROM investment\n"
         "WHERE is_deleted = 0 AND type IN ('gp', 'lp') GROUP BY type",
@@ -5653,8 +5713,8 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "women_investors",
         "group": "People & gender",
-        "title": "Women investors",
-        "description": "Every contract with a woman recorded among its investors.",
+        "title": "Women partners",
+        "description": "Every contract with a woman recorded among its partners.",
         "chart": "none",
         "sql": "SELECT DISTINCT c.contract_id, CAST(substr(c.registration_date, 1, 4) AS INTEGER) AS year,\n"
         "       pe.first_name, pe.last_name\n"
@@ -5685,8 +5745,8 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "no_investors",
         "group": "Data quality",
-        "title": "Contracts with no investors",
-        "description": "Contracts that have no investors recorded.",
+        "title": "Contracts with no partners",
+        "description": "Contracts that have no partners recorded.",
         "chart": "none",
         "sql": "SELECT c.contract_id, c.registration_date, c.firm_name\n"
         "FROM contract c LEFT JOIN investor i ON i.contract_id = c.contract_id AND i.is_deleted = 0\n"
@@ -5705,9 +5765,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "jewish_all",
         "group": "People & gender",
-        "title": "Contracts where all investors are Jewish (recorded or attributed)",
-        "description": "Every investor is Jewish — either stated in the act (is_jewish) or by the "
-        "data-entry team's editorial attribution (jewish_db).",
+        "title": "Contracts where all partners are Jewish (recorded or attributed)",
+        "description": "Every partner is Jewish, either as stated in the act or by the "
+        "data-entry team's editorial attribution.",
         "chart": "none",
         "sql": "SELECT CAST(substr(c.registration_date,1,4) AS INTEGER) AS year, c.contract_id, c.firm_name\n"
         "FROM contract c\n"
@@ -5719,9 +5779,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "jewish_mixed",
         "group": "People & gender",
-        "title": "Contracts with mixed Jewish & non-Jewish investors (recorded or attributed)",
-        "description": "At least one Jewish investor (stated in the act or editorially attributed) "
-        "and at least one investor with neither flag.",
+        "title": "Contracts with mixed Jewish & non-Jewish partners (recorded or attributed)",
+        "description": "At least one Jewish partner (stated in the act or editorially attributed) "
+        "and at least one partner recorded as neither.",
         "chart": "none",
         "sql": "SELECT CAST(substr(c.registration_date,1,4) AS INTEGER) AS year, c.contract_id, c.firm_name\n"
         "FROM contract c\n"
@@ -5733,9 +5793,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "gp_lp_per_contract",
         "group": "Structure",
-        "title": "General/limited partners per contract (min · avg · max)",
-        "description": "How many general (gp) and limited (lp) partners a contract has — people, counted "
-        "once each, even when several share one investment or one person holds several.",
+        "title": "General and limited partners per contract (fewest, average, most)",
+        "description": "How many general and limited partners a contract has. Each person is counted "
+        "once, even when several share one stake or one person holds several.",
         "chart": "none",
         # Partners are PEOPLE reached through investor_group, never investment rows:
         # a joint tranche has N co-holders (counting rows collapsed them to 1), one
@@ -5761,7 +5821,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "relatives_in_contract",
         "group": "People & gender",
         "title": "Possible relatives in the same contract",
-        "description": "Investors in one contract who share a last name, father's name, or grandfather's name.",
+        "description": "Partners in one contract who share a last name, father's name, or grandfather's name.",
         "chart": "none",
         "sql": "SELECT DISTINCT i1.contract_id, p1.last_name, p1.father_mother, p1.grandfather, p1.first_name\n"
         "FROM investor i1 JOIN person p1 ON p1.person_id = i1.person_id\n"
@@ -5777,8 +5837,8 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "pct_via_proxy",
         "group": "People & gender",
-        "title": "Share of investors acting via proxy",
-        "description": "Percentage of investor appearances recorded as acting through a proxy.",
+        "title": "Share of partners acting via proxy",
+        "description": "Percentage of partner appearances recorded as acting through a proxy.",
         "chart": "none",
         "sql": "SELECT ROUND(100.0 * SUM(CASE WHEN i.via_proxy = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_via_proxy,\n"
         "       COUNT(*) AS total_investors\n"
@@ -5788,9 +5848,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "via_proxy_over_time",
         "group": "Trends over time",
-        "title": "Investing via proxy, by decade",
-        "description": "Share of investor appearances acting through a proxy, by decade "
-        "(decades with ≥30 investors).",
+        "title": "Partners acting via proxy, by decade",
+        "description": "Share of partner appearances acting through a proxy, by decade "
+        "(decades with ≥30 partner appearances).",
         "chart": "line",
         "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
         "       COUNT(*) AS investors,\n"
@@ -5802,9 +5862,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "jewish_over_time",
         "group": "Trends over time",
-        "title": "Jewish investors (recorded or attributed), by decade",
-        "description": "Share of investor appearances that are Jewish by either provenance — stated in "
-        "the act (is_jewish) or editorially attributed (jewish_db) — by decade (decades with ≥30 investors).",
+        "title": "Jewish partners (recorded or attributed), by decade",
+        "description": "Share of partner appearances that are Jewish by either provenance, stated in "
+        "the act or editorially attributed, by decade (decades with ≥30 partner appearances).",
         "chart": "line",
         "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
         "       COUNT(*) AS investors,\n"
@@ -5816,9 +5876,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "jewish_provenance_over_time",
         "group": "Trends over time",
-        "title": "Jewish investors by provenance, by decade",
+        "title": "Jewish partners by provenance, by decade",
         "description": "The same share split by how we know: stated in the act vs. the data-entry "
-        "team's editorial attribution (basis not recorded per entry). Decades with ≥30 investors.",
+        "team's editorial attribution (its basis is not recorded for each partner). Decades with ≥30 partner appearances.",
         "chart": "multiline",
         "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
         "       ROUND(100.0 * SUM(CASE WHEN i.is_jewish = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_stated_in_act,\n"
@@ -5830,9 +5890,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
     {
         "id": "joint_over_time",
         "group": "Trends over time",
-        "title": "Joint (co-held) investments, by decade",
-        "description": "Share of investor appearances recorded as joint (co-held), by decade "
-        "(decades with ≥30 investors).",
+        "title": "Joint (co-held) stakes, by decade",
+        "description": "Share of partner appearances recorded as joint (co-held), by decade "
+        "(decades with ≥30 partner appearances).",
         "chart": "line",
         "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
         "       COUNT(*) AS investors,\n"
@@ -5898,9 +5958,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "description": "Registered sub-contracts by kind. Event counts (a contract may have several or none), "
         "not a share of contracts.",
         "chart": "bar",
-        "sql": "SELECT sub_type AS act_type, COUNT(*) AS acts\n"
+        "sql": "SELECT sub_type, COUNT(*) AS sub_contracts\n"
         "FROM sub_contract WHERE is_deleted = 0 AND sub_type NOT IN ('', '0') AND sub_type IS NOT NULL\n"
-        "GROUP BY sub_type ORDER BY acts DESC",
+        "GROUP BY sub_type ORDER BY sub_contracts DESC",
     },
 ]
 
@@ -6115,7 +6175,7 @@ def build_analysis_sql(
 
     if measure in ("distinct_people_entered", "distinct_people_reviewed"):
         if subject != "investors":
-            raise HTTPException(status_code=400, detail="Distinct-person measures apply to investors only.")
+            raise HTTPException(status_code=400, detail="Counts of people apply to partners only.")
         sensitive = {
             entry.get("field")
             for entry in spec.get("filters") or []
@@ -6125,8 +6185,8 @@ def build_analysis_sql(
                 status_code=400,
                 detail=(
                     "Reviewed identity families cannot yet be combined with gender, title, or "
-                    "Jewish-attribution groupings: linked rows may disagree on those attributes. "
-                    "Use entered person ids for this question."
+                    "Jewish-attribution groupings: linked entries may disagree on those attributes. "
+                    "Use “Count person entries, as entered” for this question."
                 ),
             )
         if excluded_people:
@@ -6145,15 +6205,17 @@ def build_analysis_sql(
     if measure in ("sum_total", "avg_total"):
         agg = "SUM" if measure == "sum_total" else "AVG"
         m_expr = f"ROUND({agg}(CAST(c.total AS REAL)))"
+        # The average is not a total: name its column for what it holds.
+        m_alias = "total_capital" if measure == "sum_total" else "average_capital"
         if group:
-            order = f"{group_label} ASC" if dimension_order else "total_capital DESC"
+            order = f"{group_label} ASC" if dimension_order else f"{m_alias} DESC"
             sql = (
-                f"SELECT {group_expr} AS {group_label}, COUNT(*) AS contracts, {m_expr} AS total_capital "
+                f"SELECT {group_expr} AS {group_label}, COUNT(*) AS contracts, {m_expr} AS {m_alias} "
                 f"FROM {from_clause} WHERE {where_clause} GROUP BY 1 ORDER BY {order}"
             )
             # the group expression appears (textually) before the WHERE params
             return sql, group_params + params, chart
-        return f"SELECT {m_expr} AS total_capital, COUNT(*) AS contracts FROM {from_clause} WHERE {where_clause}", params, "none"
+        return f"SELECT {m_expr} AS {m_alias}, COUNT(*) AS contracts FROM {from_clause} WHERE {where_clause}", params, "none"
 
     if measure in ("distinct_people_entered", "distinct_people_reviewed"):
         person_expr = "i.person_id"
@@ -6339,16 +6401,40 @@ def db_record(table: str, record_id: str, include_hidden: bool = False) -> dict[
             f"SELECT is_deleted FROM {table} WHERE {col} = ?", (record_id,)
         ).fetchone()
         record["is_deleted"] = bool(flag and flag["is_deleted"])
+        clog = open_corrections()
+        try:
+            history = corrections_db.history_for_row(clog, table, {col: int(record_id)})
+        finally:
+            clog.close()
+        # Resolved while main.db is open: a re-pointed lookup is logged as row ids.
+        record["change_history"] = history_for_reading(connection, table, history)
     finally:
         connection.close()
-    clog = open_corrections()
-    try:
-        record["change_history"] = corrections_db.history_for_row(
-            clog, table, {col: int(record_id)}
-        )
-    finally:
-        clog.close()
     return record
+
+
+def history_for_reading(
+    connection: sqlite3.Connection, table: str, items: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Change-history items for reading. A re-pointed lookup (currency, economic
+    activity, title, place) is logged as row ids; add before_display/after_display
+    with the verbatim phrase each id names. None means no value; an id with no
+    lookup row reads "not in the list" (the broken-link case Needs review flags).
+    The op-log itself is unchanged."""
+    for item in items:
+        kind = RELINK_FIELDS.get((table, item.get("field") or ""))
+        if item.get("op") not in ("update", "relink") or not kind:
+            continue
+        meta = LOOKUP_KINDS[kind]
+        for side in ("before", "after"):
+            raw = item.get(f"{side}_value")
+            if raw in (None, "", "0", 0):
+                item[f"{side}_display"] = None
+            else:
+                item[f"{side}_display"] = (
+                    lookup_value(connection, meta["table"], meta["id"], raw, meta["value"]) or "not in the list"
+                )
+    return items
 
 
 class RecordAction(BaseModel):
@@ -6663,9 +6749,9 @@ def refute_jewish_attribution(investor_id: str, payload: AttributionRefute) -> d
             "SELECT jewish_db, is_deleted FROM investor WHERE investor_id = ?", (investor_id,)
         ).fetchone()
         if not row:
-            raise HTTPException(status_code=404, detail="Investor not found.")
+            raise HTTPException(status_code=404, detail="Partner not found.")
         if row["jewish_db"] not in (1, "1"):
-            raise HTTPException(status_code=409, detail="No editorial attribution is set on this investor.")
+            raise HTTPException(status_code=409, detail="No editorial attribution is set on this partner.")
         with connection:
             connection.execute("UPDATE investor SET jewish_db = 0 WHERE investor_id = ?", (investor_id,))
         try:
@@ -6734,13 +6820,15 @@ def _lookup_norm(text: Any) -> str:
 
 
 @app.get("/api/search")
-def global_search(q: str = "", expand: str = "") -> dict[str, Any]:
+def global_search(q: str = "", expand: str = "", limit: int = 0) -> dict[str, Any]:
     """Global FTS search over the database (contracts, acts, people).
 
     The derived search.db is rebuilt on demand when main.db has changed (an
     applied correction, hide, or created row) — a full rebuild is ~0.5 s, so
     freshness is checked per request at negligible cost. A purely numeric query
     additionally returns direct id-jump cards (historians think in act numbers).
+    `limit` is how many hits the expanded group returns (0 = the default 50);
+    "Show more" asks again with a larger limit.
     """
     term = q.strip()
     if len(term) < 2:
@@ -6786,7 +6874,7 @@ def global_search(q: str = "", expand: str = "") -> dict[str, Any]:
                         "kind": "person",
                         "ref": str(row["person_id"]),
                         "title": person_display_name(row["first_name"], row["last_name"], row["nickname"]),
-                        "meta": "person record",
+                        "meta": "",
                     }
                 )
         finally:
@@ -6794,7 +6882,10 @@ def global_search(q: str = "", expand: str = "") -> dict[str, Any]:
 
     search_path = search_index.ensure_fresh(db_path())
     payload = search_index.search(
-        search_path, term, expand_kind=expand if expand in search_index.KIND_ORDER else None
+        search_path,
+        term,
+        expand_kind=expand if expand in search_index.KIND_ORDER else None,
+        expand_limit=limit or 50,
     )
     payload["id_jumps"] = id_jumps
     return payload
@@ -6918,22 +7009,11 @@ def db_lookup(kind: str, q: str = "") -> dict[str, Any]:
     meta = LOOKUP_KINDS.get(kind)
     if not meta:
         raise HTTPException(status_code=400, detail="Unknown lookup kind.")
-    usage_sql = {
-        "economic_activity": "SELECT economic_sector k, count(*) n FROM contract WHERE economic_sector IS NOT NULL AND is_deleted = 0 GROUP BY economic_sector",
-        "currency": "SELECT currency_id k, count(*) n FROM contract WHERE currency_id IS NOT NULL AND is_deleted = 0 GROUP BY currency_id",
-        "place": (
-            "SELECT k, sum(n) n FROM ("
-            "SELECT place_id k, count(*) n FROM contract_place WHERE is_deleted = 0 GROUP BY place_id "
-            "UNION ALL SELECT place_of_residence k, count(*) n FROM investor WHERE place_of_residence IS NOT NULL AND is_deleted = 0 GROUP BY place_of_residence "
-            "UNION ALL SELECT place_of_origin k, count(*) n FROM investor WHERE place_of_origin IS NOT NULL AND is_deleted = 0 GROUP BY place_of_origin"
-            ") GROUP BY k"
-        ),
-        "title": "SELECT title k, count(*) n FROM investor WHERE title IS NOT NULL AND is_deleted = 0 GROUP BY title",
-    }[kind]
     needle = _lookup_norm(q)
     connection = open_db()
     try:
-        usage = {row["k"]: row["n"] for row in connection.execute(usage_sql)}
+        # The same count the Reference page shows for the term (live contracts only).
+        usage = _reference_counts(connection, {"economic_activity": "activity"}.get(kind, kind))
         rows = connection.execute(f"SELECT {meta['id']} AS id, {meta['value']} AS value FROM {meta['table']}").fetchall()
     finally:
         connection.close()
@@ -7287,7 +7367,7 @@ WORD_DATE_GROUP_META = {
     "severity": "medium",
     "explanation": (
         "An independent transcription (the Word source) records a different registration date for "
-        "this act. Open the record, compare against the narrative and the folio image, and correct "
+        "this contract or sub-contract. Open the record, compare against the narrative and the folio image, and correct "
         "the date only if the database is wrong — Word is evidence, not the truth."
     ),
 }
@@ -7698,12 +7778,15 @@ def person_search(q: str = "", limit: int = Query(default=12, ge=1, le=50)) -> d
 
 
 @app.get("/api/db/same-surname")
-def same_surname(last_name: str = "") -> dict[str, Any]:
+def same_surname(last_name: str = "", first_name: str = "") -> dict[str, Any]:
     """The near-match wall: existing persons whose surname matches (diacritic
-    and case insensitive), shown before a new person may be created."""
+    and case insensitive), shown before a new person may be created. Persons
+    sharing the typed first name (same matching) come first; `total` is the
+    uncapped count, so the wall never presents 12 of 86 as the whole set."""
     needle = _lookup_norm(last_name)
     if not needle:
-        return {"results": []}
+        return {"results": [], "total": 0}
+    first = _lookup_norm(first_name)
     connection = open_db()
     try:
         rows = connection.execute(
@@ -7719,6 +7802,14 @@ def same_surname(last_name: str = "") -> dict[str, Any]:
         ).fetchall()
     finally:
         connection.close()
+    matched = [r for r in rows if _lookup_norm(r["last_name"]) == needle]
+    matched.sort(
+        key=lambda r: (
+            0 if first and _lookup_norm(r["first_name"]) == first else 1,
+            -r["appearances"],
+            person_display_name(r["first_name"], r["last_name"], r["nickname"]),
+        )
+    )
     hits = [
         {
             "person_id": str(r["person_id"]),
@@ -7727,11 +7818,9 @@ def same_surname(last_name: str = "") -> dict[str, Any]:
             "residences": (r["residences"] or "").replace(",", ", "),
             "appearances": r["appearances"],
         }
-        for r in rows
-        if _lookup_norm(r["last_name"]) == needle
+        for r in matched[:12]
     ]
-    hits.sort(key=lambda h: (-h["appearances"], h["display_name"]))
-    return {"results": _person_hits_with_identity(hits[:12])}
+    return {"results": _person_hits_with_identity(hits), "total": len(matched)}
 
 
 @app.get("/api/db/contract-investments/{contract_id}")
@@ -7826,7 +7915,7 @@ def create_investor(payload: InvestorCreate) -> dict[str, Any]:
         } if payload.new_person else {}),
     })
     if payload.join_investment_id is None and payload.role not in ("gp", "lp"):
-        raise HTTPException(status_code=400, detail="Role must be gp or lp.")
+        raise HTTPException(status_code=400, detail="Choose general partner or limited partner.")
     connection = open_db()
     try:
         contract = connection.execute(
@@ -7836,7 +7925,7 @@ def create_investor(payload: InvestorCreate) -> dict[str, Any]:
         if not contract:
             raise HTTPException(status_code=404, detail="Contract not found.")
         reviewer = payload.reviewer.strip()
-        reason = f"added investor on contract {payload.contract_id}"
+        reason = f"added partner on contract {payload.contract_id}"
         if payload.note.strip():
             reason += f"; {payload.note.strip()}"
 
@@ -7885,7 +7974,7 @@ def create_investor(payload: InvestorCreate) -> dict[str, Any]:
                 (payload.join_investment_id, payload.contract_id),
             ).fetchone()
             if not investment:
-                raise HTTPException(status_code=404, detail="That investment does not belong to this contract.")
+                raise HTTPException(status_code=404, detail="That stake does not belong to this contract.")
             investment_id = int(investment["investment_id"])
             joining = True
         else:
@@ -7978,7 +8067,7 @@ def create_investor(payload: InvestorCreate) -> dict[str, Any]:
                             field="is_joint",
                             before_value="0",
                             after_value="1",
-                            reason=f"joint tranche gained a member ({reason})",
+                            reason=f"joint stake gained a partner ({reason})",
                         )
                     except Exception:
                         # compensation-lite (§0 Phase A4): unlogged flip → put it back
@@ -8061,7 +8150,7 @@ def contract_persons(contract_id: str) -> dict[str, Any]:
         return {
             "contract_id": str(contract_id),
             "contract_title": contract["firm_name"] or f"Contract {contract_id}",
-            "contract_date": display_text(contract["registration_date"]),
+            "contract_date": display_date(contract["registration_date"]),
             "persons": persons,
         }
     finally:
@@ -8448,8 +8537,9 @@ def apply_correction(proposal_id: str, action: CorrectionAction) -> dict[str, An
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"Database value changed since the proposal (now "
-                    f"'{normalize_value(current)}'). Re-confirm before applying."
+                    f"This field was changed while you were editing it (it now reads "
+                    f"‘{normalize_value(current)}’). The record was not changed; reload the "
+                    f"page to see the current value."
                 ),
             )
         new_value: Any = proposal["proposed_value"]

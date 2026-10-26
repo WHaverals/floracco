@@ -27,7 +27,7 @@ GROUP_META: dict[str, dict[str, str]] = {
         "label": "Jewish — text attests, flag is editorial only",
         "severity": "medium",
         "explanation": (
-            "The contract's narrative (or a later act's) says “ebre…”, but this investor carries "
+            "The contract's narrative (or a sub-contract's) says “ebre…”, but this partner carries "
             "only the 2010s editorial attribution. Read the narrative — if it names this person as "
             "Jewish, set “Jewish — stated in the act”. The editorial mark stays either way."
         ),
@@ -45,7 +45,7 @@ GROUP_META: dict[str, dict[str, str]] = {
         "label": "Jewish — stated flag without textual attestation",
         "severity": "low",
         "explanation": (
-            "“Stated in the act” is set, but no narrative on the contract or its later acts "
+            "“Stated in the act” is set, but no narrative on the contract or its sub-contracts "
             "contains “ebre…”. Verify the flag against the text and the manuscript."
         ),
     },
@@ -55,7 +55,7 @@ GROUP_META: dict[str, dict[str, str]] = {
         "explanation": (
             "The 2010s editorial attribution conflicts with the evidence (see the note on the "
             "flagged record). If you judge it wrong, use the refute action on the partner's "
-            "“Jewish — editorial attribution” field — audited, reversible, reason required."
+            "“Jewish — editorial attribution” field; a reason is required, and the change is recorded under your initials."
         ),
     },
     "jewish_convert_suspect": {
@@ -72,7 +72,7 @@ GROUP_META: dict[str, dict[str, str]] = {
         "severity": "low",
         "explanation": (
             "The stored given name differs from the document's reading in a way that changes its "
-            "signal (e.g. Sephardic “Franco” stored as “Francesco”). Correct the name from the act."
+            "signal (e.g. Sephardic “Franco” stored as “Francesco”). Correct the name from the source."
         ),
     },
     "jewish_conjecture": {
@@ -169,7 +169,7 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             WHERE i.is_deleted = 0 AND c.is_deleted = 0
               AND i.jewish_db = 1 AND i.is_jewish = 0 AND {_ATTESTS}"""
     ):
-        who = _who(r["fn"], r["ln"], f"investor {r['iid']}")
+        who = _who(r["fn"], r["ln"], "unnamed partner")
         firm = (r["firm"] or "").strip() or f"Contract {r['cid']}"
         add("jewish_text_attests", "contract", r["cid"], f"{who} · {firm}",
             {"kind": "partner_field", "field": "is_jewish", "investor_id": str(r["iid"])},
@@ -192,7 +192,7 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
                  AND SUM(CASE WHEN i.jewish_db = 1 AND i.is_jewish = 0 THEN 1 ELSE 0 END) > 0)
            )"""
     ):
-        who = _who(r["fn"], r["ln"], f"Person #{r['pid']}")
+        who = _who(r["fn"], r["ln"], f"Person entry #{r['pid']}")
         add("jewish_person_drift", "person", r["pid"],
             f"{who} — flagged on {r['flagged']} of {r['n']} appearances",
             {"kind": "person_flags", "field": None})
@@ -206,7 +206,7 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             WHERE i.is_deleted = 0 AND c.is_deleted = 0
               AND i.is_jewish = 1 AND NOT {_ATTESTS}"""
     ):
-        who = _who(r["fn"], r["ln"], f"investor {r['iid']}")
+        who = _who(r["fn"], r["ln"], "unnamed partner")
         firm = (r["firm"] or "").strip() or f"Contract {r['cid']}"
         add("jewish_stated_unattested", "contract", r["cid"], f"{who} · {firm}",
             {"kind": "partner_field", "field": "is_jewish", "investor_id": str(r["iid"])},

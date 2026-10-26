@@ -1,4 +1,5 @@
 import type { PersonLinkagePerson } from "../../types";
+import { roleListLabel } from "../../utils/roles";
 
 function yearOf(value: string | null): number | null {
   if (!value || value === "0000-00-00") return null;
@@ -174,7 +175,7 @@ export default function CareerSpanRibbon({ persons }: { persons: PersonLinkagePe
                           {appearances.map((appearance) => (
                             `${appearance.registration_date ?? year} · contract ${appearance.contract_id}`
                             + `${appearance.firm_name ? ` · ${appearance.firm_name}` : ""}`
-                            + `${appearance.roles ? ` · ${appearance.roles}` : ""}`
+                            + `${appearance.roles ? ` · ${roleListLabel(appearance.roles)}` : ""}`
                           )).join("\n")}
                         </title>
                         <circle

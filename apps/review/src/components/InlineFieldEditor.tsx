@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createCorrection, transitionCorrection } from "../api";
 import { useEscapeLayer } from "../utils/escapeLayers";
+import { useUnsavedChange } from "../utils/unsavedChanges";
 import type { DbFieldInputType } from "../types";
 
 /* Lightweight in-place editor for one record field.
@@ -23,6 +24,7 @@ export default function InlineFieldEditor({
   currentValue,
   onSaved,
   onCancel,
+  guardScopes,
 }: {
   dbRowId: string;
   column: string;
@@ -34,6 +36,8 @@ export default function InlineFieldEditor({
   currentValue: string;
   onSaved: () => void;
   onCancel: () => void;
+  /** Lets the parent ask before closing this editor in place (utils/unsavedChanges). */
+  guardScopes?: string[];
 }) {
   const [value, setValue] = useState(currentValue);
   const [note, setNote] = useState("");
@@ -50,6 +54,8 @@ export default function InlineFieldEditor({
   // or picker above it takes the key) and ONLY while nothing has been typed —
   // discarding typed work is Cancel's job, a deliberate click.
   const dirty = value !== currentValue || note.trim() !== "";
+  // The same rule guards navigation: leaving the page asks before discarding.
+  useUnsavedChange(dirty && !saving, `“${label}”`, guardScopes);
   useEscapeLayer(true, () => {
     if (!dirty && !saving) onCancel();
   });
@@ -164,7 +170,7 @@ export default function InlineFieldEditor({
       </div>
       {error && <p className="error-text">{error}</p>}
       <p className="inline-editor-foot muted">
-        Applies immediately, fully audited — see Change history.
+        Saved at once and recorded under your initials.
       </p>
     </div>
   );

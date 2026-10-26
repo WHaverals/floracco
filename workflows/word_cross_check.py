@@ -199,7 +199,12 @@ def _package(rid: str, link: dict[str, Any], entry: dict[str, Any], images: list
     # Gate C — no transcriber apparatus in the date context.
     if _has_apparatus(entry.get("head_text"), word_raw):
         return None
-    gap = abs((date.fromisoformat(db_val) - date.fromisoformat(word_iso)).days)
+    try:
+        gap = abs((date.fromisoformat(db_val) - date.fromisoformat(word_iso)).days)
+    except ValueError:
+        # An impossible stored date (0000-00-00, 1600-02-30) is a different problem,
+        # not a Word disagreement; one such row must not empty the whole group.
+        return None
     revision = _revision_for_date(entry)
     tier = _tier(revision, gap)
     return {

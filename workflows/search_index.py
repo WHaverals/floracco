@@ -41,6 +41,10 @@ KIND_LABELS = {
     "sub_contract": "Sub-contracts",
     "person": "People",
 }
+# Bumped when what build() writes changes, so an index built by an older
+# version is rebuilt once instead of waiting for the next write to main.db.
+INDEX_FORMAT = "2"
+
 KIND_ORDER = ["contract", "sub_contract", "person"]
 
 # Most `document` values store LITERAL backslash escapes (\r\n) from the legacy
@@ -125,9 +129,10 @@ def build(main_db_path: Path, search_db_path: Path | None = None) -> dict[str, A
             )
 
         for r in src.execute("SELECT * FROM sub_contract WHERE is_deleted = 0"):
+            sub_date = str(r["registration_date"] or "").strip()
             meta_parts = [
                 str(r["sub_type"] or "").strip(),
-                str(r["registration_date"] or ""),
+                sub_date if sub_date not in ("", "0000-00-00") else "no date",
                 f"c. {str(r['folio'] or '').strip()}" if str(r["folio"] or "").strip() else "",
                 f"reg. {str(r['folder'] or '').strip()}" if str(r["folder"] or "").strip() else "",
             ]
@@ -185,6 +190,7 @@ def build(main_db_path: Path, search_db_path: Path | None = None) -> dict[str, A
                 (main_mtime,),
             )
             idx.execute("INSERT INTO search_meta (key, value) VALUES ('rows', ?)", (str(len(rows)),))
+            idx.execute("INSERT INTO search_meta (key, value) VALUES ('format', ?)", (INDEX_FORMAT,))
     finally:
         idx.close()
         src.close()
@@ -202,8 +208,11 @@ def is_stale(main_db_path: Path, search_db_path: Path | None = None) -> bool:
         idx = sqlite3.connect(f"file:{search_db_path}?mode=ro", uri=True)
         try:
             row = idx.execute("SELECT value FROM search_meta WHERE key = 'main_mtime'").fetchone()
+            fmt = idx.execute("SELECT value FROM search_meta WHERE key = 'format'").fetchone()
         finally:
             idx.close()
+        if fmt is None or fmt[0] != INDEX_FORMAT:
+            return True  # built by an older version of this module: rebuild once
         return row is None or row[0] != str(os.path.getmtime(main_db_path))
     except sqlite3.Error:
         return True
@@ -241,15 +250,25 @@ def fts_query(user_input: str) -> str:
     return " ".join(parts)
 
 
+# Upper bound for an expanded group: above any group in the corpus (11,391
+# people), and it keeps an absurd query-string value away from SQLite.
+EXPAND_MAX = 100_000
+
+
 def search(
     search_db_path: Path,
     user_input: str,
     *,
     per_kind: int = 5,
     expand_kind: str | None = None,
+    expand_limit: int = 50,
 ) -> dict[str, Any]:
     """Grouped results + counts; per-term counts when an AND query finds nothing
-    (an honest empty state: "seta: 1,200 · lucca: 82 · together: 0")."""
+    (an honest empty state: "seta: 1,200 · lucca: 82 · together: 0").
+
+    The expanded group returns its first `expand_limit` hits, best match first
+    (ties by rowid, so a longer list starts with the shorter one); "Show more"
+    asks again with a larger limit."""
     match = fts_query(user_input)
     if not match:
         return {"query": "", "total": 0, "groups": [], "term_counts": None}
@@ -264,7 +283,7 @@ def search(
                 (match, kind),
             ).fetchone()[0]
             total += count
-            limit = 50 if expand_kind == kind else per_kind
+            limit = max(per_kind, min(expand_limit, EXPAND_MAX)) if expand_kind == kind else per_kind
             results = [
                 dict(r)
                 for r in idx.execute(
@@ -272,7 +291,7 @@ def search(
                               snippet(search_index, 3, ?, ?, '…', 12) AS snippet
                        FROM search_index
                        WHERE search_index MATCH ? AND kind = ?
-                       ORDER BY bm25(search_index, 0, 0, 5.0, 1.0)
+                       ORDER BY bm25(search_index, 0, 0, 5.0, 1.0), rowid
                        LIMIT ?""",
                     (SNIPPET_OPEN, SNIPPET_CLOSE, match, kind, limit),
                 )
@@ -283,15 +302,21 @@ def search(
         term_counts = None
         terms = [t for t in re.findall(r"[\wÀ-ɏ]+", user_input) if len(t) > 1]
         if total == 0 and len(terms) > 1:
+            # Count each word the way the search treats it: fts_query makes the last
+            # unquoted word a prefix ("battil" finds battiloro), so it is one here too.
+            unquoted = re.findall(r"[\wÀ-ɏ]+", re.sub(r'"[^"]*"?', " ", user_input))
+            prefix_term = unquoted[-1] if unquoted else None
+            shown = terms[:6]
+            prefix_at = max((i for i, t in enumerate(shown) if t == prefix_term), default=-1)
             term_counts = [
                 {
                     "term": term,
                     "count": idx.execute(
                         "SELECT count(*) FROM search_index WHERE search_index MATCH ?",
-                        (f'"{term}"',),
+                        (f'"{term}"*' if i == prefix_at else f'"{term}"',),
                     ).fetchone()[0],
                 }
-                for term in terms[:6]
+                for i, term in enumerate(shown)
             ]
         return {"query": match, "total": total, "groups": groups, "term_counts": term_counts}
     finally:

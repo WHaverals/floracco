@@ -3,6 +3,7 @@ import { Route, Routes, useLocation } from "react-router-dom";
 import { loadMe } from "./api";
 import { isToolHidden } from "./features";
 import TopNav from "./components/TopNav";
+import UnsavedChangesGuard from "./components/UnsavedChangesGuard";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ComingSoon from "./pages/ComingSoon";
 import Analysis from "./pages/Analysis";
@@ -65,6 +66,7 @@ export default function App() {
 
   return (
     <div className="app-root">
+      <UnsavedChangesGuard />
       <TopNav identityEmail={identity.authenticated ? identity.email : null} />
       <main className="route-area">
         <ErrorBoundary resetKey={location.pathname}>

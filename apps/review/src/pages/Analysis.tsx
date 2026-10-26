@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { loadAnalysisLibrary, runAnalysisBuild, runAnalysisLibrary } from "../api";
 import { useLatest } from "../utils/latest";
+import { roleLabel } from "../utils/roles";
 import type { AnalysisChart, AnalysisQuery, AnalysisResult } from "../types";
 import { isToolHidden } from "../features";
 
@@ -13,11 +14,71 @@ import { isToolHidden } from "../features";
 
 const TABLE_CAP = 500;
 
+/** Screen headers for result columns. The SQL aliases stay unchanged in the CSV
+ * export and in "Show SQL", so exports keep stable column names for scripts. */
+const COLUMN_LABELS: Record<string, string> = {
+  item: "Item",
+  n: "Count",
+  count: "Count",
+  year: "Year",
+  decade: "Decade",
+  date: "Registration date",
+  registration_date: "Registration date",
+  contract_id: "Contract",
+  firm_name: "Firm name",
+  contracts: "Contracts",
+  currency: "Currency",
+  total_capital: "Total capital",
+  average_capital: "Average capital",
+  avg_capital: "Average capital",
+  place_name: "Place",
+  investors: "Partners",
+  total_investors: "Partners",
+  sub_contracts: "Sub-contracts",
+  later_acts: "Sub-contracts",
+  sub_type: "Type",
+  act_type: "Type",
+  acts: "Sub-contracts",
+  role: "Role",
+  investments: "Stakes",
+  min: "Fewest",
+  avg: "Average",
+  max: "Most",
+  first_name: "First name",
+  last_name: "Last name",
+  father_mother: "Father / mother",
+  grandfather: "Grandfather",
+  pct_via_proxy: "Via proxy (%)",
+  pct_jewish: "Jewish (%)",
+  pct_stated_in_act: "Stated in the act (%)",
+  pct_editorial_attribution: "Editorial attribution (%)",
+  pct_joint: "Joint (%)",
+  itemization: "Itemization",
+  initial_term_months: "Initial term (months)",
+  register: "Register",
+  gender: "Gender",
+  people: "People",
+};
+
+function columnLabel(alias: string): string {
+  if (COLUMN_LABELS[alias]) return COLUMN_LABELS[alias];
+  const words = alias.replaceAll("_", " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : alias;
+}
+
+/** Cell text for the screen only (the CSV keeps stored values): role codes as
+ * words; the export's 0000-00-00 placeholder, and the year 0 it yields, as "not recorded". */
+function cellText(alias: string, cell: string | number): string {
+  if (alias === "role" && typeof cell === "string") return roleLabel(cell);
+  if (cell === "0000-00-00" || (alias === "year" && cell === 0)) return "not recorded";
+  return String(cell);
+}
+
 // ---- builder config (mirrors the backend whitelist) ----
 type Subject = "contracts" | "investors";
 const SUBJECTS: { key: Subject; label: string }[] = [
   { key: "contracts", label: "contracts" },
-  { key: "investors", label: "investors (people)" },
+  { key: "investors", label: "partners" },
 ];
 const MEASURES: Record<Subject, { key: string; label: string }[]> = {
   contracts: [
@@ -27,9 +88,9 @@ const MEASURES: Record<Subject, { key: string; label: string }[]> = {
     { key: "avg_total", label: "Average total capital" },
   ],
   investors: [
-    { key: "count", label: "Count investor appearances" },
+    { key: "count", label: "Count partner appearances" },
     { key: "distinct_people_reviewed", label: "Count people using reviewed identities" },
-    { key: "distinct_people_entered", label: "Count entered person IDs (audit mode)" },
+    { key: "distinct_people_entered", label: "Count person entries, as entered" },
     { key: "list", label: "List the appearances" },
   ],
 };
@@ -39,18 +100,18 @@ const FILTER_DEFS: Record<Subject, FilterDef[]> = {
     { key: "reg_year_from", label: "Registration year ≥", value: "number" },
     { key: "reg_year_to", label: "Registration year ≤", value: "number" },
     { key: "place_is", label: "Place is", value: "text" },
-    { key: "activity_contains", label: "Activity contains", value: "text" },
+    { key: "activity_contains", label: "Economic activity contains", value: "text" },
     { key: "currency_is", label: "Currency is", value: "text" },
     { key: "register_is", label: "Register is", value: "text" },
-    { key: "ec_discretion_yes", label: "Activity at discretion", value: null },
+    { key: "ec_discretion_yes", label: "Economic activity at discretion", value: null },
     { key: "no_place", label: "Has no place", value: null },
-    { key: "no_investors", label: "Has no investors", value: null },
+    { key: "no_investors", label: "Has no partners", value: null },
   ],
   investors: [
     { key: "gender_women", label: "Women", value: null },
     { key: "gender_men", label: "Men", value: null },
-    { key: "role_gp", label: "General partner (gp)", value: null },
-    { key: "role_lp", label: "Limited partner (lp)", value: null },
+    { key: "role_gp", label: "General partner", value: null },
+    { key: "role_lp", label: "Limited partner", value: null },
     { key: "via_proxy", label: "Via proxy", value: null },
     { key: "jewish", label: "Jewish (recorded or attributed)", value: null },
     { key: "title_contains", label: "Title contains", value: "text" },
@@ -80,7 +141,7 @@ function num(v: string | number | null): number {
 function BarChart({ result }: { result: AnalysisResult }) {
   const valIdx = result.columns.length - 1;
   const data = result.rows
-    .map((r) => ({ label: String(r[0] ?? ""), value: num(r[valIdx]) }))
+    .map((r) => ({ label: r[0] == null ? "" : cellText(result.columns[0], r[0]), value: num(r[valIdx]) }))
     .filter((d) => Number.isFinite(d.value))
     .slice(0, 20);
   if (data.length === 0) return null;
@@ -136,7 +197,7 @@ function LineChart({ result, allSeries = false }: { result: AnalysisResult; allS
   );
   const area = `${paths[0]} L${px(xMax).toFixed(1)},${axisY} L${px(xMin).toFixed(1)},${axisY} Z`;
   const ticks = [xMin, ...[1500, 1550, 1600, 1650, 1700, 1750].filter((t) => t > xMin && t < xMax), xMax];
-  const seriesLabel = (j: number) => String(result.columns[seriesIdx[j]] ?? "").replaceAll("_", " ");
+  const seriesLabel = (j: number) => columnLabel(String(result.columns[seriesIdx[j]] ?? ""));
   return (
     <div className="an-line-wrap">
       {seriesIdx.length > 1 && (
@@ -211,6 +272,8 @@ function csvEscape(v: string | number | null): string {
   const s = v == null ? "" : String(v);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
+// The CSV keeps the SQL aliases and stored values (0000-00-00, gp/lp): column
+// names stay stable for scripts and match "Show SQL".
 function downloadCsv(name: string, result: AnalysisResult) {
   const lines = [result.columns.map(csvEscape).join(",")];
   for (const row of result.rows) lines.push(row.map(csvEscape).join(","));
@@ -261,7 +324,7 @@ function ResultView({
           <thead>
             <tr>
               {result.columns.map((c) => (
-                <th key={c}>{c}</th>
+                <th key={c}>{columnLabel(c)}</th>
               ))}
             </tr>
           </thead>
@@ -277,7 +340,7 @@ function ResultView({
                     ) : cell == null ? (
                       <span className="muted">—</span>
                     ) : (
-                      String(cell)
+                      cellText(result.columns[ci], cell)
                     )}
                   </td>
                 ))}
@@ -304,6 +367,8 @@ export default function Analysis() {
 
   // library state
   const [queries, setQueries] = useState<AnalysisQuery[]>([]);
+  const [libraryFailed, setLibraryFailed] = useState(false);
+  const [libraryAttempt, setLibraryAttempt] = useState(0);
   const [selected, setSelected] = useState<AnalysisQuery | null>(null);
   const [libResult, setLibResult] = useState<AnalysisResult | null>(null);
   const beginLib = useLatest();
@@ -340,10 +405,11 @@ export default function Analysis() {
   };
 
   useEffect(() => {
+    setLibraryFailed(false);
     loadAnalysisLibrary()
       .then((d) => setQueries(d.queries))
-      .catch((e: Error) => setError(e.message));
-  }, []);
+      .catch(() => setLibraryFailed(true)); // shown in the rail, where the library would be
+  }, [libraryAttempt]);
 
   useEffect(() => {
     if (!selected) return;
@@ -434,7 +500,17 @@ export default function Analysis() {
                 </ul>
               </section>
             ))}
-            {queries.length === 0 && !error && <p className="db-empty muted">Loading…</p>}
+            {queries.length === 0 &&
+              (libraryFailed ? (
+                <p className="db-empty error-text">
+                  The query library could not be loaded.{" "}
+                  <button type="button" className="link-like" onClick={() => setLibraryAttempt((n) => n + 1)}>
+                    Try again
+                  </button>
+                </p>
+              ) : (
+                <p className="db-empty muted">Loading…</p>
+              ))}
           </div>
         ) : mode === "builder" ? (
           <div className="an-library">

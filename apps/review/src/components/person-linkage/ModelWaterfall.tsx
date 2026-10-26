@@ -46,7 +46,7 @@ export default function ModelWaterfall({
     : null;
   const band = priorityBand
     ? `Priority ${priorityBand.split("_")[1]}`
-    : "Rule-routed";
+    : "Placed by the rules";
 
   return (
     <section className="pl-model-details" aria-labelledby="pl-model-heading">
@@ -92,15 +92,16 @@ export default function ModelWaterfall({
             </span>
           </div>
           <p className="muted">
-            The raw saved-model estimate below includes partnership role and is not calibrated against a
-            substantial reviewed sample.
-            {recall !== null ? ` The model prior assumes rule recall of ${recall}.` : ""}
+            The estimate includes the partnership role and has not yet been checked against a substantial set of
+            reviewed decisions.
+            {recall !== null ? ` The prior assumes a recall of ${recall}.` : ""}
           </p>
           <p className="pl-model-provenance">
             Model {modelHash ? modelHash.slice(0, 12) : "—"} · trained {trainedAt ? trainedAt.slice(0, 10) : "—"} ·
-            suggestion cache {runAt ? runAt.slice(0, 10) : "—"}
+            suggestions built {runAt ? runAt.slice(0, 10) : "—"}
           </p>
-          {Object.keys(networkDiagnostics).length || Object.keys(firmTokenDiagnostics).length ? (
+          {/* Unscored diagnostics for model development: shown in development only. */}
+          {import.meta.env.DEV && (Object.keys(networkDiagnostics).length || Object.keys(firmTokenDiagnostics).length) ? (
             <section className="pl-experimental-diagnostics">
               <h3>Experimental diagnostics · not scored</h3>
               {Object.keys(networkDiagnostics).length ? (

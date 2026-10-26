@@ -13,6 +13,9 @@ import ModelWaterfall from "../components/person-linkage/ModelWaterfall";
 import WordSourceDrawer from "../components/WordSourceDrawer";
 import { useEscapeLayer } from "../utils/escapeLayers";
 import { useLatest } from "../utils/latest";
+import { roleListLabel } from "../utils/roles";
+import { recordedDate } from "../utils/dates";
+import { LEAVE_UNSAVED, confirmDiscard, useUnsavedChange } from "../utils/unsavedChanges";
 import type {
   PersonLinkageCase,
   PersonLinkageLane,
@@ -31,7 +34,7 @@ const LANES: Array<{ id: PersonLinkageLane; label: string; note: string }> = [
   { id: "labeling_round", label: "Judge blind", note: "Cases chosen to cover every kind of evidence; the scores stay hidden until you answer" },
   { id: "likely_duplicates", label: "Likely duplicates", note: "The same name typed twice, or the same full name with one plausible working life" },
   { id: "high_concordance", label: "Name and context agree", note: "The same name, or one letter off, with the father, the years or a firm agreeing" },
-  { id: "read_source", label: "Check the contract", note: "The fields cannot settle it; the act itself decides" },
+  { id: "read_source", label: "Check the contract", note: "The fields cannot settle it; the contract itself decides" },
   { id: "other_matches", label: "Other possible matches", note: "Every pair the model ranks, best first" },
   { id: "possible_splits", label: "One entry, two people?", note: "Entries that may hold two people, and the ones you have flagged" },
   { id: "decided", label: "Decided", note: "What has been answered, with its history and an undo" },
@@ -48,7 +51,6 @@ const STATUS_LABEL: Record<string, string> = {
   defer: "Set aside",
   flag_split: "Flagged: possibly two people",
   revoke: "Undone",
-  revoked: "Undone",
   reopen: "Reopened",
   bulk_rule_ack: "Rule sample inspected",
 };
@@ -107,6 +109,26 @@ function fieldStatus(persons: PersonLinkagePerson[], key: keyof PersonLinkagePer
   if (recorded.length === 0) return "not-recorded";
   if (recorded.length !== values.length) return "missing";
   return new Set(recorded.map(String)).size === 1 ? "same" : "different";
+}
+
+/** A person's partner roles as counts of appearances, in words. */
+function roleProfileText(p: { gp: number; lp: number }): string {
+  const parts = [p.gp ? `${p.gp} as general partner` : "", p.lp ? `${p.lp} as limited partner` : ""].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "No role recorded";
+}
+
+// The name parts the spelling chips compare, as the matrix above labels them.
+const NAME_REVIEW_LABELS: Record<string, string> = {
+  given_name: "Given name",
+  surname: "Family name",
+  father: "Father / mother",
+  grandfather: "Grandfather",
+};
+
+/** The queue row's hover reason: rule reasons only. Model reasons name internal
+ * comparison columns and add nothing a reader can check. */
+function queueReason(reasons?: string[]): string | undefined {
+  return reasons?.find((reason) => !/^(the saved model|strongest model)/.test(reason)) || undefined;
 }
 
 function fieldStatusLabel(status: string): string {
@@ -183,7 +205,7 @@ function PersonMatrix({
                     {" · "}{person.n_appearances} appearance{person.n_appearances === 1 ? "" : "s"}
                   </span>
                   <span className="pl-record-role">
-                    {person.role_profile.gp} GP · {person.role_profile.lp} LP
+                    {roleProfileText(person.role_profile)}
                   </span>
                   <span className="pl-record-actions">
                     <Link className="pl-record-button" to={`/database/person/${person.person_id}`}>
@@ -227,12 +249,12 @@ function PersonMatrix({
         <div className="pl-spelling-evidence" aria-label="Recorded-name comparison">
           {nameExceptions.map(([field, evidence]) => (
             <span className={evidence.exact ? "is-exact" : "is-variant"} key={field}>
-              <strong>{field.replace("_", " ")}</strong>
+              <strong>{NAME_REVIEW_LABELS[field] ?? field.replace(/_/g, " ")}</strong>
               {evidence.exact
                 ? "exact"
                 : evidence.edit_distance == null
-                  ? "not recorded on both"
-                  : `${evidence.edit_distance} edit${evidence.edit_distance === 1 ? "" : "s"}`}
+                  ? "missing on one or both entries"
+                  : `${evidence.edit_distance} letter${evidence.edit_distance === 1 ? "" : "s"} apart`}
             </span>
           ))}
         </div>
@@ -348,17 +370,17 @@ function SharedOverlapPanel({ detail }: { detail: PersonLinkageCase }) {
         {context.exact_firms.length ? context.exact_firms.map((firm) => (
           <article className="pl-shared-firm" key={firm.normalized_name}>
             <strong>{firm.display_name}</strong>
-            <span className="pl-context-strength">Exact normalized firm name</span>
+            <span className="pl-context-strength">Same firm name, ignoring capitals, accents and punctuation</span>
             <div className="pl-connection-sides">
               {detail.persons.map((person) => (
                 <div key={person.person_id}>
-                  <h4>#{person.person_id} · {person.display_name}</h4>
+                  <h4>Entry #{person.person_id} · {person.display_name}</h4>
                   {(firm.appearances_by_person[String(person.person_id)] ?? []).map((appearance) => (
                     <Link
                       key={`${person.person_id}-${appearance.contract_id}`}
                       to={`/database/contract/${appearance.contract_id}`}
                     >
-                      {appearance.registration_date || "Undated"} · contract {appearance.contract_id}
+                      {recordedDate(appearance.registration_date) || "Undated"} · contract {appearance.contract_id}
                     </Link>
                   ))}
                   {(firm.appearances_by_person[String(person.person_id)] ?? []).length === 0 ? (
@@ -379,20 +401,20 @@ function SharedOverlapPanel({ detail }: { detail: PersonLinkageCase }) {
               <article key={partner.person_id}>
                 <header>
                   <Link to={`/database/person/${partner.person_id}`}>
-                    {partner.display_name} · person #{partner.person_id}
+                    {partner.display_name} · Entry #{partner.person_id}
                   </Link>
                   <span>Shared contact</span>
                 </header>
                 <div className="pl-connection-sides">
                   {detail.persons.map((person) => (
                     <div key={person.person_id}>
-                      <h4>With #{person.person_id} · {person.display_name}</h4>
+                      <h4>With entry #{person.person_id} · {person.display_name}</h4>
                       {(partner.connections_by_person[String(person.person_id)] ?? []).map((connection) => (
                         <Link
                           key={`${person.person_id}-${connection.contract_id}`}
                           to={`/database/contract/${connection.contract_id}`}
                         >
-                          {connection.registration_date || "Undated"} · contract {connection.contract_id}
+                          {recordedDate(connection.registration_date) || "Undated"} · contract {connection.contract_id}
                           {connection.firm_name ? ` · ${connection.firm_name}` : ""}
                         </Link>
                       ))}
@@ -419,11 +441,11 @@ function SharedOverlapPanel({ detail }: { detail: PersonLinkageCase }) {
               const person = personById.get(side.person_id);
               return (
                 <div key={side.person_id}>
-                  <h4>#{side.person_id} · {person?.display_name ?? `Person ${side.person_id}`}</h4>
+                  <h4>Entry #{side.person_id} · {person?.display_name ?? "name not available"}</h4>
                   {side.firms.map((firm) => (
                     <Link key={`${side.person_id}-${firm.contract_id}`} to={`/database/contract/${firm.contract_id}`}>
                       <span>{highlightedFirm(firm.firm_name, firm.matched_words)}</span>
-                      <small>{firm.registration_date || "Undated"} · contract {firm.contract_id}</small>
+                      <small>{recordedDate(firm.registration_date) || "Undated"} · contract {firm.contract_id}</small>
                     </Link>
                   ))}
                 </div>
@@ -496,7 +518,7 @@ function AppearanceTables({ persons }: { persons: PersonLinkagePerson[] }) {
       <div className="pl-appearance-grid">
         {persons.map((person) => (
           <div className="pl-appearance-card" key={person.person_id}>
-            <h3>#{person.person_id} · {person.display_name}</h3>
+            <h3>Entry #{person.person_id} · {person.display_name}</h3>
             <p className="muted">{person.n_appearances} entered appearance{person.n_appearances === 1 ? "" : "s"}</p>
             {person.appearances.length ? (
               <div className="pl-table-scroll">
@@ -505,9 +527,9 @@ function AppearanceTables({ persons }: { persons: PersonLinkagePerson[] }) {
                   <tbody>
                     {person.appearances.map((appearance) => (
                       <tr key={appearance.investor_id}>
-                        <td><Link to={`/database/contract/${appearance.contract_id}`}>{appearance.registration_date || "—"}</Link></td>
+                        <td><Link to={`/database/contract/${appearance.contract_id}`}>{recordedDate(appearance.registration_date) || "—"}</Link></td>
                         <td>{appearance.firm_name || "—"}</td>
-                        <td>{appearance.roles || "—"}</td>
+                        <td>{roleListLabel(appearance.roles) || "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -598,7 +620,7 @@ function EvidenceDrawer({
                 <article className="pl-source-card" key={contract.contract_id}>
                   <h3>
                     <Link to={`/database/contract/${contract.contract_id}`}>Contract {contract.contract_id}</Link>
-                    {" · "}{contract.registration_date || "undated"}
+                    {" · "}{recordedDate(contract.registration_date) || "undated"}
                   </h3>
                   <p>{contract.document || "No database narrative is recorded."}</p>
                   <div className="pl-source-links">
@@ -631,7 +653,7 @@ function EvidenceDrawer({
                     if (!sources.length) return null;
                     return (
                       <div className="pl-source-person" key={person.person_id}>
-                        <h4>#{person.person_id} · {person.display_name}</h4>
+                        <h4>Entry #{person.person_id} · {person.display_name}</h4>
                         {sources.map((source) => {
                           const appearance = contracts.get(Number(source.via_contract_id));
                           return (
@@ -695,18 +717,14 @@ function EvidenceDrawer({
                   );
                 })}
               </ul>
-              {detail.history.length && ["defer", "flag_split", "revoke"].includes(detail.history[0].action) ? (
+              {detail.history.length && ["defer", "flag_split"].includes(detail.history[0].action) ? (
                 <button
                   type="button"
                   className="pl-record-button"
                   disabled={busy || !reviewer.trim()}
                   onClick={onReopen}
                 >
-                  {detail.history[0].action === "flag_split"
-                    ? "Lift this flag"
-                    : detail.history[0].action === "revoke"
-                      ? "Put back in the queue"
-                      : "Reopen this case"}
+                  {detail.history[0].action === "flag_split" ? "Lift this flag" : "Reopen this case"}
                 </button>
               ) : null}
             </>
@@ -744,11 +762,15 @@ export default function People() {
   const [stranded, setStranded] = useState(false);
   const [strandedAll, setStrandedAll] = useState(false);
   const [loading, setLoading] = useState(true);
+  // The case list did not load: the count line must not read "No open cases".
+  const [listFailed, setListFailed] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [reviewer, setReviewer] = useState(() => localStorage.getItem(REVIEWER_KEY) ?? "");
   const [rationale, setRationale] = useState("");
+  // A typed note is reviewer work: switching case, lane or decision asks first.
+  useUnsavedChange(rationale.trim() !== "" && !busy, "your note on this case", ["people-note"]);
   const [scopeKey, setScopeKey] = useState("");
   const [pendingDecision, setPendingDecision] = useState<PendingDecision | null>(null);
   const [splitPersonId, setSplitPersonId] = useState<number | null>(null);
@@ -756,8 +778,9 @@ export default function People() {
   const [sourceEntryId, setSourceEntryId] = useState<string | null>(null);
   const [selectedCitations, setSelectedCitations] = useState<PersonCitation[]>([]);
   const [mobileQueueOpen, setMobileQueueOpen] = useState(false);
-  // The decision just made, for the Undo on its message: a link is undone and
-  // reopened in one click; a flag is lifted (a reopen on its split case).
+  // The decision just made, for the Undo on its message: a link is undone (one
+  // "undone" note; the case reads as open again); a flag is lifted (a reopen on
+  // its split case).
   const [lastDecision, setLastDecision] = useState<{
     action: "same_as" | "distinct" | "flag_split";
     caseId: string;
@@ -777,8 +800,14 @@ export default function People() {
   // The query the queue last searched for (the live-search effect below).
   const lastQueryRef = useRef("");
   const reviewerLocked = reviewer.includes("@");
+  // Judge blind cannot run (its packet is missing or was drawn from older suggestions).
+  const blindUnavailable =
+    lane === "labeling_round" &&
+    (summary?.labeling_packet_available === false || Boolean(summary?.labeling_packet_stale));
 
   const changeLane = (nextLane: PersonLinkageLane) => {
+    if (!confirmDiscard("people-note")) return; // a typed note on the open case
+    setRationale("");
     beginDetailLoad(); // invalidate any in-flight case from the previous lane
     setLane(nextLane);
     setPriorityBand(nextLane === "other_matches" ? "priority_1" : "All");
@@ -797,7 +826,7 @@ export default function People() {
     // Picking a lane means "show me this lane": a running search ends here.
     lastQueryRef.current = "";
     setQuery("");
-    navigate("/people");
+    navigate("/people", LEAVE_UNSAVED);
   };
 
   // Opening a search result selects its lane without disturbing the query or
@@ -843,6 +872,7 @@ export default function People() {
       setLaneCounts(nextCases.lane_counts ?? {});
       setReservedForLabeling(nextCases.reserved_for_labeling ?? 0);
       setError("");
+      setListFailed(false);
       if (showPrimerRef.current || searchingAll) {
         // The reader stays on the primer; the rail updates around them. A
         // search never opens a result by itself either: opening one selects
@@ -853,7 +883,14 @@ export default function People() {
         if (first) navigate(`/people/${encodeURIComponent(first)}`, { replace: true });
       }
     } catch (err) {
-      if (fresh()) setError((err as Error).message);
+      if (fresh()) {
+        // Judge blind explains itself from the summary (paused / not set up); the
+        // server's refusal would only repeat it beside the notice.
+        if (lane !== "labeling_round") setError((err as Error).message);
+        setListFailed(true);
+        setCases([]); // never leave the previous lane's rows under this lane's heading
+        setTotal(0);
+      }
     } finally {
       if (fresh()) setLoading(false);
     }
@@ -877,7 +914,11 @@ export default function People() {
     return () => window.clearTimeout(timer);
   }, [query, offset]);
   useEffect(() => {
-    if (caseId) setSelected(caseId);
+    if (!caseId) return;
+    setSelected(caseId);
+    // A note belongs to the case it was typed on (Back/Forward included: the
+    // router guard has already asked before the address changed).
+    setRationale("");
   }, [caseId]);
   useEffect(() => {
     if (!selected) {
@@ -912,7 +953,9 @@ export default function People() {
 
   const selectedIndex = cases.findIndex((item) => item.case_id === selected);
   const nextCase = cases[selectedIndex + 1]?.case_id ?? cases[0]?.case_id ?? "";
-  const selectCase = useCallback((id: string) => {
+  const selectCase = useCallback((id: string, alreadyAsked = false) => {
+    // Asked here, before the note is cleared below; the navigation then skips the router guard.
+    if (!alreadyAsked && !confirmDiscard("people-note")) return;
     setDetail(null);
     setSelected(id);
     // A message belongs to the case it was made on; `act` re-sets its own
@@ -927,7 +970,7 @@ export default function People() {
     setSelectedCitations([]);
     setMobileQueueOpen(false);
     setShowPrimer(false);
-    navigate(`/people/${encodeURIComponent(id)}`);
+    navigate(`/people/${encodeURIComponent(id)}`, LEAVE_UNSAVED);
   }, [navigate]);
 
   useEffect(() => {
@@ -991,7 +1034,7 @@ export default function People() {
       });
       // The message names its own entries, so it still reads right when it
       // sits above the next case after the queue advances.
-      const label = ids.map((id) => `#${id}`).join(" and ");
+      const label = ids.length === 1 ? `entry #${ids[0]}` : `entries ${ids.map((id) => `#${id}`).join(" and ")}`;
       const message =
         action === "same_as" ? `Linked ${label} as one person. The entries stay as entered.`
           : action === "distinct" ? `Kept ${label} as different people.`
@@ -1002,7 +1045,7 @@ export default function People() {
             )
               : action === "reopen" ? "Reopened; the case is back in its lane."
               : action === "bulk_rule_ack"
-                ? "Recorded that this rule version was sampled. Individual cases were not marked distinct."
+                ? "Recorded that you inspected a sample of this rule. No case was decided."
               : `Set ${label} aside with your note until someone reopens it.`;
       setRationale("");
       setPendingDecision(null);
@@ -1028,6 +1071,7 @@ export default function People() {
   };
 
   const chooseDecision = (action: PendingDecision, personId?: number) => {
+    if (!confirmDiscard("people-note")) return; // choosing another decision clears the note
     setError("");
     setMessage("");
     setRationale("");
@@ -1042,7 +1086,7 @@ export default function People() {
       return;
     }
     if (pendingDecision === "same_as" && lane === "rule_exclusions" && !rationale.trim()) {
-      setError("Explain why the source evidence overrides the career-conflict rule.");
+      setError("Explain why the sources override the rule.");
       return;
     }
     if (pendingDecision === "flag_split" && splitPersonId === null) {
@@ -1079,7 +1123,7 @@ export default function People() {
         citations: [],
         review_mode: "standard",
       });
-      setMessage(`Flag lifted from #${flag.person_id}. The note stays in the history.`);
+      setMessage(`Flag lifted from entry #${flag.person_id}. The note stays in the history.`);
       setLastDecision(null);
       await reload();
       if (selected) setDetail(await loadPersonLinkageCase(selected));
@@ -1090,30 +1134,15 @@ export default function People() {
     }
   };
 
-  // Undo a link decision and put the case back in its lane in one click. The
-  // server records two notes, "undone" and "reopened"; if the second call
-  // fails the case waits under Decided with the existing reopen button.
-  const undoDecision = async (eventId: string, caseId: string, personIds: number[]) => {
+  // Undo a link decision: the server writes one "undone" note and reads the
+  // case as open again, so it is back in its lane with no second step.
+  const undoDecision = async (eventId: string) => {
     if (!reviewer.trim()) return;
     setBusy(true);
     try {
-      const undone = await revokePersonDecision(eventId, { reviewer: reviewer.trim(), reason: rationale.trim() });
-      try {
-        await decidePersonLinkage(caseId, {
-          reviewer: reviewer.trim(),
-          action: "reopen",
-          person_ids: personIds,
-          reason_code: "",
-          rationale: "",
-          expected_status: "revoked",
-          expected_event_id: undone.event_id,
-          citations: [],
-          review_mode: "standard",
-        });
-        setMessage("Decision undone; the case is back in its lane. Both steps are in the history.");
-      } catch {
-        setMessage("Decision undone. Press “Put back in the queue” in the history to reopen it.");
-      }
+      await revokePersonDecision(eventId, { reviewer: reviewer.trim(), reason: rationale.trim() });
+      setRationale(""); // the note went with the undo as its reason
+      setMessage("Decision undone; the case is back in its lane.");
       setLastDecision(null);
       await reload();
       if (selected) setDetail(await loadPersonLinkageCase(selected));
@@ -1135,7 +1164,7 @@ export default function People() {
       });
       return;
     }
-    await undoDecision(lastDecision.eventId, lastDecision.caseId, lastDecision.personIds);
+    await undoDecision(lastDecision.eventId);
   };
 
   const primaryPair = useMemo(() => {
@@ -1195,10 +1224,12 @@ export default function People() {
               type="button"
               className="pl-primer-link"
               onClick={() => {
+                if (!confirmDiscard("people-note")) return;
+                setRationale("");
                 setShowPrimer(true);
                 setSelected("");
                 setDetail(null);
-                navigate("/people");
+                navigate("/people", LEAVE_UNSAVED);
               }}
             >
               How does this work?
@@ -1321,9 +1352,22 @@ export default function People() {
               </div>
             ) : null}
           </form>
-          <p className="pl-queue-count" aria-live="polite">
+          <p className={listFailed && !loading && !blindUnavailable ? "pl-queue-count error-text" : "pl-queue-count"} aria-live="polite">
             {loading
               ? searching ? "Searching…" : "Loading…"
+              : lane === "labeling_round" && summary?.labeling_packet_available === false
+                ? "Judge blind is not set up on this site yet."
+              : lane === "labeling_round" && summary?.labeling_packet_stale
+                ? "Judge blind is paused: its cases were drawn from an earlier set of suggestions, and a new set has to be drawn before judging can resume."
+              : listFailed
+                ? (
+                  <>
+                    The list of cases could not be loaded.{" "}
+                    <button type="button" className="link-like" onClick={() => void reload()}>
+                      Try again
+                    </button>
+                  </>
+                )
               : searching
                 ? total
                   ? `${total} case${total === 1 ? "" : "s"} in ${Object.keys(laneCounts).length} lane${Object.keys(laneCounts).length === 1 ? "" : "s"}`
@@ -1331,9 +1375,9 @@ export default function People() {
               : total
                 ? `${offset + 1}–${offset + cases.length} of ${total}`
                 : lane === "labeling_round" && summary?.labeling_packet_available === false
-                  ? "The labeling packet is not deployed on this server."
+                  ? "Judge blind is not set up on this site yet."
                   : lane === "labeling_round" && summary?.labeling_packet_stale
-                    ? "The labeling packet was built against an older suggestion cache — regenerate it before labeling."
+                    ? "Judge blind is paused: its cases were drawn from an earlier set of suggestions, and a new set has to be drawn before judging can resume."
                     : reservedForLabeling > 0
                       ? reservedForLabeling === 1
                         ? "The only case in this lane is part of the open labeling round. Decide it under Judge blind, or finish the round to review it here."
@@ -1369,7 +1413,7 @@ export default function People() {
                 : item.status && item.status !== "open"
                   ? STATUS_LABEL[item.status] ?? item.status.replace(/_/g, " ")
                   : item.lane === "other_matches" && item.priority_band
-                  ? item.priority_band.replace(/_/g, " ")
+                  ? `Priority ${item.priority_band.split("_")[1] ?? ""}`.trim()
                   : LANE_LABEL[item.lane] ?? "Review candidate";
             // Search results arrive sorted by lane; a heading opens each run.
             const heading =
@@ -1388,12 +1432,14 @@ export default function People() {
                 <button
                   className={item.case_id === selected ? "pl-case is-active" : "pl-case"}
                   onClick={() => {
+                    // Ask before the lane changes, so a "keep my note" leaves everything as it was.
+                    if (!confirmDiscard("people-note")) return;
                     if (searching && isKnownLane) adoptLane(item.lane);
-                    selectCase(item.case_id);
+                    selectCase(item.case_id, true);
                   }}
                   type="button"
                   aria-current={item.case_id === selected ? "true" : undefined}
-                  title={item.lane === "labeling_round" ? undefined : item.reasons?.[0] || undefined}
+                  title={item.lane === "labeling_round" ? undefined : queueReason(item.reasons)}
                 >
                   <span className="pl-case-tag">{queueTag}</span>
                   <strong>{names.join(" ↔ ") || "Unnamed entries"}</strong>
@@ -1436,28 +1482,33 @@ export default function People() {
       <section className="workspace pl-workspace">
         {unavailable ? (
           <div className="db-detail-empty">
-            <h2>Person suggestions have not been built</h2>
-            <p>Build the reviewed model manifest and person cache before opening this worklist.</p>
-            <code>uv run --extra linkage python workflows/person_linkage.py</code>
+            <h2>Person suggestions are not available</h2>
+            <p>
+              The suggestions have not been prepared for this copy of the database. Entries can still be read and
+              corrected under Database.
+            </p>
           </div>
         ) : !detail ? (
           <div className="db-detail-empty">
             {!loading && !total && lane === "labeling_round" && summary?.labeling_packet_available === false ? (
               <>
                 <h2>Judge blind is unavailable</h2>
-                <p>The labeling packet is not deployed on this server.</p>
+                <p>Judge blind is not set up on this site yet.</p>
               </>
             ) : !loading && !total && lane === "labeling_round" && summary?.labeling_packet_stale ? (
               <>
                 <h2>Judge blind is unavailable</h2>
-                <p>The labeling packet was built against an older suggestion cache — regenerate it before labeling.</p>
+                <p>
+                  Judge blind is paused: its cases were drawn from an earlier set of suggestions, and a new set has to
+                  be drawn before judging can resume.
+                </p>
               </>
             ) : loading ? (
               <h2>Loading people…</h2>
             ) : showPrimer ? (
               <PersonLinkagePrimer />
             ) : (
-              <h2>Choose a person-identity case</h2>
+              <h2>Choose a case from the list</h2>
             )}
             {error ? <p className="error-text">{error}</p> : null}
           </div>
@@ -1473,12 +1524,12 @@ export default function People() {
             <div className="pl-review-body">
               {detail.stale?.stale ? (
                 <div className="notice warning" role="alert">
-                  The database or saved model has changed since these suggestions were built. The lane, the reasons and the score may no longer match the entries; judge from the entries and the sources, and rebuild before relying on the rest.
+                  The database or saved model has changed since these suggestions were built. The lane, the reasons and the score may no longer match the entries; judge from the entries and the sources.
                 </div>
               ) : null}
               {detail.needs_recheck ? (
                 <div className="notice warning" role="alert">
-                  Evidence changed after the last decision. The original decision and evidence remain in the audit
+                  Evidence changed after the last decision. The original decision and evidence remain in the Review
                   history; review this case again before relying on it.
                 </div>
               ) : null}
@@ -1528,20 +1579,20 @@ export default function People() {
                 />
               ) : detail.lane === "labeling_round" ? (
                 <section className="pl-blind-labeling-note">
-                  <strong>Model output is hidden for this labeling round.</strong>
-                  <span>Base your decision on the entries and the sources. Model ordering appears after review.</span>
+                  <strong>The scores are hidden in the labeling round.</strong>
+                  <span>Decide from the entries and the sources. The scores appear once you have answered.</span>
                 </section>
               ) : detail.persons.length >= 3 ? (
                 <section className="pl-blind-labeling-note">
                   <strong>
                     {scopeKey && scopeKey !== "all"
-                      ? "No direct model edge was scored for this pair."
-                      : "Model contributions are pair-specific."}
+                      ? "The model did not score this pair directly."
+                      : "The model scores pairs, not groups."}
                   </strong>
                   <span>
                     {scopeKey && scopeKey !== "all"
-                      ? "Review the factual fields and sources; absence of a model edge is not evidence that the people differ."
-                      : "Choose one pair above to inspect its model evidence. Whole-group decisions are not summarized by a single edge score."}
+                      ? "Judge from the fields and the sources; a missing score is not evidence that the people differ."
+                      : "Choose one pair above to see its evidence chart. No single score sums up a whole group."}
                   </span>
                 </section>
               ) : null}
@@ -1628,7 +1679,11 @@ export default function People() {
                     <button
                       type="button"
                       className="pl-decision-cancel"
-                      onClick={() => setPendingDecision(null)}
+                      onClick={() => {
+                        // A deliberate discard, like Cancel in the record editors.
+                        setPendingDecision(null);
+                        setRationale("");
+                      }}
                     >
                       Cancel
                     </button>
@@ -1706,7 +1761,7 @@ export default function People() {
                           : pendingDecision === "flag_split"
                             ? "Which contracts seem to belong to someone else, and why? (required)"
                           : pendingDecision === "same_as" && lane === "rule_exclusions"
-                            ? "Why does the source override the career rule? (required)"
+                            ? "Why do the sources override the rule? (required)"
                             : "Rationale or source note (optional)"
                       }
                       aria-label="Decision rationale"
@@ -1746,7 +1801,7 @@ export default function People() {
                   </div>
                   <div className="pl-decision-action-area">
                     {needsGroupScope ? (
-                      <p className="pl-scope-required">Choose a whole-group or pair scope above before deciding same/different.</p>
+                      <p className="pl-scope-required">Choose above whether the decision covers the whole group or one pair.</p>
                     ) : null}
                     <div className={detail.person_ids.length > 1 ? "pl-decision-options" : "pl-decision-options is-single-record"}>
                       {detail.person_ids.length > 1 ? (
@@ -1798,7 +1853,7 @@ export default function People() {
           busy={busy}
           onClose={() => setEvidenceDrawer(null)}
           onOpenSource={setSourceEntryId}
-          onUndo={(eventId) => void undoDecision(eventId, detail.case_id, detail.person_ids)}
+          onUndo={(eventId) => void undoDecision(eventId)}
           onReopen={() => void act("reopen")}
         />
       ) : null}

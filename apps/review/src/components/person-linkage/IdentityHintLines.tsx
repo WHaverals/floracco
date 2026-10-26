@@ -8,10 +8,10 @@ export default function IdentityHintLines({ hint }: { hint?: PersonIdentityHint 
     lines.push({ text: "Flagged: possibly two people in one entry", split: true });
   }
   if (hint.linked_count > 1) {
-    lines.push({ text: `Reviewed identity family · ${hint.linked_count} entered records` });
+    lines.push({ text: `Reviewed identity family · ${hint.linked_count} entries` });
   } else if (hint.open_count > 0) {
     lines.push({
-      text: `${hint.open_count} possible related record${hint.open_count === 1 ? "" : "s"} awaiting review`,
+      text: `${hint.open_count} possible related ${hint.open_count === 1 ? "entry" : "entries"} awaiting review`,
     });
   }
   if (lines.length === 0) return null;

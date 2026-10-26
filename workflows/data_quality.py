@@ -36,6 +36,26 @@ PLACEHOLDER_COLUMNS: dict[str, list[str]] = {
     "investor": ["profession", "husband_first_name", "husband_last_name", "guardian_of"],
 }
 
+# The same columns as the record page labels them, for worklist titles.
+COLUMN_LABELS: dict[str, str] = {
+    "firm_name": "Firm name",
+    "sub_firm_name": "Sub-firm name",
+    "folio": "Folio",
+    "document": "Narrative",
+    "first_name": "First name",
+    "father_mother": "Father / mother",
+    "grandfather": "Grandfather",
+    "last_name": "Last name",
+    "nickname": "Nickname",
+    "profession": "Profession",
+    "husband_first_name": "Husband — first name",
+    "husband_last_name": "Husband — last name",
+    "guardian_of": "Guardian of",
+}
+
+# Stored role codes (investment.type) as worklist titles show them.
+ROLE_WORDS: dict[str, str] = {"gp": "General partner", "lp": "Limited partner"}
+
 
 def is_placeholder_text(value: Any) -> bool:
     """True when a text value is a stand-in for nothing ("NULL", "none", a dash)."""
@@ -65,52 +85,52 @@ GROUP_META: dict[str, dict[str, str]] = {
     "placeholder_text": {
         "label": "Placeholder text",
         "severity": "medium",
-        "explanation": "A field holds the word NULL (or a dash) where the source has nothing — an export artefact or a slip at the keyboard, not information. Open the field and clear it; if the act does record a value, enter that instead.",
+        "explanation": "A field holds the word NULL (or a dash) where the source has nothing — an export artefact or a slip at the keyboard, not information. Open the field and clear it; if the source does record a value, enter that instead.",
     },
     "broken_economic_sector": {
         "label": "Economic activity not in the list",
         "severity": "high",
-        "explanation": "The economic activity points to an entry that no longer exists, so it shows blank. Set it from the act.",
+        "explanation": "The economic activity points to an entry that no longer exists, so it shows blank. Set it from the source.",
     },
     "missing_reg_date": {
         "label": "Missing registration date",
         "severity": "high",
-        "explanation": "No registration date is recorded (shows 0000-00-00). Set it from the act.",
+        "explanation": "No registration date is recorded. Set it from the source.",
     },
     "no_partners": {
         "label": "No partners recorded",
         "severity": "high",
-        "explanation": "This accomandita has no partners entered — it needs at least a general (accomandatario) and a limited (accomandante) partner. Add them from the act.",
+        "explanation": "This accomandita has no partners entered; it needs at least one general partner (accomandatario) and one limited partner (accomandante). Add them from the source.",
     },
     "dup_partner": {
         "label": "Possible duplicate partner",
         "severity": "medium",
-        "explanation": "This person appears more than once on the contract without a second distinct stake — either an extra appearance with no investment attached, or two links to the same single investment. Likely entered twice. Check the act; if so, remove the redundant appearance (the stake's capital is unaffected — it's one investment).",
+        "explanation": "This person appears more than once on the contract without a second, distinct stake: either an extra appearance with no stake attached, or two links to the same stake. It was probably entered twice. Check the source; if so, remove the redundant appearance (the stake and its capital stay as they are).",
     },
     "person_no_name": {
         "label": "Unnamed person",
         "severity": "high",
-        "explanation": "This person has neither a first nor a last name. Add their name from the act.",
+        "explanation": "This person has neither a first nor a last name. Add their name from the source.",
     },
     "broken_place": {
         "label": "Place not in the list",
         "severity": "high",
-        "explanation": "A residence/origin points to a place entry that no longer exists. Re-point it from the act, or clear it.",
+        "explanation": "A residence or place of origin points to a place entry that no longer exists. Choose the place from the source, or clear it.",
     },
     "guardian_no_ward": {
         "label": "Guardian — ward not recorded",
         "severity": "medium",
-        "explanation": "Marked as acting as a guardian, but for whom isn't recorded. Name the ward from the act — or clear the guardian mark if the act shows no guardianship.",
+        "explanation": "Marked as acting as a guardian, but for whom isn't recorded. Name the ward from the source — or clear the guardian mark if the source shows no guardianship.",
     },
     "no_gp": {
         "label": "No general partner",
         "severity": "medium",
-        "explanation": "No accomandatario (general partner) is recorded. Check the act and add or correct a partner's role.",
+        "explanation": "No general partner (accomandatario) is recorded. Check the source and add a partner or correct a partner's role.",
     },
     "missing_sub_type": {
         "label": "Sub-contract type missing",
         "severity": "medium",
-        "explanation": "This sub-contract has no type (balance / renewal / termination / variation). Set it from the act.",
+        "explanation": "This sub-contract has no type (balance / renewal / termination / variation). Set it from the source.",
     },
     "orphan_stake": {
         "label": "Stake with no partner",
@@ -120,7 +140,7 @@ GROUP_META: dict[str, dict[str, str]] = {
     "widow_not_woman": {
         "label": "Marked widow, not a woman",
         "severity": "medium",
-        "explanation": "Recorded as a widow on a contract but not marked as a woman — one of the two is likely wrong. Check the act and fix whichever it is.",
+        "explanation": "Recorded as a widow on a contract but not marked as a woman — one of the two is likely wrong. Check the source and fix whichever it is.",
     },
 }
 
@@ -192,7 +212,7 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
            GROUP BY i.person_id, i.contract_id
            HAVING roles<=1 AND invs<=1 AND cashes<=1"""
     ):
-        who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"person {r['pid']}"
+        who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"Person entry #{r['pid']}"
         add("dup_partner", "contract", r["cid"], f"{who} · {_firm(r['firm'], r['cid'])}",
             {"kind": "review_partners", "field": None}, key_suffix=str(r["pid"]))
 
@@ -202,7 +222,7 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
            WHERE p.is_deleted=0 AND COALESCE(p.first_name,'')='' AND COALESCE(p.last_name,'')=''
              AND EXISTS (SELECT 1 FROM investor i WHERE i.person_id=p.person_id AND i.is_deleted=0)"""
     ):
-        add("person_no_name", "person", r["pid"], f"Person #{r['pid']} (unnamed)", {"kind": "edit", "field": "last_name"})
+        add("person_no_name", "person", r["pid"], f"Person entry #{r['pid']} (unnamed)", {"kind": "edit", "field": "last_name"})
 
     # 6. broken place — residence/origin FK points to a missing place (per investor)
     for r in connection.execute(
@@ -215,7 +235,7 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
              (i.place_of_residence NOT IN (0) AND i.place_of_residence IS NOT NULL AND NOT EXISTS(SELECT 1 FROM place pl WHERE pl.place_id=i.place_of_residence))
              OR (i.place_of_origin NOT IN (0) AND i.place_of_origin IS NOT NULL AND NOT EXISTS(SELECT 1 FROM place pl WHERE pl.place_id=i.place_of_origin)))"""
     ):
-        who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"investor {r['iid']}"
+        who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or "unnamed partner"
         add("broken_place", "contract", r["cid"], f"{who} · {_firm(r['firm'], r['cid'])}",
             {"kind": "partner_field", "field": r["field"], "investor_id": str(r["iid"])}, key_suffix=str(r["iid"]))
 
@@ -225,7 +245,7 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
            FROM investor i JOIN contract c ON c.contract_id=i.contract_id LEFT JOIN person p ON p.person_id=i.person_id
            WHERE i.is_deleted=0 AND i.is_guardian=1 AND COALESCE(i.guardian_of,'')=''"""
     ):
-        who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"investor {r['iid']}"
+        who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or "unnamed partner"
         add("guardian_no_ward", "contract", r["cid"], f"{who} · {_firm(r['firm'], r['cid'])}",
             {"kind": "partner_field", "field": "guardian_of", "investor_id": str(r["iid"])}, key_suffix=str(r["iid"]))
 
@@ -263,7 +283,7 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
              ON w.person_id=p.person_id
            WHERE p.is_deleted=0 AND p.is_woman=0"""
     ):
-        who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"Person #{r['pid']}"
+        who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"Person entry #{r['pid']}"
         add("widow_not_woman", "person", r["pid"], who, {"kind": "edit", "field": "is_woman"})
 
     # 11. stake with no partner — an investment row nobody is linked to (ten in
@@ -280,7 +300,8 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
              ON held.iid=v.investment_id
            WHERE v.is_deleted=0 AND c.is_deleted=0 AND held.iid IS NULL"""
     ):
-        stake = " · ".join(x for x in ((r["role"] or "").strip(), "" if r["cash"] is None else str(r["cash"])) if x)
+        role = (r["role"] or "").strip()
+        stake = " · ".join(x for x in (ROLE_WORDS.get(role, role), "" if r["cash"] is None else str(r["cash"])) if x)
         add("orphan_stake", "contract", r["cid"], f"{_firm(r['firm'], r['cid'])} · {stake or 'stake'}",
             {"kind": "review_partners", "field": None}, key_suffix=str(r["iid"]))
 
@@ -293,7 +314,7 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             f"SELECT contract_id AS cid, firm_name AS firm, {col} AS bad FROM contract "
             f"WHERE is_deleted=0 AND {_placeholder_sql().format(col=col)}", tokens
         ):
-            add("placeholder_text", "contract", r["cid"], f"{_firm(r['firm'], r['cid'])} · {col} = “{r['bad']}”",
+            add("placeholder_text", "contract", r["cid"], f"{_firm(r['firm'], r['cid'])} · {COLUMN_LABELS.get(col, col)} = “{r['bad']}”",
                 {"kind": "edit", "field": col}, key_suffix=col)
     for col in _existing_columns(connection, "sub_contract", PLACEHOLDER_COLUMNS["sub_contract"]):
         for r in connection.execute(
@@ -301,15 +322,15 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             f"WHERE is_deleted=0 AND {_placeholder_sql().format(col=col)}", tokens
         ):
             sub_name = (r["firm"] or "").strip() or f"Sub-contract {r['scid']}"
-            add("placeholder_text", "sub_contract", r["scid"], f"{sub_name} · {col} = “{r['bad']}”",
+            add("placeholder_text", "sub_contract", r["scid"], f"{sub_name} · {COLUMN_LABELS.get(col, col)} = “{r['bad']}”",
                 {"kind": "edit", "field": col}, key_suffix=col)
     for col in _existing_columns(connection, "person", PLACEHOLDER_COLUMNS["person"]):
         for r in connection.execute(
             f"SELECT person_id AS pid, first_name AS fn, last_name AS ln, {col} AS bad FROM person "
             f"WHERE is_deleted=0 AND {_placeholder_sql().format(col=col)}", tokens
         ):
-            who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"Person #{r['pid']}"
-            add("placeholder_text", "person", r["pid"], f"{who} · {col} = “{r['bad']}”",
+            who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"Person entry #{r['pid']}"
+            add("placeholder_text", "person", r["pid"], f"{who} · {COLUMN_LABELS.get(col, col)} = “{r['bad']}”",
                 {"kind": "edit", "field": col}, key_suffix=col)
     for col in _existing_columns(connection, "investor", PLACEHOLDER_COLUMNS["investor"]):
         for r in connection.execute(
@@ -320,8 +341,8 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
                 WHERE i.is_deleted=0 AND c.is_deleted=0 AND {_placeholder_sql().format(col='i.' + col)}""",
             tokens,
         ):
-            who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or f"investor {r['iid']}"
-            add("placeholder_text", "contract", r["cid"], f"{who} · {_firm(r['firm'], r['cid'])} · {col} = “{r['bad']}”",
+            who = " ".join(x for x in ((r["fn"] or "").strip(), (r["ln"] or "").strip()) if x) or "unnamed partner"
+            add("placeholder_text", "contract", r["cid"], f"{who} · {_firm(r['firm'], r['cid'])} · {COLUMN_LABELS.get(col, col)} = “{r['bad']}”",
                 {"kind": "partner_field", "field": col, "investor_id": str(r["iid"])}, key_suffix=f"{r['iid']}:{col}")
 
     return out

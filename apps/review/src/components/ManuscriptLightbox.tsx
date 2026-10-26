@@ -79,6 +79,7 @@ export default function ManuscriptLightbox({ src, alt, onClose, label, toolbarEx
   const [natural, setNatural] = useState<Size>({ w: 0, h: 0 });
   const [displayPercent, setDisplayPercent] = useState(100);
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const paintTransform = useCallback((view: Partial<View>) => {
     viewRef.current = { ...viewRef.current, ...view };
@@ -201,6 +202,7 @@ export default function ManuscriptLightbox({ src, alt, onClose, label, toolbarEx
     initializedForSrc.current = null;
     setNatural({ w: 0, h: 0 });
     setReady(false);
+    setFailed(false);
   }, [src]);
 
   useEffect(() => {
@@ -400,9 +402,15 @@ export default function ManuscriptLightbox({ src, alt, onClose, label, toolbarEx
               setNatural(size);
               measureContainer();
             }}
+            onError={() => setFailed(true)}
           />
         </div>
-        {!ready && <p className="manuscript-lightbox-loading muted">Loading image…</p>}
+        {!ready &&
+          (failed ? (
+            <p className="manuscript-lightbox-loading error-text">This image could not be loaded.</p>
+          ) : (
+            <p className="manuscript-lightbox-loading muted">Loading image…</p>
+          ))}
       </div>
     </div>
   );

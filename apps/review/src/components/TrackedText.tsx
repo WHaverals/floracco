@@ -164,16 +164,18 @@ export default function TrackedText({
       : "Comment (body not found)";
     return (
       <span className="rev-marker-wrap" key={key}>
-        <button
-          type="button"
-          className={`rev-marker rev-marker-comment${isOpen ? " is-open" : ""}`}
-          aria-label={label}
-          aria-expanded={isOpen}
-          title={label}
-          onClick={() => setActiveMarker(isOpen || !id ? null : { type: "comment", id })}
-        >
-          <span aria-hidden="true">💬</span>
-        </button>
+        <sup>
+          <button
+            type="button"
+            className={`rev-marker rev-marker-note rev-marker-comment${isOpen ? " is-open" : ""}`}
+            aria-label={label}
+            aria-expanded={isOpen}
+            title={label}
+            onClick={() => setActiveMarker(isOpen || !id ? null : { type: "comment", id })}
+          >
+            comment
+          </button>
+        </sup>
         {isOpen && comment ? (
           <span className="rev-popover" role="dialog">
             <span className="rev-popover-head">
@@ -251,7 +253,7 @@ function CommentsDisclosure({ comments }: { comments: EntryComment[] }) {
         {comments.map((comment) => (
           <li key={comment.id}>
             <span className="rev-body-meta">
-              💬 {comment.author || "Unknown"}
+              {comment.author || "Unknown"}
               {comment.date ? ` · ${shortDate(comment.date)}` : ""}
             </span>
             <span>{comment.text || "(empty comment)"}</span>

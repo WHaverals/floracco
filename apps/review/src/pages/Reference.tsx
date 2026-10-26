@@ -23,12 +23,93 @@ import type {
  * reserved for later phases. (See docs/reference/scope.md.)
  */
 
-const VOCABS: { kind: ReferenceKind; label: string; noun: string; quick: string[] }[] = [
-  { kind: "place", label: "Places", noun: "place", quick: ["popolo", "fiere", "parti di"] },
-  { kind: "title", label: "Titles", noun: "title", quick: ["senatore", "cavaliere", "quondam", "signora"] },
-  { kind: "currency", label: "Currencies", noun: "currency", quick: ["scudi", "ducati", "fiorini", "lire", "pezze"] },
-  { kind: "activity", label: "Economic activities", noun: "economic activity", quick: ["seta", "lana", "cambi", "panni", "spezieria"] },
+/* `unit` and `hint` say what a term's number counts. A place or a title can be
+ * recorded several times on one contract (once per partner), so those read
+ * "recorded N times"; a currency or an activity is recorded once per contract. */
+const VOCABS: {
+  kind: ReferenceKind;
+  label: string;
+  singular: string;
+  noun: string;
+  aNoun: string;
+  unit: "times" | "contracts";
+  hint: string;
+  quick: string[];
+}[] = [
+  {
+    kind: "place",
+    label: "Places",
+    singular: "Place",
+    noun: "place",
+    aNoun: "a place",
+    unit: "times",
+    hint: "Each contract’s place of activity, and each partner’s residence and place of origin, counts once.",
+    quick: ["popolo", "fiere", "parti di"],
+  },
+  {
+    kind: "title",
+    label: "Titles",
+    singular: "Title",
+    noun: "title",
+    aNoun: "a title",
+    unit: "times",
+    hint: "Each partner’s own title, and each title recorded for a partner’s husband, father or mother, or grandfather, counts once.",
+    quick: ["senatore", "cavaliere", "quondam", "signora"],
+  },
+  {
+    kind: "currency",
+    label: "Currencies",
+    singular: "Currency",
+    noun: "currency",
+    aNoun: "a currency",
+    unit: "contracts",
+    hint: "Each contract counts once, under the currency it is recorded in.",
+    quick: ["scudi", "ducati", "fiorini", "lire", "pezze"],
+  },
+  {
+    kind: "activity",
+    label: "Economic activities",
+    singular: "Economic activity",
+    noun: "economic activity",
+    aNoun: "an economic activity",
+    unit: "contracts",
+    hint: "Each contract counts once, under the economic activity recorded for it.",
+    quick: ["seta", "lana", "cambi", "panni", "spezieria"],
+  },
 ];
+
+const fmtTimes = (n: number) => (n === 1 ? "once" : `${n.toLocaleString()} times`);
+const fmtContracts = (n: number) => `${n.toLocaleString()} contract${n === 1 ? "" : "s"}`;
+
+/** A term's number in the rail, with its unit. */
+function usageLabel(n: number, unit: "times" | "contracts"): string {
+  if (n === 0) return "unused";
+  return unit === "contracts" ? fmtContracts(n) : `recorded ${fmtTimes(n)}`;
+}
+
+/* The kinds of use behind a place's or a title's number, in the order the
+ * record page lists those fields. */
+const PART_PHRASE: [string, (n: number) => string][] = [
+  ["activity", (n) => `as the place of activity of ${fmtContracts(n)}`],
+  ["residence", (n) => `as a partner’s residence ${fmtTimes(n)}`],
+  ["origin", (n) => `as a partner’s place of origin ${fmtTimes(n)}`],
+  ["title", (n) => `as a partner’s own title ${fmtTimes(n)}`],
+  ["title_husband", (n) => `as a husband’s title ${fmtTimes(n)}`],
+  ["title_father_mother", (n) => `as a father’s or mother’s title ${fmtTimes(n)}`],
+  ["title_grandfather", (n) => `as a grandfather’s title ${fmtTimes(n)}`],
+];
+
+const joinAnd = (xs: string[]) =>
+  xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")}${xs.length > 2 ? "," : ""} and ${xs[xs.length - 1]}`;
+
+/** One sentence that puts the rail's number, the contract count and its parts together. */
+function usageSentence(kind: ReferenceKind, d: ReferenceRecordsResponse): string {
+  if (d.usage_total === 0) return "Not recorded on any contract.";
+  if (kind === "currency") return `The currency of ${fmtContracts(d.record_total)}.`;
+  if (kind === "activity") return `The economic activity of ${fmtContracts(d.record_total)}.`;
+  const parts = PART_PHRASE.filter(([k]) => (d.usage_parts[k] ?? 0) > 0).map(([k, say]) => say(d.usage_parts[k]));
+  return `Recorded ${fmtTimes(d.usage_total)}, on ${fmtContracts(d.record_total)}: ${joinAnd(parts)}.`;
+}
 
 /** Horizontal usage bars — the overview "shape" of a vocabulary (pure counts). */
 function UsageBars({
@@ -155,6 +236,7 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
   useEffect(() => {
     setData(null);
     setCanonical({});
+    setError(""); // an error from the previous vocabulary does not belong here
     reload();
   }, [reload]);
 
@@ -307,7 +389,15 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
       {error && <p className="error-text">{error}</p>}
 
       {!data ? (
-        <p className="muted">Loading…</p>
+        error ? (
+          <p>
+            <button type="button" className="link-like" onClick={reload}>
+              Try again
+            </button>
+          </p>
+        ) : (
+          <p className="muted">Loading…</p>
+        )
       ) : (
         <>
           {data.note && <p className="muted ref-note ref-dupe-note">{data.note}</p>}
@@ -317,8 +407,8 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
           {data.families.length === 0 ? (
             <p className="muted ref-note">
               {data.note
-                ? "No exact matches. Knowledge-based suggestions will appear here once the historic-name pass has run."
-                : "No unresolved same-as candidates. 🎉"}
+                ? "No exact matches. Suggestions from the computer have not been prepared for this list yet."
+                : "No unresolved candidates."}
             </p>
           ) : (
             <ul className="ref-fam-list">{data.families.map(renderFamily)}</ul>
@@ -384,7 +474,6 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
                   <ul className="ref-caution-list">
                     {data.cautions.map((c, i) => (
                       <li key={i} className="ref-caution">
-                        <span className="ref-caution-warn">⚠</span>
                         {c.terms.map((t, j) => (
                           <span key={t.id}>
                             <button
@@ -422,6 +511,10 @@ export default function Reference() {
   const [terms, setTerms] = useState<ReferenceTerm[]>([]);
   const [selected, setSelected] = useState<ReferenceTerm | null>(null);
   const [detail, setDetail] = useState<ReferenceRecordsResponse | null>(null);
+  const [detailFailed, setDetailFailed] = useState(false);
+  const [detailRetry, setDetailRetry] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreFailed, setMoreFailed] = useState(false);
   const beginList = useLatest();
   const beginDetail = useLatest();
   const [error, setError] = useState("");
@@ -451,6 +544,9 @@ export default function Reference() {
   }, [kind, search, sort, orphansOnly, runList]);
 
   useEffect(() => {
+    setLoadingMore(false); // a term switch abandons any in-flight "Load more"
+    setMoreFailed(false);
+    setDetailFailed(false);
     if (!selected) {
       beginDetail();
       setDetail(null);
@@ -460,8 +556,34 @@ export default function Reference() {
     const fresh = beginDetail();
     loadReferenceRecords(kind, selected.id)
       .then((d) => fresh() && setDetail(d))
-      .catch(() => fresh() && setDetail(null));
-  }, [kind, selected, beginDetail]);
+      .catch(() => {
+        if (!fresh()) return;
+        setDetail(null);
+        setDetailFailed(true);
+      });
+  }, [kind, selected, beginDetail, detailRetry]);
+
+  const loadMoreRecords = () => {
+    if (!selected || !detail) return;
+    const fresh = beginDetail(); // a term switch (the effect above) invalidates this append
+    setLoadingMore(true);
+    setMoreFailed(false);
+    loadReferenceRecords(kind, selected.id, detail.records.length)
+      .then((more) => {
+        if (!fresh()) return;
+        setDetail((prev) => {
+          if (!prev) return prev;
+          const seen = new Set(prev.records.map((r) => r.row_id));
+          return {
+            ...prev,
+            record_total: more.record_total,
+            records: [...prev.records, ...more.records.filter((r) => !seen.has(r.row_id))],
+          };
+        });
+      })
+      .catch(() => fresh() && setMoreFailed(true))
+      .finally(() => fresh() && setLoadingMore(false));
+  };
 
   const switchKind = (k: ReferenceKind) => {
     setKind(k);
@@ -558,7 +680,7 @@ export default function Reference() {
             </label>
           </div>
 
-          <p className="db-count muted">
+          <p className={error ? "db-count error-text" : "db-count muted"}>
             {error
               ? error
               : list
@@ -588,13 +710,13 @@ export default function Reference() {
                 onClick={() => setSelected(t)}
               >
                 <span className="db-result-title">{t.value}</span>
-                <span className="db-result-meta muted">
-                  {t.count > 0 ? `used ${t.count.toLocaleString()}×` : "unused"}
+                <span className="db-result-meta muted" title={vocab.hint}>
+                  {usageLabel(t.count, vocab.unit)}
                 </span>
               </button>
             </li>
           ))}
-          {terms.length === 0 && !error && <li className="db-empty muted">No terms match.</li>}
+          {list && terms.length === 0 && !error && <li className="db-empty muted">No terms match.</li>}
           {list && terms.length > 0 && terms.length < list.total && (
             <li className="db-load-more">
               <button
@@ -625,29 +747,35 @@ export default function Reference() {
             <p className="eyebrow">Most-referenced</p>
             <h2>{vocab.label} by usage</h2>
             <p className="muted ref-note">
-              How many records reference each term across the corpus. Select a term to read the
-              contracts that use it.
+              How often each term is recorded. {vocab.hint} Select a term to read its contracts.
             </p>
             {list && list.top.length > 0 ? (
               <UsageBars top={list.top} onPick={(value) => setSearch(value)} />
-            ) : (
+            ) : list ? (
               <p className="muted">No usage to chart.</p>
-            )}
+            ) : null}
           </div>
         ) : (
           <div className="ref-term">
-            <p className="eyebrow">{vocab.label.replace(/s$/, "")} · verbatim term</p>
+            <p className="eyebrow">{vocab.singular} · verbatim term</p>
             <h2 className="ref-term-value">{selected.value}</h2>
-            <p className="muted ref-term-meta">
-              Used as a {vocab.noun} in {(detail?.record_total ?? selected.count).toLocaleString()} contract
-              {(detail?.record_total ?? selected.count) === 1 ? "" : "s"}
-            </p>
+            {detail && <p className="muted ref-term-meta">{usageSentence(kind, detail)}</p>}
             {detail && (
               <p className="muted ref-narrative-line">
                 {detail.narrative_mentions > 0 ? (
                   <>
-                    The word also appears in {detail.narrative_mentions.toLocaleString()} contract narrative
-                    {detail.narrative_mentions === 1 ? "" : "s"} —{" "}
+                    The text “{selected.value}” occurs in the narrative text of{" "}
+                    {[
+                      detail.narrative_contracts > 0 ? fmtContracts(detail.narrative_contracts) : "",
+                      detail.narrative_sub_contracts > 0
+                        ? `${detail.narrative_sub_contracts.toLocaleString()} sub-contract${
+                            detail.narrative_sub_contracts === 1 ? "" : "s"
+                          }`
+                        : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" and ")}
+                    . The count is a plain text match and can include longer words that contain it.{" "}
                     <button
                       type="button"
                       className="link-like"
@@ -657,7 +785,7 @@ export default function Reference() {
                     </button>
                   </>
                 ) : (
-                  "The word does not appear in any narrative text."
+                  `The text “${selected.value}” does not occur in any narrative.`
                 )}
               </p>
             )}
@@ -682,7 +810,7 @@ export default function Reference() {
                 )}
                 {typeof detail.resolution.lat === "number" && typeof detail.resolution.lon === "number" && (
                   <p className="muted ref-resolution-coords">
-                    📍 {detail.resolution.lat.toFixed(3)}, {detail.resolution.lon.toFixed(3)}
+                    Coordinates {detail.resolution.lat.toFixed(3)}, {detail.resolution.lon.toFixed(3)}
                     {detail.resolution.geo_source === "country-centroid" ? " (approx.)" : ""}{" "}
                     <a
                       className="link-like"
@@ -726,16 +854,39 @@ export default function Reference() {
                     </li>
                   ))}
                   {detail.record_total > detail.records.length && (
-                    <li className="db-empty muted">
-                      Showing first {detail.records.length.toLocaleString()} of {detail.record_total.toLocaleString()}.
+                    <li className="db-load-more">
+                      <p className="muted ref-records-count">
+                        Showing {detail.records.length.toLocaleString()} of {detail.record_total.toLocaleString()}.
+                        {moreFailed ? " The next contracts did not load; please try again." : ""}
+                      </p>
+                      <button
+                        type="button"
+                        className="db-load-more-btn"
+                        disabled={loadingMore}
+                        onClick={loadMoreRecords}
+                      >
+                        Load more{" "}
+                        <span className="db-load-more-count">
+                          ({(detail.record_total - detail.records.length).toLocaleString()} more)
+                        </span>
+                      </button>
                     </li>
                   )}
                 </ul>
               ) : (
                 <p className="muted">
-                  {detail
-                    ? `No contract records this term as a ${vocab.noun} — it’s in the vocabulary but never structurally linked.`
-                    : "Loading…"}
+                  {detail ? (
+                    `No contract records this term as ${vocab.aNoun}. It is in the list of terms but not linked to any record.`
+                  ) : detailFailed ? (
+                    <>
+                      The contracts for this term did not load.{" "}
+                      <button type="button" className="link-like" onClick={() => setDetailRetry((n) => n + 1)}>
+                        Try again
+                      </button>
+                    </>
+                  ) : (
+                    "Loading…"
+                  )}
                 </p>
               )}
             </div>

@@ -22,6 +22,7 @@ export function evidenceLabel(row: WaterfallContribution): string {
     if (label.includes("one letter apart")) return "Father’s name differs by one letter";
     if (label.includes("sibling")) return "Same father but different given names";
     if (label.includes("father-and-son")) return "The names form a father–son pattern";
+    if (label === "all other comparisons") return "Fathers’ names differ";
   }
   if (row.comparison === "contemporaneity") {
     if (label.includes("same firm")) return "Compatible dates and the same firm";
@@ -29,10 +30,12 @@ export function evidenceLabel(row: WaterfallContribution): string {
     if (label.includes("shared partner")) return "Compatible dates and a shared partner";
     if (label.includes("shared firm")) return "Compatible dates and related firm names";
     if (label.includes("no shared network")) return "Dates are compatible; no shared network recorded";
-    if (label.includes("longer")) return "Combined career is unusually long";
+    if (label.includes("shared network")) return "Compatible dates and a shared business network";
+    if (label === "all other comparisons") return "Combined career is longer than sixty years";
   }
   if (row.comparison === "husband") {
     if (label.includes("same husband")) return "The recorded husband agrees";
+    if (label.includes("exact match")) return "The husbands’ family names agree";
     return "Recorded husbands differ";
   }
   return row.label;
@@ -46,8 +49,21 @@ function contextLabel(row: WaterfallContribution): string {
   if (label.includes("no evidence, or the pair shares an act")) {
     return "no dated contracts on one side, or both entries in the same contract";
   }
-  if (row.comparison === "role") return `${row.label} (shown for context; not used in review order)`;
+  if (row.comparison === "role") {
+    const text = label === "all other comparisons" ? "one general partner, one limited partner" : row.label;
+    return `${text} (shown for context; not used in review order)`;
+  }
   return row.label;
+}
+
+/** The tooltip's level name: the model's own wording, with column names put into words. */
+function levelText(row: WaterfallContribution): string {
+  const jw = row.label.match(/^Jaro-Winkler distance of full_name_norm >= ([\d.]+)$/);
+  if (jw) return `Jaro–Winkler similarity of the full names: ${jw[1]} or more`;
+  if (row.label === "Exact match on full_name_norm") return "The full names are identical";
+  if (row.label === "Exact match on husband_last_norm") return "The husbands’ family names are identical";
+  if (row.label === "All other comparisons") return evidenceLabel(row);
+  return row.label.replace(/career <= (\d+) years/, "combined career of $1 years or less");
 }
 
 export default function EvidenceBars({
@@ -106,7 +122,7 @@ export default function EvidenceBars({
               </div>
               <span className="pl-water-info" aria-hidden="true">i</span>
               <span className="pl-water-tooltip" id={tooltipId} role="tooltip">
-                <strong>{row.label}</strong>
+                <strong>{levelText(row)}</strong>
                 <span>
                   {row.weight_bits > 0 ? "Supports same person" : "Supports different people"}
                   {" · "}{row.weight_bits > 0 ? "+" : ""}{row.weight_bits.toFixed(2)} model bits

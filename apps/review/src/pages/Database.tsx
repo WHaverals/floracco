@@ -21,7 +21,7 @@ import {
   searchDb,
   setPlaceRemoved,
 } from "../api";
-import LookupCombobox from "../components/LookupCombobox";
+import LookupCombobox, { lookupCheckBlock, type LookupCheck } from "../components/LookupCombobox";
 import AddInvestorPanel from "../components/AddInvestorPanel";
 import CreateRecordForm from "../components/CreateRecordForm";
 import DbFilters from "../components/DbFilters";
@@ -32,6 +32,14 @@ import WordSourceDrawer from "../components/WordSourceDrawer";
 import WordSummaryInline from "../components/WordSummaryInline";
 import { manuscriptImageCaption } from "../utils/manuscriptImages";
 import { useLatest } from "../utils/latest";
+import {
+  LEAVE_UNSAVED,
+  confirmDiscard,
+  leaveQuestion,
+  unsavedLabels,
+  useUnsavedChange,
+} from "../utils/unsavedChanges";
+import { ROLE_LABELS, roleLabel } from "../utils/roles";
 import { isToolHidden } from "../features";
 import type {
   ChangeHistoryItem,
@@ -191,6 +199,9 @@ export default function Database() {
   const [total, setTotal] = useState(0);
   // Browse filters (contract & sub_contract only) + their facet values.
   const [facets, setFacets] = useState<DbFacets | null>(null);
+  const [facetsFailed, setFacetsFailed] = useState(false);
+  const [facetsAttempt, setFacetsAttempt] = useState(0);
+  const beginFacets = useLatest();
   // Open by default: register and years are the main way through 4,866 rows.
   // A reviewer who collapses the panel stays collapsed (remembered in this browser).
   // Where there is no room the panel starts closed whatever the remembered
@@ -237,6 +248,11 @@ export default function Database() {
   const [reason, setReason] = useState("");
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
+  // A reason typed in "Hide this record…" is reviewer work like any edit.
+  useUnsavedChange(
+    Boolean(record && !record.is_deleted) && reason.trim() !== "",
+    "the reason for hiding this record",
+  );
   const debounce = useRef<number | undefined>(undefined);
 
   // "Needs review" worklist (a query-param mode, orthogonal to the shown record).
@@ -287,6 +303,9 @@ export default function Database() {
   // never show "All clear" while the check is still running — only once it has
   // genuinely come back with nothing.
   const [flagsLoading, setFlagsLoading] = useState(true);
+  // Set when the last flags request failed; cleared by the next successful one,
+  // so a check that did not run never reads as "All clear".
+  const [flagsFailed, setFlagsFailed] = useState(false);
 
   const loadFlagsNow = useCallback(() => {
     setFlagsLoading(true);
@@ -296,8 +315,11 @@ export default function Database() {
         if (!fresh()) return; // e.g. a post-dismiss reload overtaken by a newer one
         setFlagGroups(r.groups);
         setFlagTotal(r.total);
+        setFlagsFailed(false);
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (fresh()) setFlagsFailed(true); // an overtaken request must not flag the newer one
+      })
       .finally(() => fresh() && setFlagsLoading(false));
   }, [beginFlags]);
 
@@ -306,7 +328,11 @@ export default function Database() {
     const fresh = beginRecord();
     // include_hidden so removed partners stay visible (greyed, restorable).
     loadDbRecord(routeTable, routeId, true)
-      .then((data) => fresh() && setRecord(data))
+      .then((data) => {
+        if (!fresh()) return;
+        setRecord(data);
+        setRecordError(""); // a refresh that works clears an earlier failure
+      })
       .catch((err: Error) => fresh() && setRecordError(err.message));
     if (reviewMode) loadFlagsNow(); // a fix drops the flag from the live list
   }, [routeTable, routeId, reviewMode, loadFlagsNow, beginRecord]);
@@ -350,8 +376,16 @@ export default function Database() {
   // Facet values for the filters: registers/dates/types for contracts & sub-
   // contracts, gender for people.
   useEffect(() => {
-    loadDbFacets(table).then(setFacets).catch(() => setFacets(null));
-  }, [table]);
+    setFacetsFailed(false);
+    const fresh = beginFacets();
+    loadDbFacets(table)
+      .then((f) => fresh() && setFacets(f))
+      .catch(() => {
+        if (!fresh()) return;
+        setFacets(null);
+        setFacetsFailed(true); // without facets the filter bar is hidden: say why
+      });
+  }, [table, facetsAttempt, beginFacets]);
 
   useEffect(() => {
     window.clearTimeout(debounce.current);
@@ -399,6 +433,7 @@ export default function Database() {
   useEffect(() => {
     setActionError("");
     setActionMessage("");
+    setReason(""); // a reason belongs to the record it was typed on
     if (!routeId || routeId === "new") {
       setRecord(null);
       return;
@@ -429,6 +464,9 @@ export default function Database() {
 
   const changeTable = useCallback(
     (nextTable: DbBrowseTable) => {
+      // Ask before the filters below are reset: a "stay" must leave the list as it was.
+      const unsaved = unsavedLabels();
+      if (unsaved.length > 0 && !window.confirm(leaveQuestion(unsaved))) return;
       setSearch("");
       setSort(""); // sort keys are tab-specific (date vs name); fall back to the default
       // Facets differ per table (registers, types), so the filters reset on switch.
@@ -436,7 +474,7 @@ export default function Database() {
       setYearRange(null);
       setSubType("");
       setGender("");
-      navigate(`/database/${nextTable}`);   // (drops ?review)
+      navigate(`/database/${nextTable}`, LEAVE_UNSAVED);   // (drops ?review; already asked)
     },
     [navigate],
   );
@@ -497,14 +535,14 @@ export default function Database() {
     table === "person"
       ? [
           { value: "", label: "Name (A–Z)" },
-          { value: "id_asc", label: "Id ↑" },
-          { value: "id_desc", label: "Id ↓" },
+          { value: "id_asc", label: "Number (lowest)" },
+          { value: "id_desc", label: "Number (highest)" },
         ]
       : [
           { value: "", label: "Date (oldest)" },
           { value: "date_desc", label: "Date (newest)" },
-          { value: "id_asc", label: "Id ↑" },
-          { value: "id_desc", label: "Id ↓" },
+          { value: "id_asc", label: "Number (lowest)" },
+          { value: "id_desc", label: "Number (highest)" },
         ];
   // The rail box filters THIS list; the nav box searches everything and leaves
   // the page. The label above the box says so, and the placeholder shows by
@@ -557,9 +595,11 @@ export default function Database() {
             </button>
           </div>
           {reviewMode ? (
-            <p className="db-count muted">
+            <p className={flagsFailed && !flagsLoading ? "db-count error-text" : "db-count muted"}>
               {flagsLoading && flagTotal === 0
                 ? "Checking records…"
+                : flagsFailed
+                ? "The check for records that need review did not run."
                 : flagTotal === 0
                 ? "All clear — no records flagged."
                 : `${flagTotal} record${flagTotal === 1 ? "" : "s"} flagged in ${flagGroups.length} categor${flagGroups.length === 1 ? "y" : "ies"}. Click a category to open it. Suggestions only — you decide; nothing changes until you edit.`}
@@ -599,7 +639,7 @@ export default function Database() {
                   Show hidden
                 </label>
               </div>
-              <p className="db-count muted" aria-live="polite">
+              <p className={listError ? "db-count error-text" : "db-count muted"} aria-live="polite">
                 {listError
                   ? listError
                   : searching
@@ -608,6 +648,14 @@ export default function Database() {
                       ? "No records match"
                       : `Showing 1–${results.length.toLocaleString()} of ${total.toLocaleString()}`}
               </p>
+              {facetsFailed && (
+                <p className="db-count error-text">
+                  {table === "person" ? "The filters could not be loaded." : "The register and year filters could not be loaded."}{" "}
+                  <button type="button" className="link-like" onClick={() => setFacetsAttempt((n) => n + 1)}>
+                    Try again
+                  </button>
+                </p>
+              )}
               {showFilters && (
                 <div className="db-filter-bar">
                   <button
@@ -670,10 +718,20 @@ export default function Database() {
         {reviewMode ? (
           <div className="db-worklist">
             {flagActionError && <p className="error-text">{flagActionError}</p>}
+            {flagsFailed && !flagsLoading && (
+              <p className="db-empty error-text">
+                {flagGroups.length === 0
+                  ? "The records that need review could not be loaded."
+                  : "The list could not be refreshed and may be out of date."}{" "}
+                <button type="button" className="link-like" onClick={loadFlagsNow}>
+                  Try again
+                </button>
+              </p>
+            )}
             {flagGroups.length === 0 &&
               (flagsLoading ? (
                 <p className="db-empty muted">Checking records for anything that needs review…</p>
-              ) : (
+              ) : flagsFailed ? null : (
                 <p className="db-empty muted">All clear.</p>
               ))}
             {flagGroups.map((group) => {
@@ -831,20 +889,41 @@ export default function Database() {
   );
 }
 
-function historyLabel(item: ChangeHistoryItem): string {
-  if (item.op === "delete") return "Hidden (soft-deleted)";
+/** One Change-history line in the reviewer's words: the field's on-page label,
+ * Yes/No for yes/no fields, the phrase (not its number) for a re-pointed lookup. */
+function historyLabel(item: ChangeHistoryItem, fields: DbField[]): string {
+  if (item.op === "delete") return "Hidden";
   if (item.op === "restore") return "Restored";
   if (item.op === "create") return "Created";
-  if (item.op === "update" || item.op === "relink") {
-    return `${item.field}: ${String(item.before_value ?? "∅")} → ${String(item.after_value ?? "∅")}`;
-  }
-  return item.op;
+  if (item.op !== "update" && item.op !== "relink") return "Changed";
+  if (item.field === "document") return "Narrative edited";
+  const field = fields.find((f) => (f.column ?? f.relink?.field) === item.field);
+  const label = field?.label ?? (item.field ?? "").replaceAll("_", " ");
+  const show = (raw: unknown, display: string | null | undefined): string => {
+    if (display !== undefined) return display ?? "(empty)";
+    const text = raw == null ? "" : String(raw);
+    if (text.trim() === "") return "(empty)";
+    if (field?.input_type === "bool") return proposedLabel(text, "bool");
+    if (text === "0000-00-00") return "not recorded";
+    return text;
+  };
+  return `${label}: ${show(item.before_value, item.before_display)} → ${show(item.after_value, item.after_display)}`;
 }
 
-function partnerChipLabel(c: NonNullable<DbEditableCell["correction"]>): string {
-  if (c.status === "applied") return `Corrected → ${c.proposed_value ?? ""}`;
+/** Change-history statuses other than "applied", in plain words. */
+const HISTORY_STATUS: Record<string, string> = {
+  reverted: "undone",
+  conflict: "not in effect: the value had changed before it could be applied",
+  proposed: "proposed, not applied",
+  approved: "approved, not applied",
+  rejected: "rejected",
+};
+
+function partnerChipLabel(c: NonNullable<DbEditableCell["correction"]>, column: string): string {
+  const shown = column === "type" ? roleLabel(c.proposed_value) : (c.proposed_value ?? "");
+  if (c.status === "applied") return `Corrected → ${shown}`;
   if (c.status === "reverted") return "Correction reverted";
-  return `Change ${c.status}: → ${c.proposed_value ?? "(flag)"}`;
+  return `Change ${c.status}: → ${shown || "(flag)"}`;
 }
 
 /** Human-readable proposed value — maps a bool's 0/1 to No/Yes for chips. */
@@ -861,13 +940,6 @@ const PARTNER_CELL_LABELS: Record<string, string> = {
   profession: "profession",
 };
 
-/** gp/lp are the stored codes; the reader sees the words. The code stays visible
- * on hover so the old shorthand is never lost. */
-const ROLE_LABELS: Record<string, string> = {
-  gp: "General partner",
-  lp: "Limited partner",
-};
-
 function partnerCellLabel(column: string): string {
   return PARTNER_CELL_LABELS[column] ?? column.replace(/_/g, " ");
 }
@@ -881,6 +953,8 @@ function PartnerCell({
   onCancel,
   onSaved,
   disabled,
+  label,
+  guardScopes,
 }: {
   cell: DbEditableCell | null;
   editing: boolean;
@@ -888,6 +962,9 @@ function PartnerCell({
   onCancel: () => void;
   onSaved: () => void;
   disabled: boolean;
+  /** The server's own label for a panel attribute (e.g. "Citizen of Florence"). */
+  label?: string;
+  guardScopes: string[];
 }) {
   if (!cell) return <span className="muted">—</span>;
   if (editing) {
@@ -895,13 +972,14 @@ function PartnerCell({
       <InlineFieldEditor
         dbRowId={cell.db_row_id}
         column={cell.column}
-        label={partnerCellLabel(cell.column)}
+        label={label ?? partnerCellLabel(cell.column)}
         inputType={cell.input_type}
         options={cell.options}
         optionLabels={cell.column === "type" ? ROLE_LABELS : null}
         currentValue={cell.current}
         onSaved={onSaved}
         onCancel={onCancel}
+        guardScopes={guardScopes}
       />
     );
   }
@@ -922,7 +1000,7 @@ function PartnerCell({
       )}
       {cell.correction && (
         <span className={`field-correction is-${cell.correction.status}`}>
-          {partnerChipLabel(cell.correction)}
+          {partnerChipLabel(cell.correction, cell.column)}
         </span>
       )}
     </div>
@@ -939,19 +1017,27 @@ function PartnerActionConfirm({
   warning,
   onConfirm,
   onClose,
+  guardScope,
 }: {
   mode: "remove" | "restore";
-  /** What is being removed or restored — a partner, or a stake nobody holds. */
-  subject?: "partner" | "stake";
+  /** What is being removed or restored — a partner, a stake nobody holds, or a place. */
+  subject?: "partner" | "stake" | "place";
   consequence: string;
   warning: string;
   onConfirm: (reviewer: string, reason: string) => Promise<void>;
   onClose: () => void;
+  /** Lets the parent ask before replacing this panel while a reason is typed. */
+  guardScope?: string;
 }) {
   const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  useUnsavedChange(
+    mode === "remove" && reason.trim() !== "" && !busy,
+    `the reason for removing this ${subject}`,
+    guardScope ? [guardScope] : [],
+  );
 
   const run = async () => {
     setError("");
@@ -980,7 +1066,7 @@ function PartnerActionConfirm({
         {mode === "remove" ? `Remove this ${subject}? ` : `Restore this ${subject}? `}
         <span className="muted">{consequence}</span>
       </p>
-      {warning && <p className="partner-confirm-warn">⚠ {warning}</p>}
+      {warning && <p className="partner-confirm-warn">{warning}</p>}
       <div className="inline-editor-row">
         {mode === "remove" && (
           <input
@@ -1017,16 +1103,26 @@ function InlineLookupEditor({
   relink,
   onSaved,
   onCancel,
+  label,
+  guardScopes,
 }: {
   relink: DbRelink;
   onSaved: () => void;
   onCancel: () => void;
+  label?: string;
+  guardScopes?: string[];
 }) {
   const [value, setValue] = useState(relink.current);
   const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [check, setCheck] = useState<LookupCheck>("idle");
+  useUnsavedChange(
+    (value !== relink.current || reason.trim() !== "") && !busy,
+    label ? `“${label}”` : `the ${relink.kind.replace(/_/g, " ")}`,
+    guardScopes,
+  );
 
   const save = async () => {
     setError("");
@@ -1036,6 +1132,11 @@ function InlineLookupEditor({
     }
     if (value.trim() === relink.current.trim()) {
       setError("Value is unchanged.");
+      return;
+    }
+    const wait = lookupCheckBlock(check);
+    if (wait) {
+      setError(wait);
       return;
     }
     localStorage.setItem("floracco_reviewer", reviewer.trim());
@@ -1062,7 +1163,8 @@ function InlineLookupEditor({
         label=""
         value={value}
         onChange={setValue}
-        placeholder="search, or type a new phrase — empty = none"
+        placeholder="Search, or type the phrase as written (empty for none)"
+        onCheckChange={setCheck}
       />
       <div className="inline-editor-row">
         <input
@@ -1086,7 +1188,9 @@ function InlineLookupEditor({
       </div>
       {error && <p className="error-text">{error}</p>}
       <p className="inline-editor-foot muted">
-        Re-points to a lookup phrase (reuse / create verbatim / clear) — audited; the phrase is never edited in place.
+        Saving links this field to the phrase you pick, or to a new phrase stored exactly as you typed it; an empty
+        box clears the field. The phrase itself is not changed here, since other records may share it. The change is
+        recorded under your initials.
       </p>
     </div>
   );
@@ -1107,18 +1211,25 @@ function LookupField({
   disabled,
   onRefresh,
   autoOpen = false,
+  label,
+  guardScopes,
 }: {
   relink: DbRelink;
   value: string;
   disabled: boolean;
   onRefresh: () => void;
   autoOpen?: boolean;
+  /** The field's label, so a leave question can name it. */
+  label?: string;
+  guardScopes?: string[];
 }) {
   const [editing, setEditing] = useState(autoOpen && !disabled);
   if (editing) {
     return (
       <InlineLookupEditor
         relink={relink}
+        label={label}
+        guardScopes={guardScopes}
         onSaved={() => {
           setEditing(false);
           onRefresh();
@@ -1147,19 +1258,29 @@ function LookupField({
 /** The one sanctioned write to the legacy editorial layer: judge a 2010s Jewish
  * attribution erroneous (jewish_db 1→0), audited with a required reason. The
  * platform never SETS that flag — this control only removes it. */
-function RefuteAttribution({ investorId, onDone }: { investorId: string; onDone: () => void }) {
+function RefuteAttribution({
+  investorId,
+  onDone,
+  guardScopes = [],
+}: {
+  investorId: string;
+  onDone: () => void;
+  guardScopes?: string[];
+}) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Before the early return, so the hook order stays the same.
+  useUnsavedChange(open && reason.trim() !== "" && !busy, "the reason for refuting the attribution", guardScopes);
   if (!open) {
     return (
       <button
         type="button"
         className="field-fix"
         onClick={() => setOpen(true)}
-        title="Judge this 2010s attribution erroneous — audited, reversible, reason required"
+        title="Mark this 2010s attribution as mistaken. A reason is required; the change is recorded under your initials."
       >
         ✕ Refute
       </button>
@@ -1220,7 +1341,7 @@ function PartnerDetailPanel({
 }: {
   attributes: NonNullable<DbPartnerRow["attributes"]>;
   rowKey: string;
-  renderCell: (rowKey: string, cell: DbEditableCell | null) => ReactNode;
+  renderCell: (rowKey: string, cell: DbEditableCell | null, opts?: { label?: string; panel?: boolean }) => ReactNode;
   hidden: boolean;
   onRefresh: () => void;
 }) {
@@ -1244,14 +1365,25 @@ function PartnerDetailPanel({
                 </dt>
                 <dd>
                   {f.cell ? (
-                    renderCell(rowKey, f.cell)
+                    renderCell(rowKey, f.cell, { label: f.label, panel: true })
                   ) : f.relink ? (
-                    <LookupField relink={f.relink} value={f.value ?? ""} disabled={hidden} onRefresh={onRefresh} />
+                    <LookupField
+                      relink={f.relink}
+                      value={f.value ?? ""}
+                      label={f.label}
+                      guardScopes={[`partner-panel:${rowKey}`]}
+                      disabled={hidden}
+                      onRefresh={onRefresh}
+                    />
                   ) : (
                     <span className="partner-attr-locked">{f.value}</span>
                   )}
                   {f.refute && !hidden && (
-                    <RefuteAttribution investorId={f.refute.investor_id} onDone={onRefresh} />
+                    <RefuteAttribution
+                      investorId={f.refute.investor_id}
+                      guardScopes={[`partner-panel:${rowKey}`]}
+                      onDone={onRefresh}
+                    />
                   )}
                 </dd>
               </div>
@@ -1320,33 +1452,41 @@ function PartnersBlock({
   const consequenceFor = (row: DbPartnerRow): { text: string; warning: string } => {
     const shared = row.cash.joint && row.cash.joint_count > 1;
     const text = shared
-      ? "The shared tranche stays with the other partner(s); it will no longer show as joint."
+      ? row.cash.joint_count === 2
+        ? "The shared stake stays with the other partner; it will no longer show as joint."
+        : "The shared stake stays with the other partners."
       : "Their stake stays on the contract with no partner attached. You can attach someone else or remove it afterwards.";
     let warning = "";
     const role = row.role?.value;
     if (role === "gp" || role === "lp") {
       const sameRole = liveRows.filter((r) => r.person && r.role?.value === role).length;
       if (sameRole <= 1) {
-        warning = `This is the contract's last ${role === "gp" ? "general partner (gp)" : "limited partner (lp)"}.`;
+        warning = `This is the contract's last ${roleLabel(role).toLowerCase()}.`;
       }
     }
     return { text, warning };
   };
   const unattachedCount = liveRows.filter((r) => r.unattached).length;
 
-  const renderCell = (rowKey: string, cell: DbEditableCell | null) => {
+  const renderCell = (rowKey: string, cell: DbEditableCell | null, opts?: { label?: string; panel?: boolean }) => {
     const key = cell ? `${rowKey}:${cell.column}` : "";
     return (
       <PartnerCell
         cell={cell}
         editing={Boolean(cell) && editing === key}
-        onEdit={() => setEditing(key)}
+        onEdit={() => {
+          // One editor at a time: ask before the open one is replaced.
+          if (editing && editing !== key && !confirmDiscard("partner-cell")) return;
+          setEditing(key);
+        }}
         onCancel={() => setEditing(null)}
         onSaved={() => {
           setEditing(null);
           onRefresh();
         }}
         disabled={hidden}
+        label={opts?.label}
+        guardScopes={opts?.panel ? ["partner-cell", `partner-panel:${rowKey}`] : ["partner-cell"]}
       />
     );
   };
@@ -1362,8 +1502,8 @@ function PartnersBlock({
               className="partner-badge"
               title={
                 row.cash.joint_count > 1
-                  ? `One tranche shared by ${row.cash.joint_count} partners — this is the shared figure, not per-person`
-                  : "Recorded as a joint stake (parallel investments)"
+                  ? `One stake shared by ${row.cash.joint_count} partners. This is the shared figure, not each partner's share.`
+                  : "Recorded as joint; the co-holders' stakes were entered separately"
               }
             >
               {row.cash.joint_count > 1 ? `shared by ${row.cash.joint_count} partners` : "joint stake"}
@@ -1405,9 +1545,9 @@ function PartnersBlock({
             type="button"
             className="field-fix"
             onClick={onAddInvestor}
-            title="Add a person to this contract (role + capital)"
+            title="Add a person to this contract, with role and capital"
           >
-            + Add investor
+            + Add partner
           </button>
         )}
       </div>
@@ -1420,8 +1560,8 @@ function PartnersBlock({
       )}
       {count === 0 ? (
         <p className="muted">
-          No investors are recorded yet — every accomandita needs at least an accomandatario (gp) and an
-          accomandante (lp).
+          No partners are recorded yet. Every accomandita needs at least one general partner (accomandatario)
+          and one limited partner (accomandante).
         </p>
       ) : (
         <table className="db-table partners-table">
@@ -1450,7 +1590,11 @@ function PartnersBlock({
                         type="button"
                         className="partner-expand"
                         aria-expanded={isOpen}
-                        onClick={() => setExpanded(isOpen ? null : row.key)}
+                        onClick={() => {
+                          // Collapsing or switching the panel closes its editors: ask first.
+                          if (expanded && !confirmDiscard(`partner-panel:${expanded}`)) return;
+                          setExpanded(isOpen ? null : row.key);
+                        }}
                         title={notable ? `${notable} recorded attribute${notable === 1 ? "" : "s"} — click to view/edit` : "View / edit all attributes"}
                       >
                         <span className="partner-chevron">{isOpen ? "▾" : "▸"}</span>
@@ -1469,9 +1613,10 @@ function PartnersBlock({
                       <button
                         type="button"
                         className="field-fix partner-remove"
-                        onClick={() =>
-                          setPending(pending?.key === row.key ? null : { key: row.key, mode: "remove" })
-                        }
+                        onClick={() => {
+                          if (pending && !confirmDiscard("partner-confirm")) return;
+                          setPending(pending?.key === row.key ? null : { key: row.key, mode: "remove" });
+                        }}
                         title="Remove this partner from the contract"
                       >
                         ✕ Remove
@@ -1492,9 +1637,10 @@ function PartnersBlock({
                         <button
                           type="button"
                           className="field-fix partner-remove"
-                          onClick={() =>
-                            setPending(pending?.key === row.key ? null : { key: row.key, mode: "remove" })
-                          }
+                          onClick={() => {
+                            if (pending && !confirmDiscard("partner-confirm")) return;
+                            setPending(pending?.key === row.key ? null : { key: row.key, mode: "remove" });
+                          }}
                           title="Remove this stake from the contract (reversible)"
                         >
                           ✕ Remove stake
@@ -1515,6 +1661,7 @@ function PartnersBlock({
                     <td colSpan={8}>
                       {row.unattached && row.investment_id ? (
                         <PartnerActionConfirm
+                          guardScope="partner-confirm"
                           mode="remove"
                           subject="stake"
                           consequence="The role and sum leave the record; nothing else changes. Restorable under Show hidden."
@@ -1528,6 +1675,7 @@ function PartnersBlock({
                         />
                       ) : (
                         <PartnerActionConfirm
+                          guardScope="partner-confirm"
                           mode="remove"
                           consequence={consequenceFor(row).text}
                           warning={consequenceFor(row).warning}
@@ -1560,7 +1708,12 @@ function PartnersBlock({
                 <Fragment key={row.key}>
                   <tr className="partner-row-removed">
                     <td>{personCell(row)}</td>
-                    <td className="muted">{row.role?.value ?? "—"}</td>
+                    <td
+                      className="muted"
+                      title={row.role && ROLE_LABELS[row.role.value] ? `Recorded as “${row.role.value}”` : undefined}
+                    >
+                      {row.role ? roleLabel(row.role.value) : "—"}
+                    </td>
                     <td className="muted">{row.cash.display}</td>
                     <td className="muted">{row.profession?.value ?? "—"}</td>
                     <td className="muted">{row.residence}</td>
@@ -1570,12 +1723,13 @@ function PartnersBlock({
                         <button
                           type="button"
                           className="field-fix"
-                          onClick={() =>
-                            setPending(pending?.key === row.key ? null : { key: row.key, mode: "restore" })
-                          }
+                          onClick={() => {
+                            if (pending && !confirmDiscard("partner-confirm")) return;
+                            setPending(pending?.key === row.key ? null : { key: row.key, mode: "restore" });
+                          }}
                           title={row.unattached ? "Restore this stake" : "Restore this partner"}
                         >
-                          ↩ Restore{row.unattached ? " stake" : ""}
+                          Restore{row.unattached ? " stake" : ""}
                         </button>
                       )}
                     </td>
@@ -1585,6 +1739,7 @@ function PartnersBlock({
                       <td colSpan={7}>
                         {row.unattached && row.investment_id ? (
                           <PartnerActionConfirm
+                            guardScope="partner-confirm"
                             mode="restore"
                             subject="stake"
                             consequence="The role and sum come back on the record, still with no partner attached."
@@ -1598,8 +1753,9 @@ function PartnersBlock({
                           />
                         ) : (
                           <PartnerActionConfirm
+                            guardScope="partner-confirm"
                             mode="restore"
-                            consequence="The partner and their link to the stake come back; a joint tranche is re-formed if applicable."
+                            consequence="The partner and their link to the stake come back; a stake they shared is joint again."
                             warning=""
                             onClose={() => setPending(null)}
                             onConfirm={async (reviewer, reason) => {
@@ -1641,6 +1797,7 @@ function PlaceAddressEditor({
   const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  useUnsavedChange(value !== current && !busy, "the address", ["place-address"]);
   const save = async () => {
     setError("");
     if (!reviewer.trim()) return setError("Initials needed.");
@@ -1658,7 +1815,7 @@ function PlaceAddressEditor({
   };
   return (
     <div className="inline-editor">
-      <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="address (empty = none)" autoFocus />
+      <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="address (leave empty for none)" autoFocus />
       <div className="inline-editor-row">
         <input className="inline-editor-initials" value={reviewer} onChange={(e) => setReviewer(e.target.value)} placeholder="initials" />
         <button type="button" className="pill-button" onClick={onCancel} disabled={busy}>Cancel</button>
@@ -1676,9 +1833,13 @@ function AddPlaceForm({ contractId, onSaved, onCancel }: { contractId: string; o
   const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [placeCheck, setPlaceCheck] = useState<LookupCheck>("idle");
+  useUnsavedChange((place.trim() !== "" || address.trim() !== "") && !busy, "the new place", ["place-add"]);
   const save = async () => {
     setError("");
     if (!place.trim()) return setError("A place is required.");
+    const wait = lookupCheckBlock(placeCheck, "the place");
+    if (wait) return setError(wait);
     if (!reviewer.trim()) return setError("Initials needed.");
     localStorage.setItem("floracco_reviewer", reviewer.trim());
     setBusy(true);
@@ -1693,7 +1854,14 @@ function AddPlaceForm({ contractId, onSaved, onCancel }: { contractId: string; o
   };
   return (
     <div className="inline-editor lookup-editor">
-      <LookupCombobox kind="place" label="" value={place} onChange={setPlace} placeholder="search, or type a new place" />
+      <LookupCombobox
+        kind="place"
+        label=""
+        value={place}
+        onChange={setPlace}
+        placeholder="search, or type a new place"
+        onCheckChange={setPlaceCheck}
+      />
       <div className="inline-editor-row">
         <input className="inline-editor-note" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="address (optional)" />
         <input className="inline-editor-initials" value={reviewer} onChange={(e) => setReviewer(e.target.value)} placeholder="initials" />
@@ -1732,7 +1900,10 @@ function PlacesBlock({
       <div className="db-block-head">
         <h3>Places ({count})</h3>
         {!hidden && (
-          <button type="button" className="field-fix" onClick={() => setAdding((v) => !v)} title="Add a place this firm operated in">
+          <button type="button" className="field-fix" onClick={() => {
+              if (adding && !confirmDiscard("place-add")) return;
+              setAdding((v) => !v);
+            }} title="Add a place this firm operated in">
             + Add place
           </button>
         )}
@@ -1769,7 +1940,10 @@ function PlacesBlock({
                       <span className="lookup-field">
                         <span className="lookup-field-value">{row.address || "—"}</span>
                         {!hidden && (
-                          <button type="button" className="field-fix" onClick={() => setEditingAddr(row.key)} title="Edit the address">✎ Edit</button>
+                          <button type="button" className="field-fix" onClick={() => {
+                          if (editingAddr && !confirmDiscard("place-address")) return;
+                          setEditingAddr(row.key);
+                        }} title="Edit the address">✎ Edit</button>
                         )}
                       </span>
                     )}
@@ -1779,7 +1953,10 @@ function PlacesBlock({
                       <button
                         type="button"
                         className="field-fix partner-remove"
-                        onClick={() => setPending(pending?.key === row.key ? null : { key: row.key, mode: "remove" })}
+                        onClick={() => {
+                          if (pending && !confirmDiscard("place-confirm")) return;
+                          setPending(pending?.key === row.key ? null : { key: row.key, mode: "remove" });
+                        }}
                         title="Remove this place from the contract"
                       >
                         ✕ Remove
@@ -1791,6 +1968,8 @@ function PlacesBlock({
                   <tr className="partner-confirm-row">
                     <td colSpan={3}>
                       <PartnerActionConfirm
+                        subject="place"
+                        guardScope="place-confirm"
                         mode="remove"
                         consequence={`"${row.place}" will be removed from this contract.`}
                         warning=""
@@ -1827,10 +2006,13 @@ function PlacesBlock({
                         <button
                           type="button"
                           className="field-fix"
-                          onClick={() => setPending(pending?.key === row.key ? null : { key: row.key, mode: "restore" })}
+                          onClick={() => {
+                            if (pending && !confirmDiscard("place-confirm")) return;
+                            setPending(pending?.key === row.key ? null : { key: row.key, mode: "restore" });
+                          }}
                           title="Restore this place"
                         >
-                          ↩ Restore
+                          Restore
                         </button>
                       )}
                     </td>
@@ -1839,6 +2021,8 @@ function PlacesBlock({
                     <tr className="partner-confirm-row">
                       <td colSpan={3}>
                         <PartnerActionConfirm
+                          subject="place"
+                          guardScope="place-confirm"
                           mode="restore"
                           consequence="The place comes back on this contract."
                           warning=""
@@ -2047,6 +2231,11 @@ function RecordDetail({
     setEditingColumn(null);
     onRefresh();
   };
+  // One field editor at a time: ask before an open one with typed text is replaced.
+  const openFieldEditor = (column: string) => {
+    if (editingColumn && editingColumn !== column && !confirmDiscard("record-field")) return;
+    setEditingColumn(column);
+  };
   // Saving a partner/place/lookup cell reloads the record WITHOUT closing an
   // unrelated scalar editor that may hold typed text (finding D2); only the
   // scalar editor's own save (closeAndRefresh) closes it.
@@ -2099,7 +2288,7 @@ function RecordDetail({
                 </p>
                 {depParts.length > 0 && (
                   <p className="db-deps-warning">
-                    ⚠ This contract has {depList}. They stay visible and will point to a hidden contract.
+                    This contract has {depList}. They stay visible and will point to a hidden contract.
                   </p>
                 )}
                 <div className="db-record-actions">
@@ -2174,7 +2363,7 @@ function RecordDetail({
                 <button
                   type="button"
                   className="field-fix"
-                  onClick={() => setEditingColumn(field.column)}
+                  onClick={() => openFieldEditor(field.column!)}
                   title={`Edit ${field.label}`}
                 >
                   ✎ Edit
@@ -2186,6 +2375,7 @@ function RecordDetail({
                 <LookupField
                   relink={field.relink}
                   value={field.value}
+                  label={field.label}
                   disabled={Boolean(record.is_deleted)}
                   onRefresh={refreshRecordOnly}
                   autoOpen={!autoFixInv && field.relink.field === autoFixField}
@@ -2216,6 +2406,7 @@ function RecordDetail({
                 currentValue={field.current ?? ""}
                 onSaved={closeAndRefresh}
                 onCancel={() => setEditingColumn(null)}
+                guardScopes={["record-field"]}
               />
             )}
           </div>
@@ -2230,7 +2421,7 @@ function RecordDetail({
               <span className="status-chip status-review">Possibly two people</span>
             ) : record.identity_status.person_ids.length > 1 ? (
               <span className="status-chip status-strong">
-                {record.identity_status.person_ids.length} entered records linked
+                {record.identity_status.person_ids.length} entries linked
               </span>
             ) : null}
           </div>
@@ -2246,7 +2437,7 @@ function RecordDetail({
           ))}
           {record.identity_status.person_ids.length > 1 ? (
             <p>
-              This record belongs to a reviewed identity family with{" "}
+              This entry belongs to a reviewed identity family with entries{" "}
               {record.identity_status.person_ids.map((id, index) => (
                 <Fragment key={id}>
                   {index > 0 ? ", " : null}
@@ -2263,10 +2454,10 @@ function RecordDetail({
                   )}
                 </Fragment>
               ))}
-              . The entered rows remain unchanged.
+              . The entries remain as entered.
             </p>
           ) : (
-            <p className="muted">No reviewer has linked this row to another person record.</p>
+            <p className="muted">No reviewer has linked this entry to another entry.</p>
           )}
           {record.identity_status.open_count > 0 && (
             <button
@@ -2274,8 +2465,8 @@ function RecordDetail({
               className="pill-button is-primary"
               onClick={() => onOpenIdentity(record.identity_status!.open_cases[0])}
             >
-              Review {record.identity_status.open_count} possible related record
-              {record.identity_status.open_count === 1 ? "" : "s"} →
+              Review {record.identity_status.open_count} possible related{" "}
+              {record.identity_status.open_count === 1 ? "entry" : "entries"} →
             </button>
           )}
         </section>
@@ -2291,10 +2482,12 @@ function RecordDetail({
             onOpen={onOpen}
             onCorrectName={onCorrectName}
             onAddInvestor={() => {
+              if (addingInvestor && !confirmDiscard("add-partner")) return;
               setAttachInvestmentId(null);
               setAddingInvestor((v) => !v);
             }}
             onAttachTo={(investmentId) => {
+              if (addingInvestor && attachInvestmentId !== investmentId && !confirmDiscard("add-partner")) return;
               setAttachInvestmentId(investmentId);
               setInvestorMessage("");
               setAddingInvestor(true);
@@ -2347,9 +2540,9 @@ function RecordDetail({
             <h3>Appears in contracts (0)</h3>
           </div>
           <p className="muted">
-            This entered name-form is not attached to any contract as a partner. Rows like
-            this usually come from superseded or abandoned data entry — or record a person
-            named only in the text of an act.
+            This entry is not attached to any contract as a partner. Entries like this usually
+            come from superseded or abandoned data entry, or record a person named only in the
+            narrative of a contract or sub-contract.
           </p>
         </section>
       )}
@@ -2441,7 +2634,7 @@ function RecordDetail({
               <button
                 type="button"
                 className="field-fix"
-                onClick={() => setEditingColumn("document")}
+                onClick={() => openFieldEditor("document")}
                 title="Edit the narrative"
               >
                 ✎ Edit
@@ -2466,6 +2659,7 @@ function RecordDetail({
               currentValue={record.document ?? ""}
               onSaved={closeAndRefresh}
               onCancel={() => setEditingColumn(null)}
+              guardScopes={["record-field"]}
             />
           ) : (
             <p className="reading-text narrative db-narrative">{record.document}</p>
@@ -2570,10 +2764,10 @@ function RecordDetail({
           <ul className="db-history-list">
             {history.map((item) => (
               <li key={item.request_id} className={`db-history-item op-${item.op} status-${item.status}`}>
-                <span className="db-history-op">{historyLabel(item)}</span>
+                <span className="db-history-op">{historyLabel(item, record.fields)}</span>
                 <span className="db-history-meta">
                   {item.created_by} · {item.created_at.slice(0, 16).replace("T", " ")}
-                  {item.status !== "applied" ? ` · ${item.status}` : ""}
+                  {item.status !== "applied" ? ` · ${HISTORY_STATUS[item.status] ?? item.status}` : ""}
                 </span>
                 {item.reason && <span className="db-history-reason">“{item.reason}”</span>}
               </li>

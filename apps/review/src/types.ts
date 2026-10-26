@@ -219,7 +219,16 @@ export type ReferenceRecordsResponse = {
   kind: ReferenceKind;
   value: string;
   record_total: number;
+  /** The rail's number for this term split by kind of use (place: activity, residence,
+   *  origin; title: one key per title field; currency/activity: contract). */
+  usage_parts: Record<string, number>;
+  usage_total: number;
+  /** Contracts plus sub-contracts whose narrative contains the term's text. */
   narrative_mentions: number;
+  narrative_contracts: number;
+  narrative_sub_contracts: number;
+  /** Index of records[0] within the full date-ordered list. */
+  offset: number;
   records: DbSearchResult[];
   by_decade: { decade: number; count: number }[];
   resolution?: PlaceResolution | null;
@@ -320,7 +329,7 @@ export type PersonLinkagePreview = {
     right?: { first_year: number | null; last_year: number | null };
   };
   reasons: string[];
-  status: "open" | "same_as" | "distinct" | "defer" | "flag_split" | "revoked";
+  status: "open" | "same_as" | "distinct" | "defer" | "flag_split";
   guard_status?: string;
   /** Decided rows and flagged entries: who decided, when, and the note. */
   decided_by?: string | null;
@@ -852,6 +861,9 @@ export type ChangeHistoryItem = {
   field: string | null;
   before_value: unknown;
   after_value: unknown;
+  /** Present on re-pointed lookups: the phrase each logged id names (null = none). */
+  before_display?: string | null;
+  after_display?: string | null;
   status: string; // applied | reverted | conflict | proposed | ...
   reason: string | null;
   created_by: string;

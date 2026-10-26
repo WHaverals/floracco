@@ -64,7 +64,7 @@ export default function WordSummaryInline({ source }: { source: DbWordSource }) 
             className="ws-inline-comments"
             title="This summary carries editorial comments (often paleographic doubts) — expand to read them"
           >
-            💬 {source.comment_count}
+            {source.comment_count} comment{source.comment_count === 1 ? "" : "s"}
           </span>
         )}
         {source.strength != null && source.status !== "confirmed" && (
@@ -82,7 +82,14 @@ export default function WordSummaryInline({ source }: { source: DbWordSource }) 
 
       {open && (
         <div className="ws-inline-body">
-          {error && <p className="error-text">{error}</p>}
+          {error && (
+            <p className="error-text">
+              {error}{" "}
+              <button type="button" className="link-like" onClick={() => setError("")}>
+                Try again
+              </button>
+            </p>
+          )}
           {!entry && !error && <p className="muted">Loading…</p>}
           {entry && (
             <>

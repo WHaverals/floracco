@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createInvestor, loadContractInvestments, sameSurname, searchPersonsRich } from "../api";
 import { useLatest } from "../utils/latest";
+import { roleLabel } from "../utils/roles";
+import { useUnsavedChange } from "../utils/unsavedChanges";
 import type { ContractInvestment, PersonHit } from "../types";
-import LookupCombobox from "./LookupCombobox";
+import LookupCombobox, { lookupCheckBlock, type LookupCheck } from "./LookupCombobox";
 import IdentityHintLines from "./person-linkage/IdentityHintLines";
 
 /* Add a person to a contract — person + role + capital, one audited save.
@@ -19,7 +21,13 @@ import IdentityHintLines from "./person-linkage/IdentityHintLines";
  *  - joint tranches (11% of investments) join an existing investment instead
  *    of creating one; is_joint is derived, never asked;
  *  - the panel stays open after a save: every contract needs ≥2 investors.
+ *  - searches FAIL CLOSED (UI review 2026-10-14, item 5): "create a new person"
+ *    is offered only once the search for the current text has come back, and a
+ *    phrase box still searching (or failed) holds the save.
  */
+// The person search's page size: the server default in review_server.person_search.
+const PERSON_SEARCH_LIMIT = 12;
+
 export default function AddInvestorPanel({
   contractId,
   contractTitle,
@@ -39,11 +47,17 @@ export default function AddInvestorPanel({
   const [personHits, setPersonHits] = useState<PersonHit[]>([]);
   const [pickedPerson, setPickedPerson] = useState<PersonHit | null>(null);
   const [creatingPerson, setCreatingPerson] = useState(false);
+  // The person search's answer, tagged with the text it answers, so a slow or
+  // failed search never reads as "nobody matches".
+  const [personAnswer, setPersonAnswer] = useState<{ q: string; ok: boolean } | null>(null);
+  const [personRetry, setPersonRetry] = useState(0);
   const [npFirst, setNpFirst] = useState("");
   const [npPatronymic, setNpPatronymic] = useState("");
   const [npLast, setNpLast] = useState("");
   const [npWoman, setNpWoman] = useState(false);
   const [surnameHits, setSurnameHits] = useState<PersonHit[]>([]);
+  const [surnameTotal, setSurnameTotal] = useState(0);
+  const [surnameRetry, setSurnameRetry] = useState(0);
   const [confirmedNew, setConfirmedNew] = useState(false);
   // ROLE & CAPITAL
   const [mode, setMode] = useState<"own" | "join">(presetInvestmentId ? "join" : "own");
@@ -53,6 +67,7 @@ export default function AddInvestorPanel({
   const [nonCash, setNonCash] = useState("");
   const [firmName, setFirmName] = useState("");
   const [investments, setInvestments] = useState<ContractInvestment[]>([]);
+  const [investmentsFailed, setInvestmentsFailed] = useState(false);
   const [joinId, setJoinId] = useState(presetInvestmentId ?? "");
   // DETAILS
   const [title, setTitle] = useState("");
@@ -80,11 +95,36 @@ export default function AddInvestorPanel({
   // The same-surname wall must FAIL CLOSED (finding D4): a failed or still-
   // pending check blocks person creation instead of silently allowing it.
   const [surnameCheck, setSurnameCheck] = useState<"idle" | "pending" | "ok" | "failed">("idle");
+  const [titleCheck, setTitleCheck] = useState<LookupCheck>("idle");
+  const [residenceCheck, setResidenceCheck] = useState<LookupCheck>("idle");
+  const [originCheck, setOriginCheck] = useState<LookupCheck>("idle");
+
+  // Typed, unsaved input (the title is left out: it is kept after a save on purpose).
+  const dirty =
+    Boolean(pickedPerson) ||
+    creatingPerson ||
+    personQuery.trim() !== "" ||
+    cash.trim() !== "" ||
+    nonCash.trim() !== "" ||
+    firmName.trim() !== "" ||
+    residence.trim() !== "" ||
+    origin.trim() !== "" ||
+    profession.trim() !== "" ||
+    note.trim() !== "" ||
+    viaProxy ||
+    Object.values(flags).some(Boolean);
+  useUnsavedChange(dirty && !saving, "the new partner", ["add-partner"]);
 
   const refreshInvestments = useCallback(() => {
     loadContractInvestments(contractId)
-      .then((response) => setInvestments(response.investments))
-      .catch(() => setInvestments([]));
+      .then((response) => {
+        setInvestments(response.investments);
+        setInvestmentsFailed(false);
+      })
+      .catch(() => {
+        setInvestments([]);
+        setInvestmentsFailed(true); // otherwise "shares an existing stake" silently disappears
+      });
   }, [contractId]);
 
   useEffect(() => {
@@ -94,24 +134,36 @@ export default function AddInvestorPanel({
   // Person search (whole DB).
   useEffect(() => {
     window.clearTimeout(debounce.current);
-    if (pickedPerson || creatingPerson || personQuery.trim().length < 2) {
+    beginPersons(); // a reply still in flight answers an earlier text: drop it
+    const q = personQuery.trim();
+    if (pickedPerson || creatingPerson || q.length < 2) {
       setPersonHits([]);
+      setPersonAnswer(null);
       return;
     }
     debounce.current = window.setTimeout(() => {
       const fresh = beginPersons();
-      searchPersonsRich(personQuery.trim())
-        .then((response) => fresh() && setPersonHits(response.results))
-        .catch(() => fresh() && setPersonHits([]));
+      searchPersonsRich(q, PERSON_SEARCH_LIMIT)
+        .then((response) => {
+          if (!fresh()) return;
+          setPersonHits(response.results);
+          setPersonAnswer({ q, ok: true });
+        })
+        .catch(() => {
+          if (!fresh()) return;
+          setPersonHits([]);
+          setPersonAnswer({ q, ok: false }); // failed is not "nobody matches"
+        });
     }, 220);
     return () => window.clearTimeout(debounce.current);
-  }, [personQuery, pickedPerson, creatingPerson]);
+  }, [personQuery, pickedPerson, creatingPerson, personRetry, beginPersons]);
 
   // The same-surname wall while creating a new person.
   useEffect(() => {
+    beginSurname(); // drop any reply for an earlier surname BEFORE the debounce
     if (!creatingPerson || npLast.trim().length < 2) {
-      beginSurname();
       setSurnameHits([]);
+      setSurnameTotal(0);
       setConfirmedNew(false);
       setSurnameCheck("idle");
       return;
@@ -119,21 +171,23 @@ export default function AddInvestorPanel({
     setSurnameCheck("pending");
     const t = window.setTimeout(() => {
       const fresh = beginSurname();
-      sameSurname(npLast.trim())
+      sameSurname(npLast.trim(), npFirst.trim())
         .then((response) => {
           if (!fresh()) return;
           setSurnameHits(response.results);
+          setSurnameTotal(response.total ?? response.results.length);
           setConfirmedNew(false);
           setSurnameCheck("ok");
         })
         .catch(() => {
           if (!fresh()) return;
           setSurnameHits([]);
+          setSurnameTotal(0);
           setSurnameCheck("failed");
         });
     }, 300);
     return () => window.clearTimeout(t);
-  }, [creatingPerson, npLast, beginSurname]);
+  }, [creatingPerson, npLast, npFirst, surnameRetry, beginSurname]);
 
   const resetWho = () => {
     setPersonQuery("");
@@ -156,10 +210,15 @@ export default function AddInvestorPanel({
     if (creatingPerson && npLast.trim().length >= 2 && surnameCheck === "pending")
       return setError("Still checking for existing people with this surname — one moment.");
     if (creatingPerson && npLast.trim().length >= 2 && surnameCheck === "failed")
-      return setError("The existing-person check failed — retype the surname to retry it before creating.");
+      return setError("The check for existing people with this surname did not run. Click “Try again” next to it before creating a new person.");
     if (creatingPerson && surnameHits.length > 0 && !confirmedNew)
-      return setError(`Confirm that none of the ${surnameHits.length} existing ${npLast.trim()} is this person.`);
-    if (mode === "join" && !joinId) return setError("Pick the tranche this person shares.");
+      return setError(`Confirm that none of the existing people named “${npLast.trim()}” is this person.`);
+    if (mode === "join" && !joinId) return setError("Pick the stake this person shares.");
+    const phraseWait =
+      lookupCheckBlock(titleCheck, "the title") ??
+      lookupCheckBlock(residenceCheck, "the residence") ??
+      lookupCheckBlock(originCheck, "the place of origin (under “more attributes”)");
+    if (phraseWait) return setError(phraseWait);
     localStorage.setItem("floracco_reviewer", reviewer.trim());
     setSaving(true);
     try {
@@ -186,8 +245,14 @@ export default function AddInvestorPanel({
       });
       const who = pickedPerson?.display_name || `${npFirst} ${npLast}`.trim();
       const how =
-        mode !== "join" ? role : takesOver ? `holder of the ${joined?.type ?? ""} stake`.replace("  ", " ") : "joint investor";
-      onSaved(`Added ${who}${result.person_created ? " (new person)" : ""} as ${how}.`);
+        mode !== "join"
+          ? `as a ${roleLabel(role).toLowerCase()}`
+          : takesOver
+            ? joined?.type
+              ? `as the ${roleLabel(joined.type).toLowerCase()} holding this stake`
+              : "as the holder of this stake"
+            : "as a joint holder of an existing stake";
+      onSaved(`Added ${who}${result.person_created ? " (new person entry)" : ""} ${how}.`);
       resetWho();
       setCash("");
       setCashUnspecified(false);
@@ -236,11 +301,16 @@ export default function AddInvestorPanel({
   // added takes it over (role and sum stay as recorded) rather than sharing it.
   const joined = mode === "join" ? (investments.find((inv) => inv.investment_id === joinId) ?? null) : null;
   const takesOver = Boolean(joined && !joined.members);
+  // Deriving the search state from the tagged answer makes the debounce window
+  // and the request both count as "searching".
+  const personQ = personQuery.trim();
+  const personSearch: "idle" | "pending" | "ok" | "failed" =
+    personQ.length < 2 ? "idle" : personAnswer?.q !== personQ ? "pending" : personAnswer.ok ? "ok" : "failed";
 
   return (
     <div className="add-investor-panel">
       <div className="add-investor-head">
-        <strong>{takesOver ? "Attach a person to this stake" : "Add an investor"}</strong>
+        <strong>{takesOver ? "Attach a person to this stake" : "Add a partner"}</strong>
         <span className="muted">to {contractTitle}</span>
         <button type="button" className="drawer-close" onClick={onClose} aria-label="Close">
           ×
@@ -295,14 +365,38 @@ export default function AddInvestorPanel({
                 </span>
               </label>
             </div>
+            {surnameCheck === "pending" && (
+              <span className="lookup-status muted">Checking for existing people named “{npLast.trim()}”…</span>
+            )}
+            {surnameCheck === "failed" && (
+              <p className="error-text">
+                The check for existing people named “{npLast.trim()}” did not run. A new person can be created once
+                the check has run.{" "}
+                <button type="button" className="link-like" onClick={() => setSurnameRetry((n) => n + 1)}>
+                  Try again
+                </button>
+              </p>
+            )}
+            {surnameCheck === "ok" && surnameHits.length === 0 && (
+              <span className="lookup-status muted">No existing person has the surname “{npLast.trim()}”.</span>
+            )}
             {surnameHits.length > 0 && (
               <div className="create-warning">
                 <strong>
-                  {surnameHits.length} existing person{surnameHits.length === 1 ? "" : "s"} named “{npLast.trim()}”
+                  {surnameTotal} existing {surnameTotal === 1 ? "person" : "people"} named “{npLast.trim()}”
                 </strong>{" "}
                 — is yours one of these?
+                {surnameTotal > surnameHits.length && (
+                  <p className="muted">
+                    {surnameHits.length} of them are listed:{" "}
+                    {npFirst.trim()
+                      ? `first those with the first name “${npFirst.trim()}”, then those on the most contracts.`
+                      : "those on the most contracts."}{" "}
+                    The others can be found from the search, with a first name or patronymic.
+                  </p>
+                )}
                 <ul>
-                  {surnameHits.slice(0, 6).map((hit) => (
+                  {surnameHits.map((hit) => (
                     <li key={hit.person_id}>
                       <button
                         type="button"
@@ -337,9 +431,26 @@ export default function AddInvestorPanel({
             <input
               value={personQuery}
               onChange={(e) => setPersonQuery(e.target.value)}
-              placeholder="Search all people — name, patronymic, or id…"
+              placeholder="Search all people by name, patronymic or entry number…"
               autoComplete="off"
             />
+            {personSearch === "pending" && <span className="lookup-status muted">Searching…</span>}
+            {personSearch === "failed" && (
+              <p className="error-text">
+                The search for existing people did not run, so it is not known whether this person is already in
+                the database. A new person can be created once the search has run.{" "}
+                <button
+                  type="button"
+                  className="link-like"
+                  onClick={() => {
+                    setPersonAnswer(null);
+                    setPersonRetry((n) => n + 1);
+                  }}
+                >
+                  Try again
+                </button>
+              </p>
+            )}
             {personHits.length > 0 && (
               <ul className="lookup-suggestions person-suggestions">
                 {personHits.map((hit) => (
@@ -351,6 +462,7 @@ export default function AddInvestorPanel({
                           {hit.father_mother ? <span className="muted"> di {hit.father_mother}</span> : null}
                         </span>
                         <span className="lookup-used muted">
+                          {`Entry #${hit.person_id} · `}
                           {hit.residences ? `${hit.residences} · ` : ""}
                           {hit.appearances} contr.
                         </span>
@@ -361,14 +473,23 @@ export default function AddInvestorPanel({
                 ))}
               </ul>
             )}
-            {personQuery.trim().length >= 2 && (
+            {personSearch === "ok" && personHits.length === 0 && (
+              <span className="lookup-status muted">No existing person matches “{personQ}”.</span>
+            )}
+            {personSearch === "ok" && personHits.length >= PERSON_SEARCH_LIMIT && (
+              <span className="lookup-status muted">
+                Only the first {PERSON_SEARCH_LIMIT} matches are listed, those on the most contracts first. A first
+                name or patronymic narrows the search.
+              </span>
+            )}
+            {personSearch === "ok" && (
               <button type="button" className="field-fix" onClick={() => {
                 setCreatingPerson(true);
                 const words = personQuery.trim().split(/\s+/);
                 setNpFirst(words[0] ?? "");
                 setNpLast(words.slice(1).join(" "));
               }}>
-                None of these — create a new person
+                {personHits.length === 0 ? "Create a new person" : "None of these — create a new person"}
               </button>
             )}
           </div>
@@ -378,14 +499,22 @@ export default function AddInvestorPanel({
       {/* ROLE & CAPITAL */}
       <div className="add-investor-step">
         <span className="create-label">Role &amp; capital</span>
+        {investmentsFailed && (
+          <p className="error-text">
+            The existing stakes on this contract could not be loaded, so sharing one is not offered.{" "}
+            <button type="button" className="link-like" onClick={refreshInvestments}>
+              Try again
+            </button>
+          </p>
+        )}
         {investments.length > 0 && (
           <div className="tranche-mode">
             <label>
-              <input type="radio" checked={mode === "own"} onChange={() => setMode("own")} /> own capital tranche
+              <input type="radio" checked={mode === "own"} onChange={() => setMode("own")} /> own stake
             </label>
             <label>
               <input type="radio" checked={mode === "join"} onChange={() => setMode("join")} />{" "}
-              {takesOver ? "takes over a stake with no partner" : "shares an existing tranche (joint)"}
+              {takesOver ? "takes over a stake with no partner" : "shares an existing stake (joint)"}
             </label>
           </div>
         )}
@@ -400,10 +529,9 @@ export default function AddInvestorPanel({
                   setRole(next);
                   if (next === "gp" && !cash.trim()) setCash("0");
                 }}
-                title="Historical mapping accomandatario↔gp / accomandante↔lp is pending FT review (glossary)"
               >
-                <option value="lp">accomandante (lp) — provides capital</option>
-                <option value="gp">accomandatario (gp) — runs the firm</option>
+                <option value="lp">Limited partner (accomandante): provides capital</option>
+                <option value="gp">General partner (accomandatario): runs the firm</option>
               </select>
             </label>
             <label className="create-field">
@@ -416,7 +544,9 @@ export default function AddInvestorPanel({
                 placeholder={role === "gp" ? "0 — contributes work (the norm)" : "e.g. 2000"}
               />
               <span className="lookup-status is-new">
-                {role === "gp" ? "0 = contributes industria (64% of GPs)." : "Omit submultiples (input rule)."}
+                {role === "gp"
+                  ? "0 when the partner contributes work (industria), as in 64% of general partners' stakes."
+                  : "Whole units only, as in the original data entry: leave out the smaller units of the currency."}
                 {" "}
                 <label className="inline-check">
                   <input type="checkbox" checked={cashUnspecified} onChange={(e) => setCashUnspecified(e.target.checked)} />{" "}
@@ -435,12 +565,12 @@ export default function AddInvestorPanel({
           </div>
         ) : (
           <label className="create-field">
-            <span className="create-label">Which tranche does this person share?</span>
+            <span className="create-label">Which stake does this person share?</span>
             <select value={joinId} onChange={(e) => setJoinId(e.target.value)}>
-              <option value="">— pick the tranche —</option>
+              <option value="">— pick the stake —</option>
               {investments.map((inv) => (
                 <option key={inv.investment_id} value={inv.investment_id}>
-                  {inv.type} · {inv.cash == null ? "unspecified" : inv.cash} ·{" "}
+                  {roleLabel(inv.type)} · {inv.cash == null ? "unspecified" : inv.cash} ·{" "}
                   {inv.partnership_name || inv.members || "no partner attached"}
                 </option>
               ))}
@@ -448,7 +578,7 @@ export default function AddInvestorPanel({
             <span className="lookup-status is-new">
               {takesOver
                 ? "This stake has no partner yet. The person you add takes it over; role and capital stay as recorded."
-                : "Role and capital come from the shared tranche; “joint” is recorded on every member automatically."}
+                : "Role and capital come from the shared stake; it is marked joint for every partner who holds it."}
             </span>
           </label>
         )}
@@ -458,8 +588,21 @@ export default function AddInvestorPanel({
       <div className="add-investor-step">
         <span className="create-label">Details (as stated in the document)</span>
         <div className="create-grid">
-          <LookupCombobox kind="title" label="Title (signor, magnifico…)" value={title} onChange={setTitle} />
-          <LookupCombobox kind="place" label="Residence" value={residence} onChange={setResidence} placeholder="e.g. Livorno" />
+          <LookupCombobox
+            kind="title"
+            label="Title (signor, magnifico…)"
+            value={title}
+            onChange={setTitle}
+            onCheckChange={setTitleCheck}
+          />
+          <LookupCombobox
+            kind="place"
+            label="Residence"
+            value={residence}
+            onChange={setResidence}
+            placeholder="e.g. Livorno"
+            onCheckChange={setResidenceCheck}
+          />
           <label className="create-field">
             <span className="create-label">Profession (only if explicit)</span>
             <input value={profession} onChange={(e) => setProfession(e.target.value)} placeholder="e.g. battiloro" />
@@ -475,7 +618,13 @@ export default function AddInvestorPanel({
         <details className="add-investor-more">
           <summary>more attributes</summary>
           <div className="create-grid">
-            <LookupCombobox kind="place" label="Place of origin" value={origin} onChange={setOrigin} />
+            <LookupCombobox
+              kind="place"
+              label="Place of origin"
+              value={origin}
+              onChange={setOrigin}
+              onCheckChange={setOriginCheck}
+            />
             <div className="create-field add-investor-flags">
               {flagLabels.map(([key, label]) => (
                 <label key={key} className="inline-check">
@@ -506,13 +655,13 @@ export default function AddInvestorPanel({
           placeholder="note (optional)"
         />
         <button type="button" className="pill-button is-active" onClick={submit} disabled={saving}>
-          {saving ? "Adding…" : "Add investor"}
+          {saving ? "Adding…" : "Add partner"}
         </button>
       </div>
       {error && <p className="error-text">{error}</p>}
       <p className="inline-editor-foot muted">
-        Saves person, role, capital, and the group link as one audited operation group (replay-safe). The
-        panel stays open — every contract needs at least two investors.
+        Saves the person, the role and the capital together, under your initials. The panel stays open, since
+        every contract needs at least two partners.
       </p>
     </div>
   );
