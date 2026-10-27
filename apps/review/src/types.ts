@@ -630,8 +630,9 @@ export type AnalysisQuery = {
   description: string;
   /** Longer reading notes, shown on the result page only (never in the menu). */
   notes?: string;
-  /** Rows can share a contract (places), so a chart lists the rest rather than adding them up. */
-  overlapping?: boolean;
+  /** Set when rows can share a contract (places): the sentence saying so. A
+   * chart then never adds up the rows past its top 20. */
+  overlapping?: string;
   chart: AnalysisChart;
   sql: string;
 };

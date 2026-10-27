@@ -63,6 +63,8 @@ const COLUMN_LABELS: Record<string, string> = {
   gender: "Gender",
   people: "People",
   provenance: "How the Jewish partners are known",
+  person_id: "Person entry",
+  husband_last_name: "Husband's last name",
 };
 
 function columnLabel(alias: string): string {
@@ -146,10 +148,10 @@ function num(v: string | number | null): number {
   return typeof v === "number" ? v : Number(v);
 }
 
-/** Every period of a time grouping, gaps included; for ranked categories the top
- * 20, said so, with the rest as one bar where they can be added. Scaled to all
- * rows (planBars). */
-function BarChart({ result, overlapping }: { result: AnalysisResult; overlapping: boolean }) {
+/** Every decade of a decade grouping, gaps included; for ranked categories the
+ * top 20, said so, with the rest as one bar where they can be added. Scaled to
+ * all rows (planBars). */
+function BarChart({ result, overlapping }: { result: AnalysisResult; overlapping?: string }) {
   const plan = planBars(result.columns, result.rows, {
     truncated: result.truncated,
     totalRows: result.total_rows,
@@ -171,7 +173,7 @@ function BarChart({ result, overlapping }: { result: AnalysisResult; overlapping
               {d.label}
             </span>
             {d.text ? (
-              // A period with no contracts: a marker in place of an amount.
+              // A decade with none of these contracts: a marker in place of an amount.
               <span className="an-bar-track muted" style={{ background: "none", fontSize: "0.74rem", lineHeight: "14px" }}>
                 {d.text}
               </span>
@@ -323,20 +325,31 @@ function ResultView({
   sql,
   csvName,
   exportBody,
-  overlapping = false,
+  overlapping,
 }: {
   result: AnalysisResult;
   chart: AnalysisChart;
   sql: string;
   csvName: string;
   exportBody: Parameters<typeof downloadAnalysisCsv>[0];
-  overlapping?: boolean;
+  overlapping?: string;
 }) {
   const navigate = useNavigate();
   const [showSql, setShowSql] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
-  useEffect(() => setExportError(""), [result]); // an old refusal never sits under a new question
+  const beginExport = useLatest();
+  useEffect(() => {
+    // A new question, or this result leaving the screen (another query, a re-run,
+    // a builder error, another tab): a download still under way for the old one
+    // saves nothing and reports nothing.
+    beginExport();
+    setExporting(false);
+    setExportError("");
+    return () => {
+      beginExport();
+    };
+  }, [result, beginExport]);
   // A contract number links only when the column is the one contract_id: with
   // two (a sub-contract beside its parent), which is which cannot be told.
   const idCols = result.columns.flatMap((c, i) => (c === "contract_id" ? [i] : []));
@@ -346,19 +359,26 @@ function ResultView({
     total != null
       ? total.toLocaleString()
       : `more than ${(result.total_more_than ?? result.row_count).toLocaleString()}`;
-  const downloadable = total != null && total <= EXPORT_CAP;
+  const overCeiling = result.total_more_than != null;
   const exportCsv = () => {
+    const fresh = beginExport();
     setExportError("");
     setExporting(true);
     downloadAnalysisCsv(exportBody)
-      .then((blob) => saveFile(csvName, blob))
-      .catch((e: Error) => setExportError(e.message))
-      .finally(() => setExporting(false));
+      .then((blob) => fresh() && saveFile(csvName, blob))
+      .catch((e: Error) => fresh() && setExportError(e.message))
+      .finally(() => fresh() && setExporting(false));
   };
   return (
     <>
       <div className="an-toolbar">
-        <button type="button" className="pill-button" onClick={exportCsv} disabled={result.rows.length === 0 || exporting}>
+        <button
+          type="button"
+          className="pill-button"
+          onClick={exportCsv}
+          disabled={result.rows.length === 0 || exporting || overCeiling}
+          title={overCeiling ? `A download holds up to ${EXPORT_CAP.toLocaleString()} rows; narrow the question.` : undefined}
+        >
           {exporting ? "Preparing CSV…" : "⤓ Export CSV"}
         </button>
         <button type="button" className="pill-button" onClick={() => setShowSql((s) => !s)}>
@@ -404,11 +424,11 @@ function ResultView({
         </table>
         {result.rows.length > TABLE_CAP && (
           <p className="muted an-table-note">
-            The table shows the first {TABLE_CAP.toLocaleString()} of {totalText} rows
-            {downloadable
-              ? `; the CSV export holds all ${totalText} (a download takes up to ${EXPORT_CAP.toLocaleString()} rows).`
-              : result.total_more_than != null
-                ? `; a download takes up to ${EXPORT_CAP.toLocaleString()} rows, so narrow the question to download it.`
+            The table shows the first {TABLE_CAP.toLocaleString()} rows
+            {total != null
+              ? "; the CSV export holds all of them."
+              : overCeiling
+                ? `. A download holds up to ${EXPORT_CAP.toLocaleString()} rows; narrow the question to download this one.`
                 : "."}
           </p>
         )}

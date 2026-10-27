@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
 import time
 import unicodedata
 import uuid
@@ -6097,10 +6098,12 @@ _ANALYSIS_FORBIDDEN = re.compile(
 )
 ANALYSIS_ROW_CAP = 5000
 # The CSV download holds every row up to this ceiling and refuses above it with
-# a sentence (review 2026-10-27, 4.1 #2). Rows are counted first and then
-# streamed from the cursor, so the server never holds the whole result.
+# a sentence (review 2026-10-27, 4.1 #2). The file is written to a temporary
+# file in one pass and the connection closed before it is sent
+# (export_readonly_csv), so the server never holds the whole result in memory.
 ANALYSIS_EXPORT_CAP = 100_000
 ANALYSIS_TIMEOUT_S = 6.0
+ANALYSIS_VALUE_LIMIT = 1_000_000  # characters in one computed value
 
 
 def _readonly_statement(sql: str) -> str:
@@ -6117,12 +6120,17 @@ def _readonly_statement(sql: str) -> str:
     return statement
 
 
-def _readonly_connection(any_thread: bool = False) -> sqlite3.Connection:
+def _readonly_connection() -> sqlite3.Connection:
     """A read-only connection that interrupts itself ANALYSIS_TIMEOUT_S from now.
     Rows come back as plain tuples, read by position: two result columns may
     share a name (SELECT s.contract_id, c.contract_id …), and a by-name lookup
     would repeat the first one's value in the second."""
-    connection = sqlite3.connect(f"file:{db_path()}?mode=ro", uri=True, check_same_thread=not any_thread)
+    connection = sqlite3.connect(f"file:{db_path()}?mode=ro", uri=True)
+    # The time check runs only between SQLite steps, so one step that builds a
+    # huge value (printf of millions of characters) could outrun it. No stored
+    # value comes near this length (the longest is 8,321 characters); a larger
+    # one is refused as "string or blob too big".
+    connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, ANALYSIS_VALUE_LIMIT)
     deadline = time.monotonic() + ANALYSIS_TIMEOUT_S
     connection.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 100_000)
     return connection
@@ -6182,44 +6190,63 @@ def run_readonly_sql(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
 
 
 def export_readonly_csv(sql: str, params: tuple[Any, ...] = ()) -> StreamingResponse:
-    """The CSV download: every row, or a refusal in words. A first pass counts
-    the rows under the time limit and keeps none of them; the second streams
-    them from the cursor under a fresh limit. Should that limit run out
-    mid-stream, the response breaks off and the browser saves nothing."""
+    """The CSV download: every row, or a refusal in words. One pass under the
+    time limit writes the CSV into a temporary file and counts as it goes;
+    the connection is closed before the first byte is sent, so a slow or stalled
+    download never holds the database's read lock (saves wait on it), and a
+    refusal or a time-out is a 400 sent in place of the file. The file goes out
+    with its Content-Length, so a download cut short cannot pass as complete."""
     statement = _readonly_statement(sql)
+    spool = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
     connection = _readonly_connection()
-    try:
-        cursor = connection.execute(statement, params)
-        for count, _ in enumerate(cursor, 1):
-            if count > ANALYSIS_EXPORT_CAP:
-                raise HTTPException(status_code=400, detail=(
-                    f"This result has more than {ANALYSIS_EXPORT_CAP:,} rows, too many to download. "
-                    "Narrow the question and try again."
-                ))
-    except sqlite3.Error as exc:
-        raise _sql_error(exc)
-    finally:
-        connection.close()
-    return StreamingResponse(_csv_stream(statement, params), media_type="text/csv; charset=utf-8")
-
-
-def _csv_stream(statement: str, params: tuple[Any, ...]):
-    # Starlette may resume this generator on different worker threads.
-    connection = _readonly_connection(any_thread=True)
     try:
         cursor = connection.execute(statement, params)
         buffer = io.StringIO()
         writer = csv.writer(buffer, lineterminator="\n")
         writer.writerow([d[0] for d in cursor.description] if cursor.description else [])
-        for row in cursor:
+        for count, row in enumerate(cursor, 1):
+            if count > ANALYSIS_EXPORT_CAP:
+                raise HTTPException(status_code=400, detail=(
+                    f"This result has more than {ANALYSIS_EXPORT_CAP:,} rows, too many to download. "
+                    "Narrow the question and try again."
+                ))
             writer.writerow(row)
             if buffer.tell() > 64_000:
-                yield buffer.getvalue()
+                spool.write(buffer.getvalue().encode("utf-8"))
                 buffer.seek(0)
                 buffer.truncate()
-        yield buffer.getvalue()
+        spool.write(buffer.getvalue().encode("utf-8"))
+    except sqlite3.Error as exc:
+        spool.close()
+        raise _sql_error(exc)
+    except BaseException:
+        spool.close()
+        raise
     finally:
         connection.close()
+    size = spool.tell()
+    spool.seek(0)
+    return _SpoolResponse(spool, size)
+
+
+class _SpoolResponse(StreamingResponse):
+    """Sends a finished temporary file and closes it (which deletes it) however
+    the response ends: sent, abandoned, or cut off by the client."""
+
+    def __init__(self, spool: Any, size: int) -> None:
+        self.spool = spool
+
+        def chunks():
+            while chunk := spool.read(64 * 1024):
+                yield chunk
+
+        super().__init__(chunks(), media_type="text/csv; charset=utf-8", headers={"Content-Length": str(size)})
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.spool.close()
 
 
 # The two Jewish lists, per contract, with how its Jewish partners are known:
@@ -6228,8 +6255,8 @@ def _csv_stream(statement: str, params: tuple[Any, ...]):
 # (review 2026-10-27, 4.1/Q4). A hidden person's appearance counts on no side.
 _JEWISH_PROVENANCE_NOTE = (
     "“Stated in the act”: every Jewish partner on the contract is described as Jewish in the act. "
-    "“Attributed only”: none is; each was marked by the data-entry team, whose basis is not "
-    "recorded. “Partly stated, partly attributed”: some of each."
+    "“Attributed only”: none is; each was marked by the data-entry team (its basis is not recorded "
+    "for each partner). “Partly stated, partly attributed”: some of each."
 )
 
 
@@ -6252,8 +6279,9 @@ def _jewish_list_sql(partition: str) -> str:
 
 
 # Named queries, re-authored from `SQL formulas/` for SQLite. chart ∈ none|bar|line.
-# "overlapping": one contract can count under several rows (several places), so a
-# chart lists the rows beyond the top 20 rather than adding them up.
+# "overlapping": one contract can count under several rows (several places); the
+# sentence that says so, shown under the chart, which then never adds up the rows
+# past its top 20.
 ANALYSIS_LIBRARY: list[dict[str, Any]] = [
     {
         "id": "corpus_totals",
@@ -6306,7 +6334,7 @@ ANALYSIS_LIBRARY: list[dict[str, Any]] = [
         "title": "Most-frequent places of activity",
         "description": "How many contracts record each place as a place of activity. Partners' residences and places of origin are not counted here.",
         "chart": "bar",
-        "overlapping": True,
+        "overlapping": "One contract can name several places.",
         "sql": "SELECT p.place_name, COUNT(*) AS contracts\n"
         "FROM contract_place cp JOIN place p ON p.place_id = cp.place_id\n"
         "JOIN contract c ON c.contract_id = cp.contract_id AND c.is_deleted = 0\n"
@@ -6403,7 +6431,7 @@ ANALYSIS_LIBRARY: list[dict[str, Any]] = [
         "group": "People & gender",
         "title": "Contracts where all partners are Jewish (recorded or attributed)",
         "description": "Every partner is Jewish, either as stated in the act or by the "
-        "data-entry team's editorial attribution. The last column says which, for each contract.",
+        "data-entry team's editorial attribution.",
         "notes": _JEWISH_PROVENANCE_NOTE,
         "chart": "none",
         "sql": _jewish_list_sql("j.neither = 0"),
@@ -6413,7 +6441,7 @@ ANALYSIS_LIBRARY: list[dict[str, Any]] = [
         "group": "People & gender",
         "title": "Contracts with mixed Jewish & non-Jewish partners (recorded or attributed)",
         "description": "At least one Jewish partner (stated in the act or editorially attributed) "
-        "and at least one partner recorded as neither. The last column says how the Jewish side is known.",
+        "and at least one partner recorded as neither.",
         "notes": _JEWISH_PROVENANCE_NOTE + " Contracts 4459 and 4817 are listed only because their other "
         "partner is entered as MOLTEPLICI AZIONARI, the data-entry team's placeholder for shareholders the act "
         "does not name "
@@ -6453,19 +6481,33 @@ ANALYSIS_LIBRARY: list[dict[str, Any]] = [
         "id": "relatives_in_contract",
         "group": "People & gender",
         "title": "Possible relatives in the same contract",
-        "description": "Partners in one contract who share a last name, father's name, or grandfather's name. "
-        "Each pair is two different person entries.",
+        "description": "Partners who share a last name with another person in the same contract; or, where "
+        "either has no last name, a father's name; or where one partner's husband has the other's last name. "
+        "Grandfathers are shown, never matched.",
+        "notes": "This is the rule of the project's own query “SQL relatives new”, kept until the question of "
+        "what counts as evidence of a family tie (decision 12d) is answered. A shared name is a lead to read "
+        "in the act, never a family tie by itself.",
         "chart": "none",
-        "sql": "SELECT DISTINCT i1.contract_id, p1.last_name, p1.father_mother, p1.grandfather, p1.first_name\n"
+        # FT's "SQL relatives new" (SQL formulas/), re-authored: two different
+        # person entries; last name; father's name only when a last name is
+        # missing; a husband's last name against the other's last name. An
+        # empty name is read as missing, as elsewhere in her rule (missing names
+        # are NULL or '' in this corpus); today the list holds exactly the
+        # person entries her query lists. One row per person entry: two
+        # entries with the same name on one contract stay two rows.
+        "sql": "SELECT DISTINCT i1.contract_id, p1.person_id, p1.last_name, p1.father_mother, p1.grandfather,\n"
+        "       p1.first_name, i1.husband_last_name\n"
         "FROM investor i1 JOIN person p1 ON p1.person_id = i1.person_id\n"
         "JOIN investor i2 ON i2.contract_id = i1.contract_id AND i2.person_id <> i1.person_id\n"
         "JOIN person p2 ON p2.person_id = i2.person_id\n"
         "WHERE i1.is_deleted = 0 AND i2.is_deleted = 0 AND p1.is_deleted = 0 AND p2.is_deleted = 0\n"
         "  AND EXISTS (SELECT 1 FROM contract c WHERE c.contract_id = i1.contract_id AND c.is_deleted = 0)\n"
-        "  AND ((p1.last_name <> '' AND p1.last_name = p2.last_name)\n"
-        "    OR (p1.father_mother <> '' AND p1.father_mother = p2.father_mother)\n"
-        "    OR (p1.grandfather <> '' AND p1.grandfather = p2.grandfather))\n"
-        "ORDER BY i1.contract_id, p1.last_name",
+        "  AND ((COALESCE(p1.last_name, '') <> '' AND p1.last_name = p2.last_name)\n"
+        "    OR ((COALESCE(p1.last_name, '') = '' OR COALESCE(p2.last_name, '') = '')\n"
+        "        AND COALESCE(p1.father_mother, '') <> '' AND p1.father_mother = p2.father_mother)\n"
+        "    OR (COALESCE(i1.husband_last_name, '') <> '' AND i1.husband_last_name = p2.last_name)\n"
+        "    OR (COALESCE(i2.husband_last_name, '') <> '' AND p1.last_name = i2.husband_last_name))\n"
+        "ORDER BY i1.contract_id, p1.last_name, p1.person_id",
     },
     {
         "id": "pct_via_proxy",
@@ -6529,7 +6571,7 @@ ANALYSIS_LIBRARY: list[dict[str, Any]] = [
         "group": "Trends over time",
         "title": "Partners holding a stake jointly, by decade",
         "description": "Share of partner appearances on a jointly held stake: one shared with another person, "
-        "or marked as joint where each holder's share was entered separately (decades with ≥30 partner appearances).",
+        "or recorded as joint on the partner's own entry (decades with ≥30 partner appearances).",
         "chart": "line",
         # Joint per docs/data_quality/is_joint.md: (live distinct-person share
         # count > 1) OR the stored flag. The flag alone misses shared stakes
@@ -6574,7 +6616,8 @@ ANALYSIS_LIBRARY: list[dict[str, Any]] = [
         "cash sum itself. A shortfall of cash can mean a contribution in goods, capital supplied as "
         "credit, the rounding of old fractional money, or a share the clerk never itemized; only the "
         "act says which. Cash above the stated total is shown apart: there a recorded figure may be wrong "
-        "(contract 2441 records a total of 10 scudi beside 10,000 scudi in cash). Every comparison stays "
+        "(the entry for contract 2441 gives a total of 10 scudi beside 10,000 scudi in cash; the summary "
+        "of the act reads scudi 10.000). Every comparison stays "
         "inside one contract, so currencies never mix.",
         "chart": "bar",
         # The buckets are ARITHMETIC (cash vs stated total) crossed with whether the
@@ -6805,7 +6848,7 @@ def build_analysis_sql(
     has_currency_filter = False
 
     for entry in spec.get("filters") or []:
-        key = entry.get("field")
+        key = entry.get("field") if isinstance(entry, dict) else None
         if key not in ANALYSIS_FILTERS:
             raise HTTPException(status_code=400, detail=f"Unknown filter '{key}'.")
         subjects, fragment, takes_value, kind = ANALYSIS_FILTERS[key]
@@ -6834,6 +6877,8 @@ def build_analysis_sql(
                 try:
                     bound = int(value)
                 except ValueError:
+                    bound = -1
+                if not 0 <= bound <= 9999:
                     raise HTTPException(status_code=400, detail="Enter a year as a number, such as 1600.")
             where.append(fragment)
             params.extend([bound] * fragment.count("?"))
@@ -6897,8 +6942,8 @@ def build_analysis_sql(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Reviewed identity families cannot yet be combined with gender, title, profession, or "
-                    "Jewish-attribution groupings: linked entries may disagree on those attributes. "
+                    "Reviewed identity families cannot yet be combined with the gender grouping or with the "
+                    "gender, title, profession or Jewish filters: linked entries may disagree on those attributes. "
                     "Use “Count person entries, as entered” for this question."
                 ),
             )
@@ -6912,8 +6957,9 @@ def build_analysis_sql(
     where_clause = " AND ".join(f"({w})" for w in where)
 
     if measure == "list":
-        # No LIMIT here: the executor's own cap applies, so the screen can say
-        # "5,000 of 17,495" and a download can carry every row.
+        # No LIMIT here: the executor's screen cap applies and reports the true
+        # total (17,495, not 5,000), and the download (export_readonly_csv)
+        # writes every row.
         sql = f"SELECT {sub['list_select']} FROM {from_clause} WHERE {where_clause} ORDER BY {sub['list_order']}"
         return sql, params, "none"
 
@@ -6955,6 +7001,21 @@ def build_analysis_sql(
         )
 
     # count
+    if group == "gender" and excluded_people:
+        # Partner appearances keep institutions, estates, shareholder groups and
+        # placeholders among "men" as entered; until register §10c decides how to
+        # count them, the group says so (docs/data_quality/non_person_rows.md).
+        marks = ",".join("?" for _ in excluded_people)
+        sql = (
+            f"SELECT CASE WHEN np > 0 THEN {group_label} || ', including ' || np || "
+            "CASE WHEN np = 1 THEN ' appearance' ELSE ' appearances' END || "
+            "' of institutions, estates, shareholder groups and placeholders' "
+            f"ELSE {group_label} END AS {group_label}, n FROM ("
+            f"SELECT {group_expr} AS {group_label}, COUNT(*) AS n, "
+            f"SUM(CASE WHEN i.person_id IN ({marks}) THEN 1 ELSE 0 END) AS np "
+            f"FROM {from_clause} WHERE {where_clause} GROUP BY 1) ORDER BY n DESC"
+        )
+        return sql, group_params + excluded_people + params, chart
     if group:
         order = f"{group_label} ASC" if dimension_order else "n DESC"
         sql = (

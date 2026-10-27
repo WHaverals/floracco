@@ -160,8 +160,9 @@ export function runAnalysisBuild(
 }
 
 /** The CSV download of a library or console query (`sql`) or a builder question
- * (`spec`): every row, written and streamed by the server. A refusal (too many
- * rows, too slow) arrives as a sentence; a download that breaks off saves nothing. */
+ * (`spec`): every row, written by the server before it sends the file. A refusal
+ * (too many rows, too slow) arrives as a sentence; a download that breaks off
+ * saves nothing. */
 export async function downloadAnalysisCsv(body: { sql: string } | { spec: AnalysisBuildSpec }): Promise<Blob> {
   const response = await send("/api/analysis/export", { method: "POST", body: JSON.stringify(body) });
   if (!(response.headers.get("Content-Type") ?? "").startsWith("text/csv")) {
@@ -171,7 +172,8 @@ export async function downloadAnalysisCsv(body: { sql: string } | { spec: Analys
     return await response.blob();
   } catch (cause) {
     console.warn("CSV download broke off:", cause);
-    throw apiError("The download stopped before it was complete, so no file was saved. Narrow the question and try again.", 0);
+    // The file is complete before its first byte is sent, so a break here is the network.
+    throw apiError("The download broke off before it was complete, so no file was saved. Try again.", 0);
   }
 }
 
