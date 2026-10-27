@@ -177,6 +177,55 @@ export async function downloadAnalysisCsv(body: { sql: string } | { spec: Analys
   }
 }
 
+export function loadFindRegistry(): Promise<import("./types").FindRegistry> {
+  return request("/api/analysis/find/registry");
+}
+
+export function runFind(spec: import("./utils/findSpec").FindSpec): Promise<import("./types").FindResult> {
+  return request("/api/analysis/find", { method: "POST", body: JSON.stringify({ spec }) });
+}
+
+export function findValues(kind: string, q: string): Promise<{ values: import("./types").FindValue[] }> {
+  return request(`/api/analysis/find/values?${new URLSearchParams({ kind, q }).toString()}`);
+}
+
+/** How many contracts each question finds (up to 40 at once). */
+export function countFind(specs: import("./utils/findSpec").FindSpec[]): Promise<{ counts: import("./types").FindCount[] }> {
+  return request("/api/analysis/find/counts", { method: "POST", body: JSON.stringify({ specs }) });
+}
+
+export function findCount(spec: import("./utils/findSpec").FindSpec, by: string, by2: string): Promise<import("./types").FindCountResult> {
+  return request("/api/analysis/find/count", { method: "POST", body: JSON.stringify({ spec, by, by2: by2 || null }) });
+}
+
+export function findTime(
+  spec: import("./utils/findSpec").FindSpec,
+  period: string,
+  split: string,
+  beside: import("./utils/findSpec").FindSpec[],
+): Promise<import("./types").FindTimeResult> {
+  return request("/api/analysis/find/time", { method: "POST", body: JSON.stringify({ spec, period, split: split || null, beside }) });
+}
+
+export function findHow(spec: import("./utils/findSpec").FindSpec): Promise<import("./types").FindHow> {
+  return request("/api/analysis/find/how", { method: "POST", body: JSON.stringify({ spec }) });
+}
+
+/** The Find list as a CSV: every row, opening with the question, its answer,
+ * the date and `link`, the address that reopens it. */
+export async function downloadFindCsv(spec: import("./utils/findSpec").FindSpec, link: string): Promise<Blob> {
+  const response = await send("/api/analysis/find/export", { method: "POST", body: JSON.stringify({ spec, link }) });
+  if (!(response.headers.get("Content-Type") ?? "").startsWith("text/csv")) {
+    throw apiError("The server sent a reply this page could not read. Reload the page; you may need to sign in again.", response.status);
+  }
+  try {
+    return await response.blob();
+  } catch (cause) {
+    console.warn("CSV download broke off:", cause);
+    throw apiError("The download broke off before it was complete, so no file was saved. Try again.", 0);
+  }
+}
+
 export function loadReference(
   kind: import("./types").ReferenceKind,
   opts: { q?: string; sort?: string; offset?: number; orphansOnly?: boolean } = {},

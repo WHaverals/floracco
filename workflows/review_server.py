@@ -27,7 +27,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache, wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -6189,13 +6189,22 @@ def run_readonly_sql(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
         connection.close()
 
 
-def export_readonly_csv(sql: str, params: tuple[Any, ...] = ()) -> StreamingResponse:
+def export_readonly_csv(
+    sql: str,
+    params: tuple[Any, ...] = (),
+    *,
+    preamble: list[list[str]] | None = None,
+    labels: list[str] | None = None,
+) -> StreamingResponse:
     """The CSV download: every row, or a refusal in words. One pass under the
     time limit writes the CSV into a temporary file and counts as it goes;
     the connection is closed before the first byte is sent, so a slow or stalled
     download never holds the database's read lock (saves wait on it), and a
     refusal or a time-out is a 400 sent in place of the file. The file goes out
-    with its Content-Length, so a download cut short cannot pass as complete."""
+    with its Content-Length, so a download cut short cannot pass as complete.
+    A Find download (``preamble``) opens with a UTF-8 byte-order mark, its
+    question in words and a blank line, then a header row in words
+    (``labels``) above the column names kept for scripts."""
     statement = _readonly_statement(sql)
     spool = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
     connection = _readonly_connection()
@@ -6203,6 +6212,12 @@ def export_readonly_csv(sql: str, params: tuple[Any, ...] = ()) -> StreamingResp
         cursor = connection.execute(statement, params)
         buffer = io.StringIO()
         writer = csv.writer(buffer, lineterminator="\n")
+        if preamble is not None:
+            buffer.write("﻿")
+            writer.writerows(preamble)
+            writer.writerow([])
+        if labels is not None:
+            writer.writerow(labels)
         writer.writerow([d[0] for d in cursor.description] if cursor.description else [])
         for count, row in enumerate(cursor, 1):
             if count > ANALYSIS_EXPORT_CAP:
@@ -7158,6 +7173,1577 @@ def analysis_build(payload: dict[str, Any]) -> dict[str, Any]:
     sql, params, chart = analysis_builder_sql(payload)
     result = run_readonly_sql(sql, tuple(params))
     return {**result, "sql": sql, "chart": chart}
+
+
+# ---- Find: one set of contracts, asked across contract and partner levels ----
+# The Find pane (review 2026-10-27, sections 11-12, build path 12.8, steps 1-2).
+# One registry of condition kinds holds each kind's whitelisted SQL and its
+# reading in words; the SQL, the sentence, the answer line, the steps of "How
+# this was found" and the download's opening lines are all generated from it,
+# so what she reads is what ran. The browser sends keys and values only (ids,
+# registers, words and years, bound as parameters), never SQL, and everything
+# runs on the read-only executor.
+#
+# Partner conditions are uncorrelated IN / NOT IN subqueries over live rows. The
+# correlated EXISTS form took 15.2 s on "a partner who is a woman and a general
+# partner" against 0.008 s this way (12.5); tests/test_find.py holds the line.
+
+FIND_UNIT = "Contracts"
+FIND_RULE = "Several values in one condition mean any of them; different conditions mean all of them."
+FIND_MAX_VALUES = 50
+FIND_MAX_CONDITIONS = 12
+FIND_MAX_LINE = 8  # conditions about one partner
+FIND_MAX_WORD = 40  # characters in one word
+# One word of a title or profession: letters and digits, apostrophes inside.
+_FIND_WORD = re.compile(r"[^\W_]+(?:['’][^\W_]+)*")
+# A register as TRIM(folder) stores it, such as 10831 or 1263bis.
+_FIND_REGISTER = re.compile(r"[0-9A-Za-z]{1,20}")
+
+# Partner appearances that count: a live appearance of a live person. The
+# contract's own hiding is tested once, on the outer contract c.
+_FIND_PARTNERS = (
+    "FROM investor i JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0 "
+    "WHERE i.is_deleted = 0"
+)
+
+# The partner's name as the record pages write it (person_display_name).
+_FIND_NAME = (
+    "CASE WHEN TRIM(COALESCE(pe.first_name, '') || ' ' || COALESCE(pe.last_name, '')) <> '' "
+    "THEN TRIM(COALESCE(pe.first_name, '') || ' ' || COALESCE(pe.last_name, '')) "
+    "WHEN COALESCE(pe.father_mother, '') <> '' THEN 'di ' || pe.father_mother "
+    "ELSE 'Unnamed person' END "
+    "|| CASE WHEN COALESCE(pe.nickname, '') <> '' THEN ' (detto ' || pe.nickname || ')' ELSE '' END"
+)
+
+# Live appearances of live people on live contracts, for the pickers' counts and
+# the spellings a word matches.
+_FIND_APPEARANCES = (
+    "FROM investor i JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0 "
+    "JOIN contract c ON c.contract_id = i.contract_id AND c.is_deleted = 0 WHERE i.is_deleted = 0"
+)
+
+_FIND_YEAR = "CAST(substr(c.registration_date, 1, 4) AS INTEGER)"
+# "; " between names and places, spelled so: the executor refuses any ";" (one statement only).
+_FIND_SEP = "char(59, 32)"
+
+
+class FindChoice(NamedTuple):
+    """One choice of a condition: its reading, its SQL (0 or 1, never NULL, so
+    "is not" and "every partner" can negate it), and its reading with "is not"."""
+
+    reading: str
+    sql: str
+    reading_not: str
+
+
+def _find_role(code: str) -> str:
+    # The role lives on the stake (investment.type), reached through a live link.
+    return (
+        "i.investor_id IN (SELECT ig.investor_id FROM investor_group ig "
+        "JOIN investment inv ON inv.investment_id = ig.investment_id AND inv.is_deleted = 0 "
+        f"WHERE ig.is_deleted = 0 AND inv.type = '{code}')"
+    )
+
+
+# Conditions on the contract. A kind with "values" is read as its label and the
+# names of the values chosen in its picker (ids, registers; None is "not
+# recorded", read as "none"); a kind with "choices" is read as the choice.
+# "label_not" and "reading_not" are the readings with the verb flipped to "is not".
+FIND_CONTRACT_CONDITIONS: dict[str, dict[str, Any]] = {
+    "place": {
+        "menu": "operating in a place",
+        "label": "operating in",
+        "label_not": "not operating in",
+        "values": "place",
+        "noun": "place",
+        "pick": "Choose a place.",
+        "none": "an unrecorded place",
+        # the place of activity as written in the record (contract_place)
+        "sql": "c.contract_id IN (SELECT cp.contract_id FROM contract_place cp "
+        "WHERE cp.is_deleted = 0 AND cp.place_id IN ({marks}))",
+        "none_sql": "c.contract_id NOT IN (SELECT cp.contract_id FROM contract_place cp WHERE cp.is_deleted = 0)",
+    },
+    "years": {
+        "menu": "registered in a range of years",
+        "label": "registered",
+        # Undated contracts (0000-00-00) are out of any year range, as in the builder.
+        "from": f"{_DATED_CONTRACT} AND {_FIND_YEAR} >= ?",
+        "to": f"{_DATED_CONTRACT} AND {_FIND_YEAR} <= ?",
+    },
+    # The phrases as recorded, one at a time: grouping them waits for register 12a.
+    "activity": {
+        "menu": "whose activity is …",
+        "label": "whose activity is",
+        "label_not": "whose activity is not",
+        "values": "activity",
+        "noun": "activity",
+        "pick": "Choose an activity.",
+        "none": "not recorded",
+        "sql": "COALESCE(c.economic_sector, 0) IN ({marks})",
+        "none_value": 0,
+    },
+    "currency": {
+        "menu": "whose currency is …",
+        "label": "whose currency is",
+        "label_not": "whose currency is not",
+        "values": "currency",
+        "noun": "currency",
+        "pick": "Choose a currency.",
+        "none": "not recorded",
+        "sql": "COALESCE(c.currency_id, 0) IN ({marks})",
+        "none_value": 0,
+    },
+    "register": {
+        "menu": "whose register is …",
+        "label": "whose register is",
+        "label_not": "whose register is not",
+        "values": "register",
+        "noun": "register",
+        "pick": "Choose a register.",
+        "none": "not recorded",
+        "sql": "TRIM(COALESCE(c.folder, '')) IN ({marks})",
+        "none_value": "",
+    },
+    "discretion": {
+        "menu": "with an open formula for the place or the activity (discretion)",
+        "choices": {
+            "place": FindChoice(
+                "with an open formula for the place (such as “e in ogni altro luogo”)",
+                "COALESCE(c.pl_discretion, 0) = 1",
+                "with no open formula for the place",
+            ),
+            "activity": FindChoice(
+                "with an open formula for the activity (such as “et altre cose”)",
+                "COALESCE(c.ec_discretion, 0) = 1",
+                "with no open formula for the activity",
+            ),
+        },
+    },
+}
+
+# Conditions on one partner, as the contract conditions.
+FIND_PARTNER_CONDITIONS: dict[str, dict[str, Any]] = {
+    "jewish": {
+        "menu": "is Jewish",
+        "choices": {
+            "either": FindChoice(
+                "is Jewish (stated in the act or editorial attribution)",
+                "(COALESCE(i.is_jewish, 0) = 1 OR COALESCE(i.jewish_db, 0) = 1)",
+                "is not Jewish (neither stated in the act nor by editorial attribution)",
+            ),
+            "stated": FindChoice(
+                "is Jewish (stated in the act)", "COALESCE(i.is_jewish, 0) = 1", "is not stated Jewish in the act"
+            ),
+            "attributed": FindChoice(
+                "is Jewish (editorial attribution)", "COALESCE(i.jewish_db, 0) = 1", "is not Jewish by editorial attribution"
+            ),
+        },
+    },
+    "woman": {
+        "menu": "is a woman",
+        "choices": {"yes": FindChoice("is a woman", "COALESCE(pe.is_woman, 0) = 1", "is not a woman")},
+    },
+    "role": {
+        "menu": "is a general partner, or an external investor",
+        "choices": {
+            "gp": FindChoice("is a general partner", _find_role("gp"), "is not a general partner"),
+            "lp": FindChoice(
+                "is an external investor (accomandante)", _find_role("lp"), "is not an external investor (accomandante)"
+            ),
+        },
+    },
+    "proxy": {
+        "menu": "acts through a proxy",
+        "choices": {"yes": FindChoice("acts through a proxy", "COALESCE(i.via_proxy, 0) = 1", "does not act through a proxy")},
+    },
+    "residence": {
+        "menu": "lives in a place",
+        "label": "lives in",
+        "label_not": "does not live in",
+        "values": "place",
+        "noun": "place",
+        "pick": "Choose a place.",
+        "none": "an unrecorded place",
+        "sql": "COALESCE(i.place_of_residence, 0) IN ({marks})",
+        "none_value": 0,
+    },
+    "origin": {
+        "menu": "comes from a place",
+        "label": "comes from",
+        "label_not": "does not come from",
+        "values": "place",
+        "noun": "place",
+        "pick": "Choose a place.",
+        "none": "an unrecorded place",
+        "sql": "COALESCE(i.place_of_origin, 0) IN ({marks})",
+        "none_value": 0,
+    },
+    # The partner's own title and profession only: the husband's, father's and
+    # grandfather's titles describe someone else and are never searched (12.2).
+    # Its SQL is written from the stored spellings each word matches (find_lookups).
+    "word": {
+        "menu": "has a title or profession containing a word",
+        "label": "has a title or profession containing",
+        "label_not": "has no title or profession containing",
+        "values": "word",
+        "noun": "word",
+        "pick": "Type a word.",
+        "note": "Only the partner's own title and profession are searched, never a husband's, father's or "
+        "grandfather's title. Case and accents are ignored; the stored spellings it matched are listed.",
+    },
+}
+
+# quantifier -> (its reading on the first partner line, on a later line)
+FIND_QUANTIFIERS: dict[str, tuple[str, str]] = {
+    "any": ("with at least one partner who", "and at least one partner who"),
+    "no": ("with no partner who", "and no partner who"),
+    "every": ("in which every partner", "and in which every partner"),
+}
+# A later "at least one" line may be met by the same partner as an earlier line;
+# its reading says so, so the two readings are never confused (12.9).
+_FIND_SAME_OR_ANOTHER = "and at least one partner, the same or another, who"
+# The answers to "about which partner?" when a condition about a partner is
+# added beside a partner line: never guessed (12.2).
+FIND_PLACEMENTS = {"same": "The same partner", "another": "Another partner, or the same one"}
+_FIND_STATED = FIND_PARTNER_CONDITIONS["jewish"]["choices"]["stated"].sql
+_FIND_ATTRIBUTED = FIND_PARTNER_CONDITIONS["jewish"]["choices"]["attributed"].sql
+_FIND_NON_PEOPLE = "institutions, estates, shareholder groups and placeholders"
+_FIND_ALL = "All contracts"
+
+
+def _find_kind_words(kind: str, entry: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {"kind": kind, "menu": entry["menu"]}
+    if "choices" in entry:
+        out["choices"] = [
+            {"key": key, "reading": choice.reading, "reading_not": choice.reading_not}
+            for key, choice in entry["choices"].items()
+        ]
+    elif "values" in entry:
+        out.update({key: entry.get(key) for key in ("label", "label_not", "values", "pick", "none", "note")})
+    else:
+        out["label"] = entry["label"]
+    return out
+
+
+def find_registry() -> dict[str, Any]:
+    """The condition kinds and their readings, for the page's menus and chips."""
+    return {
+        "unit": FIND_UNIT,
+        "rule": FIND_RULE,
+        "contract_conditions": [_find_kind_words(k, v) for k, v in FIND_CONTRACT_CONDITIONS.items()],
+        "quantifiers": [{"key": k, "reading": first, "later": later} for k, (first, later) in FIND_QUANTIFIERS.items()],
+        "same_or_another": _FIND_SAME_OR_ANOTHER,
+        "placements": FIND_PLACEMENTS,
+        "partner_conditions": [_find_kind_words(k, v) for k, v in FIND_PARTNER_CONDITIONS.items()],
+    }
+
+
+def _find_int(value: Any, what: str, low: int, high: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)) or not str(value).strip().isdigit():
+        raise HTTPException(status_code=400, detail=f"Enter {what} as a whole number.")
+    number = int(str(value).strip())
+    if not low <= number <= high:
+        raise HTTPException(status_code=400, detail=f"Enter {what} between {low} and {high}.")
+    return number
+
+
+def _find_fold(text: Any) -> str:
+    """How a word and a stored spelling are compared: case, accents and the
+    curly apostrophe ignored. For finding only; what is shown stays as stored."""
+    return _lookup_norm(text).replace("’", "'")
+
+
+def _find_values(entry: dict[str, Any], values_in: Any) -> list[Any]:
+    """A condition's values in normal form: each once, in order, "not recorded"
+    (None) last."""
+    if not isinstance(values_in, list) or not values_in:
+        raise HTTPException(status_code=400, detail=f"Choose at least one {entry['noun']}.")
+    if len(values_in) > FIND_MAX_VALUES:
+        raise HTTPException(status_code=400, detail=f"One condition holds up to {FIND_MAX_VALUES} values.")
+    kind = entry["values"]
+    values: dict[Any, Any] = {}
+    none = False
+    for value in values_in:
+        if value is None:
+            if "none" not in entry or entry["none"] is None:
+                raise HTTPException(status_code=400, detail=f"Choose a {entry['noun']}.")
+            none = True
+        elif kind in ("place", "activity", "currency"):
+            number = _find_int(value, f"{'an' if kind == 'activity' else 'a'} {kind} number", 1, 10**9)
+            values[number] = number
+        elif kind == "register":
+            text = value.strip() if isinstance(value, str) else str(value) if isinstance(value, int) and not isinstance(value, bool) else ""
+            if not _FIND_REGISTER.fullmatch(text):
+                raise HTTPException(status_code=400, detail="Enter a register as it is written, such as 10831.")
+            values[text] = text
+        else:
+            text = value.strip() if isinstance(value, str) else ""
+            if len(text) > FIND_MAX_WORD or not _FIND_WORD.fullmatch(text):
+                raise HTTPException(status_code=400, detail="Enter one word, in letters, such as mercante.")
+            values.setdefault(_find_fold(text), text)
+    ordered = [values[key] for key in sorted(values)]
+    return ordered + [None] if none else ordered
+
+
+def _find_not(condition: dict[str, Any]) -> bool:
+    negated = condition.get("not", False)
+    if not isinstance(negated, bool):
+        raise HTTPException(status_code=400, detail="A condition is either “is” or “is not”.")
+    return negated
+
+
+def _find_condition(entry: dict[str, Any], condition: dict[str, Any]) -> dict[str, Any]:
+    """One condition with values or a choice, in normal form."""
+    if "values" in entry:
+        return {"kind": condition["kind"], "not": _find_not(condition), "values": _find_values(entry, condition.get("values"))}
+    choices = entry["choices"]
+    choice = condition.get("choice") or (next(iter(choices)) if len(choices) == 1 else None)
+    if not isinstance(choice, str) or choice not in choices:
+        raise HTTPException(status_code=400, detail=f"Choose a value for “{entry['menu']}”.")
+    return {"kind": condition["kind"], "not": _find_not(condition), "choice": choice}
+
+
+def find_normalize(spec: Any) -> dict[str, Any]:
+    """A Find question read against the registry; anything unknown is refused in words."""
+    if not isinstance(spec, dict):
+        raise HTTPException(status_code=400, detail="A question must be a set of conditions.")
+    contract_in, partners_in = spec.get("contract") or [], spec.get("partners") or []
+    if not isinstance(contract_in, list) or not isinstance(partners_in, list):
+        raise HTTPException(status_code=400, detail="A question must be a set of conditions.")
+    if len(contract_in) + len(partners_in) > FIND_MAX_CONDITIONS:
+        raise HTTPException(status_code=400, detail=f"A question holds up to {FIND_MAX_CONDITIONS} conditions.")
+    contract: list[dict[str, Any]] = []
+    for condition in contract_in:
+        kind = condition.get("kind") if isinstance(condition, dict) else None
+        if not isinstance(kind, str) or kind not in FIND_CONTRACT_CONDITIONS:
+            raise HTTPException(status_code=400, detail=f"Unknown condition '{kind}'.")
+        if kind == "years":
+            low = condition.get("from")
+            high = condition.get("to")
+            low = None if low in (None, "") else _find_int(low, "a year", 0, 9999)
+            high = None if high in (None, "") else _find_int(high, "a year", 0, 9999)
+            if low is None and high is None:
+                raise HTTPException(status_code=400, detail="Enter a first year, a last year, or both.")
+            if low is not None and high is not None and low > high:
+                raise HTTPException(status_code=400, detail="The first year is after the last year.")
+            contract.append({"kind": "years", "from": low, "to": high})
+        else:
+            contract.append(_find_condition(FIND_CONTRACT_CONDITIONS[kind], condition))
+    partners: list[dict[str, Any]] = []
+    for clause in partners_in:
+        quantifier = clause.get("quantifier") if isinstance(clause, dict) else None
+        if not isinstance(quantifier, str) or quantifier not in FIND_QUANTIFIERS:
+            raise HTTPException(status_code=400, detail="Choose at least one, no, or every partner.")
+        conditions_in = clause.get("conditions")
+        if not isinstance(conditions_in, list) or not conditions_in:
+            raise HTTPException(status_code=400, detail="Say what the partner is.")
+        if len(conditions_in) > FIND_MAX_LINE:
+            raise HTTPException(status_code=400, detail=f"One partner line holds up to {FIND_MAX_LINE} conditions.")
+        conditions = []
+        for condition in conditions_in:
+            kind = condition.get("kind") if isinstance(condition, dict) else None
+            if not isinstance(kind, str) or kind not in FIND_PARTNER_CONDITIONS:
+                raise HTTPException(status_code=400, detail=f"Unknown partner condition '{kind}'.")
+            conditions.append(_find_condition(FIND_PARTNER_CONDITIONS[kind], condition))
+        partners.append({"quantifier": quantifier, "conditions": conditions})
+    return {"contract": contract, "partners": partners}
+
+
+def _marks(values: list[Any]) -> str:
+    return ", ".join("?" for _ in values)
+
+
+def _join_or(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} or {words[-1]}"
+
+
+def _find_shown(kind: str, value: Any, name: str | None) -> str:
+    """A value as the sentence names it: places and registers as stored,
+    activities and currencies as stored in quotation marks, and an id whose
+    entry is gone from its list (economic_activity 1725, place 116) as such."""
+    if name is None:
+        return f"entry {value}, missing from the {kind} list"
+    return f"“{name}”" if kind in ("activity", "currency") else name
+
+
+def _find_word_sql(words: list[str], matches: dict[str, dict[str, Any]]) -> tuple[str, list[Any]]:
+    """The partner's own title or profession is one of the stored spellings the
+    words matched (find_lookups); 0 when none does."""
+    missing = [word for word in words if word not in matches]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"The word “{missing[0]}” was not looked up.")
+    titles = sorted({int(t) for word in words for t in matches[word]["titles"]})
+    professions = sorted({p for word in words for p in matches[word]["professions"]})
+    pieces, params = [], []
+    if titles:
+        pieces.append(f"COALESCE(i.title, 0) IN ({_marks(titles)})")
+        params.extend(titles)
+    if professions:
+        pieces.append(f"COALESCE(i.profession, '') IN ({_marks(professions)})")
+        params.extend(professions)
+    if not pieces:
+        return "0", []
+    return (pieces[0] if len(pieces) == 1 else f"({' OR '.join(pieces)})"), params
+
+
+def _find_compile(entry: dict[str, Any], condition: dict[str, Any], names: dict[str, Any]) -> tuple[str, list[Any], str]:
+    """One condition as (SQL that is 0 or 1, its parameters, its reading)."""
+    negated = condition["not"]
+    if "choices" in entry:
+        choice = entry["choices"][condition["choice"]]
+        sql, params, reading = choice.sql, [], choice.reading_not if negated else choice.reading
+    else:
+        kind = entry["values"]
+        values = condition["values"]
+        known = [v for v in values if v is not None]
+        if kind == "word":
+            sql, params = _find_word_sql(known, names.get("words", {}))
+            shown = [f"“{word}”" for word in known]
+        else:
+            lookup = names.get(kind, {})
+            missing = [v for v in known if v not in lookup]
+            if missing:
+                what = "register" if kind == "register" else f"{kind} number"
+                raise HTTPException(status_code=400, detail=f"There is no {what} {missing[0]} in the database.")
+            shown = [_find_shown(kind, v, lookup[v]) for v in known]
+            pieces: list[str] = []
+            params = list(known)
+            if None in values and "none_value" in entry:
+                params.append(entry["none_value"])
+            if params:
+                pieces.append(entry["sql"].format(marks=_marks(params)))
+            if None in values and "none_sql" in entry:
+                pieces.append(entry["none_sql"])
+            sql = pieces[0] if len(pieces) == 1 else f"({' OR '.join(pieces)})"
+        if None in values:
+            shown.append(entry["none"])
+        reading = f"{entry['label_not'] if negated else entry['label']} {_join_or(shown)}"
+    return (f"NOT ({sql})" if negated else sql), params, reading
+
+
+def build_find_sql(
+    spec: Any,
+    place_names: dict[int, Any],
+    non_person_ids: list[int] | None = None,
+    lookups: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A Find question as SQL and words. ``place_names`` names every place id the
+    question uses; ``non_person_ids`` are the person rows that are institutions,
+    estates, shareholder groups or placeholders (non_person_ids()), which "no
+    partner who" and "every partner" leave out (12.2); ``lookups`` (find_lookups)
+    names the other values and holds the spellings each word matched."""
+    spec = find_normalize(spec)
+    names: dict[str, Any] = {**(lookups or {}), "place": place_names}
+    non_people = sorted({int(v) for v in (non_person_ids or [])})
+    where: list[tuple[str, list[Any], bool]] = [("c.is_deleted = 0", [], False)]  # (sql, params, is a year)
+    # The parts of the sentence, each with the fragments of `where` it wrote.
+    parts: list[dict[str, Any]] = []
+
+    def part(level: str, reading: str, fragments: list[tuple[str, list[Any], bool]]) -> None:
+        parts.append({"level": level, "reading": reading, "start": len(where), "end": len(where) + len(fragments)})
+        where.extend(fragments)
+
+    marks: list[dict[str, Any]] = []  # what carries the data-entry team's mark "inferred"
+    for condition in spec["contract"]:
+        entry = FIND_CONTRACT_CONDITIONS[condition["kind"]]
+        if condition["kind"] == "years":
+            low, high = condition["from"], condition["to"]
+            if low is not None and high is not None:
+                reading = f"{entry['label']} from {low} to {high}"
+            elif low is not None:
+                reading = f"{entry['label']} from {low} on"
+            else:
+                reading = f"{entry['label']} up to {high}"
+            part("contract", reading, [(entry[end], [year], True) for end, year in (("from", low), ("to", high)) if year is not None])
+            continue
+        sql, params, reading = _find_compile(entry, condition, names)
+        part("contract", reading, [(sql, params, False)])
+        ids = [v for v in condition.get("values", []) if v is not None]
+        if not condition["not"] and ids and condition["kind"] in ("place", "activity"):
+            marks.append({"kind": condition["kind"], "ids": ids, "names": [_find_shown(condition["kind"], v, names[condition["kind"]][v]) for v in ids]})
+
+    person_only = f" AND i.person_id NOT IN ({_marks(non_people)})" if non_people else ""
+    seen_any = False
+    why: list[dict[str, Any]] = []  # the List's columns naming the partners who match
+    splits: list[dict[str, Any]] = []  # provenance counts for the answer line
+    for number, clause in enumerate(spec["partners"], 1):
+        quantifier = clause["quantifier"]
+        compiled = [_find_compile(FIND_PARTNER_CONDITIONS[c["kind"]], c, names) for c in clause["conditions"]]
+        first, later = FIND_QUANTIFIERS[quantifier]
+        opening = (
+            first if number == 1 else _FIND_SAME_OR_ANOTHER if quantifier == "any" and seen_any else later
+        )
+        clause_reading = f"{opening} {' and '.join(reading for _s, _p, reading in compiled)}"
+        test = " AND ".join(f"({sql})" for sql, _p, _r in compiled)
+        test_params = [p for _s, params, _r in compiled for p in params]
+        people = person_only if quantifier != "any" else ""
+        params_people = list(non_people) if people else []
+        if quantifier == "any":
+            fragment = f"c.contract_id IN (SELECT i.contract_id {_FIND_PARTNERS} AND {test})"
+            fragment_params: list[Any] = test_params
+        elif quantifier == "no":
+            fragment = f"c.contract_id NOT IN (SELECT i.contract_id {_FIND_PARTNERS} AND {test}{people})"
+            fragment_params = test_params + params_people
+        else:
+            # every partner (people only) meets the test, and there is at least one
+            fragment = (
+                f"c.contract_id IN (SELECT i.contract_id {_FIND_PARTNERS}{people}) AND "
+                f"c.contract_id NOT IN (SELECT i.contract_id {_FIND_PARTNERS}{people} AND NOT ({test}))"
+            )
+            fragment_params = params_people + params_people + test_params
+        part("partner", clause_reading, [(fragment, fragment_params, False)])
+        if quantifier == "no":
+            continue
+        seen_any = True
+        layer_at = next(
+            (k for k, c in enumerate(clause["conditions"]) if c["kind"] == "jewish" and not c["not"]), None
+        )
+        jewish = clause["conditions"][layer_at]["choice"] if layer_at is not None else None
+        why.append({
+            "number": number, "test": test, "test_params": test_params, "people": people,
+            "params": params_people, "jewish": jewish,
+        })
+        if jewish:
+            # Within this set, the contracts whose matching partner is in the other layer.
+            others = [(sql, params) for k, (sql, params, _r) in enumerate(compiled) if k != layer_at]
+            layer = _FIND_ATTRIBUTED if jewish == "stated" else _FIND_STATED
+            other_test = " AND ".join([f"({sql})" for sql, _p in others] + [f"({layer})"])
+            splits.append({
+                "number": number,
+                "choice": jewish,
+                "alone": not others,
+                "reading": clause_reading,
+                "sql": f"c.contract_id IN (SELECT i.contract_id {_FIND_PARTNERS} AND {other_test}{people})",
+                "params": [p for _s, params in others for p in params] + params_people,
+            })
+
+    sentence = " ".join([FIND_UNIT, ", ".join(p["reading"] for p in parts)]).strip()
+
+    def conjoin(fragments: list[tuple[str, list[Any], bool]]) -> tuple[str, list[Any]]:
+        return " AND ".join(f"({sql})" for sql, _p, _y in fragments), [p for _s, params, _y in fragments for p in params]
+
+    where_sql, where_params = conjoin(where)
+
+    # ---- the List: every row, in date order with the undated last ----
+    columns = ["c.contract_id", "c.registration_date", "c.firm_name", "pl.places"]
+    labels = ["Contract", "Registration date", "Firm name", "Places of activity"]
+    joins = [
+        f"LEFT JOIN (SELECT contract_id, group_concat(place, {_FIND_SEP}) AS places FROM ("
+        "SELECT cp.contract_id, p.place_name || CASE WHEN cp.place_db = 1 THEN ' (marked as inferred)' ELSE '' END AS place "
+        "FROM contract_place cp JOIN place p ON p.place_id = cp.place_id WHERE cp.is_deleted = 0 "
+        "ORDER BY cp.contract_id, p.place_name) GROUP BY contract_id) pl ON pl.contract_id = c.contract_id"
+    ]
+    join_params: list[Any] = []
+    several = len(why) > 1
+    for entry in why:
+        n = entry["number"]
+        suffix = f"_{n}" if several else ""
+        tail = f" (line {n})" if several else ""
+        alias = f"w{n}"
+        layer = "0"
+        if entry["jewish"]:
+            layer = f"CASE WHEN ({_FIND_STATED}) THEN 1 WHEN ({_FIND_ATTRIBUTED}) THEN 2 ELSE 0 END"
+            picks = []
+            if entry["jewish"] in ("either", "stated"):
+                picks.append((1, f"stated_in_the_act{suffix}", f"Matching partners, stated in the act{tail}"))
+            if entry["jewish"] in ("either", "attributed"):
+                picks.append((2, f"editorial_attribution{suffix}", f"Matching partners, editorial attribution{tail}"))
+            aggregates = ", ".join(
+                f"group_concat(CASE WHEN layer = {code} THEN name END, {_FIND_SEP}) AS {name}" for code, name, _l in picks
+            )
+            for _code, name, label in picks:
+                columns.append(f"{alias}.{name}")
+                labels.append(label)
+        else:
+            aggregates = f"group_concat(name, {_FIND_SEP}) AS matching_partners{suffix}"
+            columns.append(f"{alias}.matching_partners{suffix}")
+            labels.append(f"Matching partners{tail}")
+        joins.append(
+            f"LEFT JOIN (SELECT contract_id, {aggregates} FROM ("
+            f"SELECT DISTINCT i.contract_id, {_FIND_NAME} AS name, {layer} AS layer "
+            f"{_FIND_PARTNERS} AND {entry['test']}{entry['people']} ORDER BY 1, 2"
+            f") GROUP BY contract_id) {alias} ON {alias}.contract_id = c.contract_id"
+        )
+        join_params.extend(entry["test_params"] + entry["params"])
+    list_sql = (
+        f"SELECT {', '.join(columns)}\nFROM contract c\n" + "\n".join(joins) + f"\nWHERE {where_sql}\n"
+        f"ORDER BY CASE WHEN {_DATED_CONTRACT} THEN 0 ELSE 1 END, c.registration_date, c.contract_id"
+    )
+
+    # ---- the answer line's counts, over the same set ----
+    selects = ["COUNT(*) AS total", f"SUM(CASE WHEN {_DATED_CONTRACT} THEN 0 ELSE 1 END) AS undated"]
+    select_params: list[Any] = []
+    for split in splits:
+        selects.append(f"SUM(CASE WHEN {split['sql']} THEN 1 ELSE 0 END) AS split_{split['number']}")
+        select_params.extend(split["params"])
+    quantifiers = {clause["quantifier"] for clause in spec["partners"]}
+    if "no" in quantifiers:
+        selects.append(f"SUM(CASE WHEN c.contract_id IN (SELECT i.contract_id {_FIND_PARTNERS}) THEN 0 ELSE 1 END) AS no_partners")
+    if quantifiers & {"no", "every"} and non_people:
+        selects.append(
+            f"SUM(CASE WHEN c.contract_id IN (SELECT i.contract_id {_FIND_PARTNERS} "
+            f"AND i.person_id IN ({_marks(non_people)})) THEN 1 ELSE 0 END) AS non_people"
+        )
+        select_params.extend(non_people)
+    counts_sql = f"SELECT {', '.join(selects)} FROM contract c WHERE {where_sql}"
+
+    # Undated contracts that meet everything but the years, which leave them out.
+    undated_sql = None
+    undated_params: list[Any] = []
+    if any(is_year for _sql, _p, is_year in where):
+        rest_sql, undated_params = conjoin([f for f in where if not f[2]])
+        undated_sql = f"SELECT COUNT(*) FROM contract c WHERE {rest_sql} AND NOT ({_DATED_CONTRACT})"
+
+    # ---- How this was found: the steps, each condition on its own, and what rests on inference ----
+    count = "SELECT COUNT(*) FROM contract c WHERE "
+    steps = [{"level": "all", "reading": _FIND_ALL, "where": where[0][0], "sql": count + where[0][0], "params": []}]
+    for p in parts:
+        upto_sql, upto_params = conjoin(where[: p["end"]])
+        alone_sql, alone_params = conjoin(where[:1] + where[p["start"]: p["end"]])
+        steps.append({
+            "level": p["level"], "reading": p["reading"], "where": upto_sql, "sql": count + upto_sql,
+            "params": upto_params, "alone_sql": count + alone_sql, "alone_params": alone_params,
+        })
+    inference: list[dict[str, Any]] = []
+    for split in splits:
+        if split["choice"] != "stated":
+            # the contracts of the set that rest on editorial attribution alone, by half-century
+            inference.append({
+                "what": "attribution", "number": split["number"], "reading": split["reading"],
+                "sql": f"SELECT CASE WHEN {_DATED_CONTRACT} THEN ({_FIND_YEAR} / 50) * 50 END AS half, COUNT(*) "
+                f"FROM contract c WHERE {where_sql} AND NOT ({split['sql']}) GROUP BY half ORDER BY half",
+                "params": where_params + split["params"],
+            })
+    for mark in marks:
+        if mark["kind"] == "place":
+            sql = (
+                f"{count}{where_sql} AND c.contract_id IN (SELECT cp.contract_id FROM contract_place cp "
+                f"WHERE cp.is_deleted = 0 AND cp.place_db = 1 AND cp.place_id IN ({_marks(mark['ids'])}))"
+            )
+            params = where_params + mark["ids"]
+        else:
+            sql, params = f"{count}{where_sql} AND COALESCE(c.economic_sector_db, 0) = 1", list(where_params)
+        inference.append({"what": mark["kind"], "names": mark["names"], "sql": sql, "params": params})
+
+    searched: dict[str, dict[str, Any]] = {}
+    for line in spec["partners"]:
+        for condition in line["conditions"]:
+            if condition["kind"] == "word":
+                for word in condition["values"]:
+                    found = names["words"][word]
+                    searched[word] = {
+                        "word": word,
+                        "titles": sorted(found["titles"].values(), key=_find_fold),
+                        "professions": list(found["professions"]),
+                    }
+
+    return {
+        "spec": spec,
+        "sentence": sentence,
+        "list_sql": list_sql,
+        "list_params": join_params + where_params,
+        "labels": labels,
+        "counts_sql": counts_sql,
+        "counts_params": select_params + where_params,
+        "total_sql": count + where_sql,
+        "total_params": where_params,
+        "where_sql": where_sql,
+        "lines": why,
+        "undated_sql": undated_sql,
+        "undated_params": undated_params,
+        "splits": splits,
+        "steps": steps,
+        "inference": inference,
+        "searched": list(searched.values()),
+        "quantifiers": sorted(quantifiers),
+        "names": _find_names_used(spec, names),
+    }
+
+
+def _find_names_used(spec: dict[str, Any], names: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """The stored name of every value the question uses, for the page's chips."""
+    used: dict[str, dict[str, str]] = {}
+    conditions = [(FIND_CONTRACT_CONDITIONS, c) for c in spec["contract"]] + [
+        (FIND_PARTNER_CONDITIONS, c) for line in spec["partners"] for c in line["conditions"]
+    ]
+    for registry, condition in conditions:
+        kind = registry[condition["kind"]].get("values")
+        if kind in (None, "word"):
+            continue
+        for value in condition["values"]:
+            if value is not None:
+                name = names[kind][value]
+                used.setdefault(kind, {})[str(value)] = name if name is not None else _find_shown(kind, value, None)
+    return used
+
+
+_FIND_LIVE_CONTRACTS = "SELECT c.contract_id FROM contract c WHERE c.is_deleted = 0"
+# Each list's names, and where an id missing from its list is still in use on a
+# live record, so it can be named (economic_activity 1725, place 116).
+_FIND_LISTS = {
+    "place": (
+        "SELECT place_id, place_name FROM place WHERE place_id IN ({marks})",
+        "SELECT 1 FROM contract_place cp WHERE cp.is_deleted = 0 AND cp.place_id = :id "
+        f"AND cp.contract_id IN ({_FIND_LIVE_CONTRACTS}) "
+        f"UNION ALL SELECT 1 {_FIND_APPEARANCES} AND (i.place_of_residence = :id OR i.place_of_origin = :id) LIMIT 1",
+    ),
+    "activity": (
+        "SELECT ec_activity_id, activity FROM economic_activity WHERE ec_activity_id IN ({marks})",
+        f"SELECT 1 FROM contract WHERE economic_sector = :id AND contract_id IN ({_FIND_LIVE_CONTRACTS}) LIMIT 1",
+    ),
+    "currency": (
+        "SELECT currency_id, currency FROM currency WHERE currency_id IN ({marks})",
+        f"SELECT 1 FROM contract WHERE currency_id = :id AND contract_id IN ({_FIND_LIVE_CONTRACTS}) LIMIT 1",
+    ),
+}
+
+
+def find_lookups(connection: sqlite3.Connection, normals: list[dict[str, Any]]) -> dict[str, Any]:
+    """What build_find_sql needs from the database for these (normalized)
+    questions: the stored name of each value (None for an id whose entry is gone
+    from its list but still in use), the registers live contracts hold, the
+    stored spellings each word matches among live partners, and the non-person
+    rows when "no" or "every" is asked."""
+    wanted: dict[str, set[Any]] = {"place": set(), "activity": set(), "currency": set(), "register": set(), "word": set()}
+    needs_people = False
+    for spec in normals:
+        conditions = [(FIND_CONTRACT_CONDITIONS, c) for c in spec["contract"]]
+        for line in spec["partners"]:
+            needs_people = needs_people or line["quantifier"] != "any"
+            conditions += [(FIND_PARTNER_CONDITIONS, c) for c in line["conditions"]]
+        for registry, condition in conditions:
+            kind = registry[condition["kind"]].get("values")
+            if kind:
+                wanted[kind].update(v for v in condition["values"] if v is not None)
+    lookups: dict[str, Any] = {}
+    for kind, (names_sql, uses_sql) in _FIND_LISTS.items():
+        ids = sorted(wanted[kind])
+        found: dict[int, str | None] = {}
+        if ids:
+            found = {int(r[0]): r[1] for r in connection.execute(names_sql.format(marks=_marks(ids)), ids)}
+        for missing in (i for i in ids if i not in found):
+            if connection.execute(uses_sql, {"id": missing}).fetchone():
+                found[missing] = None
+        lookups[kind] = found
+    registers: dict[str, str] = {}
+    if wanted["register"]:
+        stored = {
+            r[0] for r in connection.execute(
+                f"SELECT DISTINCT TRIM(COALESCE(folder, '')) FROM contract WHERE contract_id IN ({_FIND_LIVE_CONTRACTS})"
+            )
+        }
+        registers = {v: v for v in wanted["register"] if v in stored}
+    lookups["register"] = registers
+    words: dict[str, dict[str, Any]] = {}
+    if wanted["word"]:
+        # the partners' own titles and professions, as live partners hold them
+        titles = [
+            (int(r[0]), r[1])
+            for r in connection.execute(f"SELECT t.title_id, t.title_name FROM title t WHERE t.title_id IN (SELECT i.title {_FIND_APPEARANCES})")
+        ]
+        professions = [
+            r[0] for r in connection.execute(
+                f"SELECT DISTINCT i.profession {_FIND_APPEARANCES} AND TRIM(COALESCE(i.profession, '')) <> ''"
+            )
+        ]
+        for word in wanted["word"]:
+            needle = _find_fold(word)
+            words[word] = {
+                "titles": {tid: name for tid, name in titles if needle in _find_fold(name)},
+                "professions": sorted(p for p in professions if needle in _find_fold(p)),
+            }
+    lookups["words"] = words
+    lookups["non_people"] = non_person_ids(connection) if needs_people else []
+    return lookups
+
+
+def _find_partner_values(column: str) -> str:
+    # A place of residence or origin, with the live contracts that have a live partner from it.
+    return (
+        f"SELECT COALESCE(i.{column}, 0), (SELECT p.place_name FROM place p WHERE p.place_id = i.{column}), "
+        f"COUNT(DISTINCT i.contract_id), NULL {_FIND_APPEARANCES} GROUP BY 1"
+    )
+
+
+# Each picker's values, read in one pass: (value, stored name, live contracts
+# the condition alone finds, of which the data-entry team marked as inferred).
+_FIND_VALUE_SQL = {
+    "place": (
+        "SELECT cp.place_id, p.place_name, COUNT(DISTINCT cp.contract_id), "
+        "COUNT(DISTINCT CASE WHEN cp.place_db = 1 THEN cp.contract_id END) "
+        "FROM contract_place cp JOIN contract c ON c.contract_id = cp.contract_id AND c.is_deleted = 0 "
+        "LEFT JOIN place p ON p.place_id = cp.place_id WHERE cp.is_deleted = 0 GROUP BY cp.place_id"
+    ),
+    "residence": _find_partner_values("place_of_residence"),
+    "origin": _find_partner_values("place_of_origin"),
+    "activity": (
+        "SELECT COALESCE(c.economic_sector, 0), ea.activity, COUNT(*), SUM(COALESCE(c.economic_sector_db, 0) = 1) "
+        "FROM contract c LEFT JOIN economic_activity ea ON ea.ec_activity_id = c.economic_sector "
+        "WHERE c.is_deleted = 0 GROUP BY 1"
+    ),
+    "currency": (
+        "SELECT COALESCE(c.currency_id, 0), cu.currency, COUNT(*), NULL "
+        "FROM contract c LEFT JOIN currency cu ON cu.currency_id = c.currency_id WHERE c.is_deleted = 0 GROUP BY 1"
+    ),
+    "register": (
+        "SELECT TRIM(COALESCE(c.folder, '')), NULL, COUNT(*), NULL FROM contract c WHERE c.is_deleted = 0 GROUP BY 1"
+    ),
+}
+
+
+def find_values(connection: sqlite3.Connection, kind: str, q: str = "", limit: int = 12) -> list[dict[str, Any]]:
+    """A picker's values: the stored spelling, the live contracts the condition
+    alone finds with it ("in the corpus") and how many of those carry the
+    data-entry team's mark "inferred". Matching ignores case and accents; "not
+    recorded" is a value with its count; nothing is grouped."""
+    entry = FIND_CONTRACT_CONDITIONS.get(kind) or FIND_PARTNER_CONDITIONS.get(kind)
+    if kind not in _FIND_VALUE_SQL or entry is None:
+        raise HTTPException(status_code=400, detail=f"There is no list of values for '{kind}'.")
+    values_kind = entry["values"]
+    none_count = 0
+    rows = []
+    for value, name, contracts, inferred in connection.execute(_FIND_VALUE_SQL[kind]):
+        if "none_value" in entry and value == entry["none_value"]:
+            none_count = int(contracts)
+            continue
+        shown = value if values_kind == "register" else name if name is not None else _find_shown(values_kind, value, None)
+        rows.append((value, shown, int(contracts), int(inferred or 0)))
+    if "none_sql" in entry:
+        # no live place of activity at all, counted by the engine itself
+        query = build_find_sql({"contract": [{"kind": kind, "values": [None]}]}, {})
+        none_count = int(connection.execute(query["total_sql"], query["total_params"]).fetchone()[0])
+    needle = _lookup_norm(q)
+    scored = []
+    for value, shown, contracts, inferred in rows:
+        norm = _lookup_norm(shown)
+        if needle and needle not in norm:
+            continue
+        # the exact spelling first, then the most used
+        scored.append((0 if needle and norm == needle else 1, -contracts, norm, value, shown, contracts, inferred))
+    scored.sort(key=lambda t: t[:3])
+    out = [
+        {"value": value, "name": shown, "contracts": contracts, "inferred": inferred}
+        for *_rank, value, shown, contracts, inferred in scored[:limit]
+    ]
+    if none_count and (not needle or "not recorded".startswith(needle)):
+        out.append({"value": None, "name": "not recorded", "contracts": none_count, "inferred": 0})
+    return out
+
+
+# ---- Find, step 3: views over the same set (Count, Over time, Compare) ----
+# Each view groups or dates the contracts of one question, read through the
+# question's own WHERE, so a view never counts a contract the List does not hold.
+# Values are named as stored, "not recorded" stays a value, and nothing is merged
+# (register 12a, 12c). Capital is not offered here yet: adding totals waits for
+# the currency decisions (register §6).
+
+FIND_GROUPINGS: dict[str, dict[str, Any]] = {
+    "decade": {"label": "decade of registration"},
+    "half": {"label": "half-century of registration"},
+    "place": {"label": "place of activity"},
+    "activity": {"label": "activity, as recorded"},
+    "currency": {"label": "currency, as recorded"},
+    "register": {"label": "register"},
+    "provenance": {"label": "how the matching partner is known to be Jewish"},
+    "role": {"label": "role of the matching partner"},
+}
+FIND_TOP_ROWS = 20  # a Count table's rows; the rest are "all others"
+FIND_TOP_COLUMNS = 8  # its columns
+FIND_SERIES = 4  # series on one chart: the categorical palette's safe count
+FIND_MAX_BESIDE = 3  # questions set beside this one
+_FIND_PERIOD_WIDTH = {"decade": 10, "half": 50}
+_FIND_GROUP_EXPR = {
+    "activity": ("COALESCE(c.economic_sector, 0)", 0),
+    "currency": ("COALESCE(c.currency_id, 0)", 0),
+    "register": ("TRIM(COALESCE(c.folder, ''))", ""),
+}
+_FIND_GROUP_WORDS = {
+    "provenance": {"stated": "a matching partner stated Jewish in the act", "attributed": "editorial attribution alone"},
+    "role": {"gp": "general partner", "lp": "external investor (accomandante)"},
+}
+
+
+def _find_period(width: int) -> str:
+    return f"CASE WHEN {_DATED_CONTRACT} THEN ({_FIND_YEAR} / {width}) * {width} END"
+
+
+def _find_exec(connection: sqlite3.Connection, sql: str, params: list[Any]) -> list[Any]:
+    return connection.execute(_readonly_statement(sql), list(params)).fetchall()
+
+
+def _find_provenance(query: dict[str, Any]) -> dict[str, Any] | None:
+    """The split that tells the matching partner stated Jewish in the act from
+    editorial attribution alone: a Jewish condition read as either layer, or as
+    attribution."""
+    return next((s for s in query["splits"] if s["choice"] != "stated"), None)
+
+
+def find_groupings(query: dict[str, Any]) -> list[dict[str, str]]:
+    """The groupings this question can be counted or split by."""
+    out = []
+    for key, entry in FIND_GROUPINGS.items():
+        if (key == "provenance" and not _find_provenance(query)) or (key == "role" and not query["lines"]):
+            continue
+        out.append({"key": key, "label": entry["label"]})
+    return out
+
+
+def _find_group_rows(connection: sqlite3.Connection, query: dict[str, Any], key: str) -> tuple[list[int], dict[int, set[Any]]]:
+    """The set's contracts, and the values each holds in the grouping (None: not
+    recorded, no registration date, or no stake recorded). Place and role can
+    give a contract several values."""
+    if key not in {g["key"] for g in find_groupings(query)}:
+        raise HTTPException(status_code=400, detail=f"This question cannot be grouped by '{key}'.")
+    where, params = query["where_sql"], list(query["total_params"])
+    members = f"SELECT c.contract_id FROM contract c WHERE {where}"
+    ids = [int(r[0]) for r in _find_exec(connection, members, params)]
+    if key in _FIND_PERIOD_WIDTH:
+        rows = _find_exec(connection, f"SELECT c.contract_id, {_find_period(_FIND_PERIOD_WIDTH[key])} FROM contract c WHERE {where}", params)
+    elif key in _FIND_GROUP_EXPR:
+        expr, none = _FIND_GROUP_EXPR[key]
+        rows = [(cid, None if v == none else v) for cid, v in _find_exec(connection, f"SELECT c.contract_id, {expr} FROM contract c WHERE {where}", params)]
+    elif key == "place":
+        rows = _find_exec(
+            connection,
+            f"SELECT cp.contract_id, cp.place_id FROM contract_place cp WHERE cp.is_deleted = 0 AND cp.contract_id IN ({members})",
+            params,
+        )
+    elif key == "provenance":
+        split = _find_provenance(query)
+        rows = _find_exec(
+            connection,
+            f"SELECT c.contract_id, CASE WHEN {split['sql']} THEN 'stated' ELSE 'attributed' END FROM contract c WHERE {where}",
+            split["params"] + params,
+        )
+    else:
+        # the role on the stake of each partner who meets the first partner line
+        line = query["lines"][0]
+        matching = f"{_FIND_PARTNERS} AND {line['test']}{line['people']} AND i.contract_id IN ({members})"
+        gp, lp = _find_role("gp"), _find_role("lp")
+        rows = []
+        for value, test in (("gp", gp), ("lp", lp), (None, f"NOT ({gp}) AND NOT ({lp})")):
+            found = _find_exec(connection, f"SELECT DISTINCT i.contract_id {matching} AND {test}", line["test_params"] + line["params"] + params)
+            rows += [(r[0], value) for r in found]
+    values: dict[int, set[Any]] = {i: set() for i in ids}
+    for cid, value in rows:
+        values[int(cid)].add(value)
+    for held in values.values():
+        if not held:
+            held.add(None)
+    return ids, values
+
+
+def _find_group_names(connection: sqlite3.Connection, key: str, values: set[Any]) -> dict[Any, str]:
+    names: dict[Any, str] = {}
+    lists = {"place": "place", "activity": "activity", "currency": "currency"}
+    if key in lists:
+        ids = sorted(v for v in values if v is not None)
+        sql = _FIND_LISTS[lists[key]][0]
+        found = {int(r[0]): r[1] for r in connection.execute(sql.format(marks=_marks(ids)), ids)} if ids else {}
+        for v in ids:
+            names[v] = found.get(v) or f"entry {v}, missing from the {lists[key]} list"
+    for v in values:
+        if v is None:
+            names[v] = "no registration date" if key in _FIND_PERIOD_WIDTH else "no stake recorded" if key == "role" else "not recorded"
+        elif key in _FIND_PERIOD_WIDTH:
+            names[v] = f"{v}–{v + _FIND_PERIOD_WIDTH[key] - 1}"
+        elif key in _FIND_GROUP_WORDS:
+            names[v] = _FIND_GROUP_WORDS[key][v]
+        elif key == "register":
+            names[v] = v
+    return names
+
+
+def _find_groups(values: dict[int, set[Any]]) -> dict[Any, set[int]]:
+    groups: dict[Any, set[int]] = {}
+    for cid, held in values.items():
+        for value in held:
+            groups.setdefault(value, set()).add(cid)
+    return groups
+
+
+def _find_cut(key: str, groups: dict[Any, set[int]], names: dict[Any, str], top: int) -> tuple[list[Any], list[Any]]:
+    """The values shown, in order (periods by date, the rest by size; "not
+    recorded" last), and the values gathered into "all others"."""
+    if key in _FIND_PERIOD_WIDTH:
+        return sorted(v for v in groups if v is not None) + ([None] if None in groups else []), []
+    ranked = sorted((v for v in groups if v is not None), key=lambda v: (-len(groups[v]), _lookup_norm(names[v])))
+    if len(ranked) > top + 1:
+        ranked, rest = ranked[:top], ranked[top:]
+    else:
+        rest = []
+    return ranked + ([None] if None in groups else []), rest
+
+
+def _find_several(key: str, values: dict[int, set[Any]]) -> str | None:
+    n = sum(1 for held in values.values() if len(held) > 1)
+    if not n:
+        return None
+    what = {"place": "name more than one place", "role": "have matching partners in more than one role, or with no stake"}
+    return f"{n:,} of the {len(values):,} {what.get(key, 'hold more than one value')} and {'is' if n == 1 else 'are'} counted under each."
+
+
+def find_count(connection: sqlite3.Connection, query: dict[str, Any], by: str, by2: str | None = None) -> dict[str, Any]:
+    """Count: the set grouped once or twice, each row and cell with its
+    contracts; percentages are the page's, from these counts and their bases."""
+    if by2 is not None and by2 == by:
+        raise HTTPException(status_code=400, detail="Choose two different groupings.")
+    ids, values = _find_group_rows(connection, query, by)
+    groups = _find_groups(values)
+    names = _find_group_names(connection, by, set(groups))
+    shown, rest = _find_cut(by, groups, names, FIND_TOP_ROWS)
+    notes = [note for note in [_find_several(by, values)] if note]
+    # the values shown, "all others", then "not recorded"
+    rows = [{"value": v, "name": names[v], "ids": sorted(groups[v])} for v in shown if v is not None]
+    if rest:
+        others = sorted(set().union(*(groups[v] for v in rest)))
+        rows.append({"value": "others", "name": f"all others ({len(rest):,} values)", "ids": others})
+        notes.append(
+            f"The {FIND_TOP_ROWS} largest of {len(groups) - (None in groups):,} values are shown; "
+            f"“all others” counts the {len(others):,} contracts of the other {len(rest):,}, each once."
+        )
+    if None in shown:
+        rows.append({"value": None, "name": names[None], "ids": sorted(groups[None])})
+    out: dict[str, Any] = {
+        "total": len(ids),
+        "by": {"key": by, "label": FIND_GROUPINGS[by]["label"]},
+        "rows": rows,
+        "notes": notes,
+    }
+    if by2:
+        _ids, values2 = _find_group_rows(connection, query, by2)
+        groups2 = _find_groups(values2)
+        names2 = _find_group_names(connection, by2, set(groups2))
+        shown2, rest2 = _find_cut(by2, groups2, names2, FIND_TOP_COLUMNS)
+        columns = [{"value": v, "name": names2[v], "ids": groups2[v]} for v in shown2 if v is not None]
+        if rest2:
+            columns.append({"value": "others", "name": f"all others ({len(rest2):,} values)",
+                            "ids": set().union(*(groups2[v] for v in rest2))})
+        if None in shown2:
+            columns.append({"value": None, "name": names2[None], "ids": groups2[None]})
+            notes.append(f"The {FIND_TOP_COLUMNS} largest columns are shown; “all others” gathers the other {len(rest2):,}.")
+        several = _find_several(by2, values2)
+        if several:
+            notes.append(several)
+        for row in rows:
+            members = set(row["ids"])
+            row["cells"] = [{"ids": sorted(members & column["ids"])} for column in columns]
+        out["by2"] = {"key": by2, "label": FIND_GROUPINGS[by2]["label"]}
+        out["columns"] = [{"value": c["value"], "name": c["name"], "ids": sorted(c["ids"])} for c in columns]
+    return out
+
+
+def find_time(
+    connection: sqlite3.Connection, queries: list[dict[str, Any]], period: str = "decade", split: str | None = None
+) -> dict[str, Any]:
+    """Over time and Compare: counts per period on the corpus's own axis (every
+    period from the first registration to the last, zeros kept, a partial first
+    or last period named), for the question, for the question split by a
+    grouping, or for the same question with one chip changed (queries[1:]).
+    Each series carries its bases: its question's earlier steps, period by period."""
+    if period not in _FIND_PERIOD_WIDTH:
+        raise HTTPException(status_code=400, detail="Choose decades or half-centuries.")
+    if split and (split in _FIND_PERIOD_WIDTH or len(queries) > 1):
+        raise HTTPException(status_code=400, detail="Split one question by a grouping other than time.")
+    width = _FIND_PERIOD_WIDTH[period]
+    head = queries[0]
+    low, high = _find_exec(
+        connection, f"SELECT MIN({_FIND_YEAR}), MAX({_FIND_YEAR}) FROM contract c WHERE {head['steps'][0]['where']} AND {_DATED_CONTRACT}", []
+    )[0]
+    periods = list(range(low // width * width, high // width * width + 1, width)) if low is not None else []
+    partial = {}
+    if periods and low % width:
+        partial["first"] = f"{low}–{periods[0] + width - 1}"
+    if periods and high % width != width - 1:
+        partial["last"] = f"{periods[-1]}–{high}"
+    at = {p: k for k, p in enumerate(periods)}
+
+    def by_period(where: str, params: list[Any], extra: str = "", extra_params: list[Any] | None = None) -> tuple[list[int], int, list[int]]:
+        counts, parts, undated = [0] * len(periods), [0] * len(periods), 0
+        for row in _find_exec(
+            connection, f"SELECT {_find_period(width)} AS p, COUNT(*){extra} FROM contract c WHERE {where} GROUP BY p",
+            (extra_params or []) + params,
+        ):
+            if row[0] is None:
+                undated = int(row[1])
+            else:
+                counts[at[row[0]]] = int(row[1])
+                if extra:
+                    parts[at[row[0]]] = int(row[2] or 0)
+        return counts, undated, parts
+
+    def bases(query: dict[str, Any]) -> list[dict[str, Any]]:
+        return [{"label": step["reading"], "counts": by_period(step["where"], step["params"])[0]} for step in query["steps"][:-1]]
+
+    def members(query: dict[str, Any]) -> set[int]:
+        return {int(r[0]) for r in _find_exec(connection, f"SELECT c.contract_id FROM contract c WHERE {query['where_sql']}", query["total_params"])}
+
+    series: list[dict[str, Any]] = []
+    notes: list[str] = []
+    held: list[set[int]] = []
+    if split:
+        ids, values = _find_group_rows(connection, head, split)
+        groups = _find_groups(values)
+        names = _find_group_names(connection, split, set(groups))
+        dated = {
+            int(r[0]): r[1]
+            for r in _find_exec(connection, f"SELECT c.contract_id, {_find_period(width)} FROM contract c WHERE {head['where_sql']}", head["total_params"])
+        }
+        ranked = sorted(groups, key=lambda v: (-len(groups[v]), v is None, _lookup_norm(names[v])))
+        chosen, rest = ranked[:FIND_SERIES], ranked[FIND_SERIES:]
+        shared = bases(head)
+        sets = [(names[v], groups[v]) for v in chosen]
+        if rest:
+            sets.append((f"all others ({len(rest):,} values)", set().union(*(groups[v] for v in rest))))
+            notes.append(f"The {FIND_SERIES} largest values are drawn; “all others” gathers the other {len(rest):,}.")
+        for label, contracts in sets:
+            counts, undated = [0] * len(periods), 0
+            for cid in contracts:
+                if dated.get(cid) is None:
+                    undated += 1
+                else:
+                    counts[at[dated[cid]]] += 1
+            series.append({"label": label, "counts": counts, "undated": undated, "total": len(contracts), "bases": shared})
+            held.append(contracts)
+    else:
+        provenance = _find_provenance(head) if len(queries) == 1 else None
+        readings = [[step["reading"] for step in q["steps"][1:]] for q in queries]
+        for k, query in enumerate(queries):
+            extra = f", SUM(CASE WHEN {provenance['sql']} THEN 1 ELSE 0 END)" if provenance else ""
+            counts, undated, stated = by_period(query["where_sql"], query["total_params"], extra, provenance["params"] if provenance else None)
+            label = query["sentence"]
+            if len(queries) > 1:
+                # the part of the sentence this question changes
+                differ = next((i for i, (a, b) in enumerate(zip(readings[0], readings[k] if k else readings[1])) if a != b), None)
+                if differ is not None:
+                    label = readings[k][differ]
+            entry = {"label": label, "sentence": query["sentence"], "counts": counts, "undated": undated,
+                     "total": sum(counts) + undated, "bases": bases(query)}
+            if provenance:
+                entry["parts"] = [
+                    {"label": _FIND_GROUP_WORDS["provenance"]["stated"], "counts": stated},
+                    {"label": _FIND_GROUP_WORDS["provenance"]["attributed"], "counts": [n - s for n, s in zip(counts, stated)]},
+                ]
+            series.append(entry)
+            if len(queries) > 1:
+                held.append(members(query))
+    if len(held) > 1:
+        both = sum(1 for cid in set().union(*held) if sum(cid in h for h in held) > 1)
+        if both:
+            notes.insert(0, f"{both:,} {'contract is' if both == 1 else 'contracts are'} in more than one of these and drawn in each.")
+    return {"period": period, "width": width, "periods": periods, "partial": partial, "series": series, "notes": notes}
+
+
+def _count_words(n: int, one: str, many: str) -> str:
+    return f"{n:,} {one if n == 1 else many}"
+
+
+def find_answer(query: dict[str, Any], counts: dict[str, int], undated_left_out: int | None) -> list[str]:
+    """The answer line, in sentences: the unit and its count, the provenance
+    split, what the count rests on. Generated from the same query as the List."""
+    total = int(counts.get("total") or 0)
+    answer = [f"{_count_words(total, 'contract', 'contracts')}."]
+    several = len(query["splits"]) > 1
+    for split in query["splits"]:
+        n = int(counts.get(f"split_{split['number']}") or 0)
+        partner = "a partner" if split["alone"] else "a matching partner"
+        if split["choice"] == "either":
+            text = (
+                f"{n:,} with {partner} stated Jewish in the act; "
+                f"{total - n:,} on editorial attribution alone."
+            )
+        elif n == 0:
+            continue
+        elif split["choice"] == "stated":
+            text = f"{n:,} of them also {'has' if n == 1 else 'have'} {partner} Jewish by editorial attribution."
+        else:
+            text = f"{n:,} of them also {'has' if n == 1 else 'have'} {partner} stated Jewish in the act."
+        answer.append(f"For “{split['reading']}”: {text}" if several else text)
+    answer.append("Counting contracts, each once.")
+    undated = int(counts.get("undated") or 0)
+    if undated_left_out:
+        answer.append(
+            f"{_count_words(undated_left_out, 'contract', 'contracts')} with no registration date "
+            f"{'meets' if undated_left_out == 1 else 'meet'} the other conditions and "
+            f"{'is' if undated_left_out == 1 else 'are'} left out by the years."
+        )
+    elif undated:
+        answer.append(
+            f"{undated:,} {'has' if undated == 1 else 'have'} no registration date and "
+            f"{'is' if undated == 1 else 'are'} included."
+        )
+    no_partners = int(counts.get("no_partners") or 0)
+    if no_partners:
+        answer.append(f"{no_partners:,} {'has' if no_partners == 1 else 'have'} no partners recorded.")
+    if "non_people" in counts:
+        which = " and ".join(
+            f"“{reading}”" for key, reading in (("no", "no partner"), ("every", "every partner"))
+            if key in query["quantifiers"]
+        )
+        n = int(counts.get("non_people") or 0)
+        among = (
+            "none of these contracts has one among its partners" if n == 0
+            else "1 of these contracts has one among its partners" if n == 1
+            else f"{n:,} of these contracts have one among their partners"
+        )
+        answer.append(f"For {which}, {_FIND_NON_PEOPLE} are left out; {among}.")
+    return answer
+
+
+def _find_build_all(specs: list[Any]) -> list[Any]:
+    """Several questions built against one read of today's names, spellings and
+    non-person rows; a question that does not fit stands as its refusal."""
+    normals: list[Any] = []
+    for spec in specs:
+        try:
+            normals.append(find_normalize(spec))
+        except HTTPException as refused:
+            normals.append(refused)
+    valid = [n for n in normals if not isinstance(n, HTTPException)]
+    lookups: dict[str, Any] = {"place": {}, "non_people": []}
+    if valid:
+        connection = open_db()
+        try:
+            lookups = find_lookups(connection, valid)
+        finally:
+            connection.close()
+    built: list[Any] = []
+    for normal in normals:
+        try:
+            if isinstance(normal, HTTPException):
+                raise normal
+            built.append(build_find_sql(normal, lookups["place"], lookups["non_people"], lookups))
+        except HTTPException as refused:
+            built.append(refused)
+    return built
+
+
+def find_prepare(spec: Any) -> dict[str, Any]:
+    """build_find_sql with today's names, spellings and non-person rows."""
+    query = _find_build_all([spec])[0]
+    if isinstance(query, HTTPException):
+        raise query
+    return query
+
+
+def _find_rows(statements: list[tuple[str, list[Any]]]) -> list[list[tuple[Any, ...]]]:
+    """Several SELECTs on one read-only connection, under one time limit."""
+    connection = _readonly_connection()
+    try:
+        return [connection.execute(_readonly_statement(sql), params).fetchall() for sql, params in statements]
+    except sqlite3.Error as exc:
+        raise _sql_error(exc)
+    finally:
+        connection.close()
+
+
+def _find_counts(query: dict[str, Any]) -> tuple[dict[str, int], int | None]:
+    result = run_readonly_sql(query["counts_sql"], tuple(query["counts_params"]))
+    counts = {name: (value or 0) for name, value in zip(result["columns"], result["rows"][0])}
+    undated = None
+    if query["undated_sql"]:
+        undated = int(run_readonly_sql(query["undated_sql"], tuple(query["undated_params"]))["rows"][0][0] or 0)
+    return counts, undated
+
+
+def _find_near_misses(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Near misses, as questions of their own (12.4): for the first "operating
+    in" condition, the contracts not operating there (elsewhere, or in no recorded
+    place) where a partner who meets the first "at least one" line lived in, or
+    came from, one of its places."""
+    place_at = next(
+        (k for k, c in enumerate(spec["contract"]) if c["kind"] == "place" and not c["not"] and None not in c["values"]),
+        None,
+    )
+    if place_at is None:
+        return []
+    line_at = next((k for k, line in enumerate(spec["partners"]) if line["quantifier"] == "any"), None)
+    out = []
+    for kind in ("residence", "origin"):
+        if line_at is not None and any(c["kind"] == kind for c in spec["partners"][line_at]["conditions"]):
+            continue
+        near = json.loads(json.dumps(spec))
+        near["contract"][place_at]["not"] = True
+        added = {"kind": kind, "not": False, "values": list(spec["contract"][place_at]["values"])}
+        if line_at is None:
+            near["partners"].append({"quantifier": "any", "conditions": [added]})
+        else:
+            near["partners"][line_at]["conditions"].append(added)
+        out.append(near)
+    return out
+
+
+def _find_left_out(connection: sqlite3.Connection, spec: dict[str, Any], lookups: dict[str, Any]) -> list[dict[str, Any]]:
+    """Other stored spellings of a place asked for, whose names contain it
+    (register 12c: nothing is grouped), each with the question that adds it."""
+    targets = [((k,), c) for k, c in enumerate(spec["contract"]) if c["kind"] == "place"] + [
+        ((n, k), c)
+        for n, line in enumerate(spec["partners"])
+        for k, c in enumerate(line["conditions"])
+        if c["kind"] in ("residence", "origin")
+    ]
+    out: list[dict[str, Any]] = []
+    for where, condition in targets:
+        if condition["not"]:
+            continue
+        for value in condition["values"]:
+            name = lookups["place"].get(value) if value is not None else None
+            if not name:
+                continue
+            for candidate in find_values(connection, condition["kind"], name, limit=50):
+                if candidate["value"] is None or candidate["value"] in condition["values"]:
+                    continue
+                wider = json.loads(json.dumps(spec))
+                target = wider["contract"][where[0]] if len(where) == 1 else wider["partners"][where[0]]["conditions"][where[1]]
+                target["values"] = condition["values"] + [candidate["value"]]
+                out.append({"chosen": name, "name": candidate["name"], "contracts": candidate["contracts"], "spec": wider})
+    return out[:12]
+
+
+def _find_inference(query: dict[str, Any], results: list[list[tuple[Any, ...]]], total: int) -> list[str]:
+    """What the set rests on beyond the acts: editorial attribution, and the
+    data-entry team's mark "inferred" on a place or an activity."""
+    if not total:
+        return []
+    several = sum(1 for item in query["inference"] if item["what"] == "attribution") > 1
+    lines = []
+    for item, rows in zip(query["inference"], results):
+        if item["what"] == "attribution":
+            alone = sum(int(n) for _half, n in rows)
+            if not alone:
+                text = f"None of the {total:,} {'rests' if total == 1 else 'rest'} on editorial attribution alone."
+            else:
+                text = f"{alone:,} of the {total:,} {'rests' if alone == 1 else 'rest'} on editorial attribution alone"
+                dated = [(int(n), half) for half, n in rows if half is not None]
+                if dated:
+                    most, half = max(dated, key=lambda t: (t[0], -t[1]))
+                    text += f"; {most:,} of them {'was' if most == 1 else 'were'} registered in {half}–{half + 49}"
+                text += "."
+            lines.append(f"For “{item['reading']}”: {text}" if several else text)
+        else:
+            n = int(rows[0][0] or 0)
+            if not n:
+                continue
+            if item["what"] == "place":
+                verb = "names" if n == 1 else "name"
+                lines.append(f"{n:,} of the {total:,} {verb} {_join_or(item['names'])} with the data-entry team's mark “inferred”.")
+            else:
+                verb = "has its" if n == 1 else "have their"
+                lines.append(f"{n:,} of the {total:,} {verb} activity marked as inferred by the data-entry team.")
+    return lines
+
+
+def find_how(spec: Any) -> dict[str, Any]:
+    """How this was found (12.4): what is counted; the steps with their counts,
+    and each condition's count on its own; other spellings left out, with what
+    each would add; near misses as questions of their own; what rests on
+    attribution or on the data-entry team's mark; the spellings a word matched;
+    and the query that ran."""
+    normal = find_normalize(spec)
+    connection = open_db()
+    try:
+        left_out = _find_left_out(connection, normal, find_lookups(connection, [normal]))
+    finally:
+        connection.close()
+    near = _find_near_misses(normal)
+    built = _find_build_all([normal] + near + [entry["spec"] for entry in left_out])
+    query = built[0]
+    if isinstance(query, HTTPException):
+        raise query
+    statements: list[tuple[str, list[Any]]] = []
+    for step in query["steps"]:
+        statements.append((step["sql"], step["params"]))
+        if "alone_sql" in step:
+            statements.append((step["alone_sql"], step["alone_params"]))
+    others = [q for q in built[1:] if not isinstance(q, HTTPException)]
+    statements += [(q["total_sql"], q["total_params"]) for q in others]
+    statements += [(item["sql"], item["params"]) for item in query["inference"]]
+    results = iter(_find_rows(statements))
+
+    steps = []
+    for step in query["steps"]:
+        out = {"reading": step["reading"], "count": int(next(results)[0][0] or 0)}
+        if "alone_sql" in step:
+            out["alone"] = int(next(results)[0][0] or 0)
+        steps.append(out)
+    total = steps[-1]["count"]
+    others_total = {id(q): int(next(results)[0][0] or 0) for q in others}
+    near_misses = [
+        {"sentence": q["sentence"], "count": others_total[id(q)], "spec": q["spec"]}
+        for q in built[1: 1 + len(near)]
+        if not isinstance(q, HTTPException) and others_total[id(q)]
+    ]
+    spellings = [
+        {"chosen": entry["chosen"], "name": entry["name"], "contracts": entry["contracts"], "adds": others_total[id(q)] - total}
+        for entry, q in zip(left_out, built[1 + len(near):])
+        if not isinstance(q, HTTPException)
+    ]
+    inference = _find_inference(query, [next(results) for _ in query["inference"]], total)
+
+    counted = ["Contracts, each counted once however many of its partners match."]
+    if normal["partners"]:
+        counted.append("A partner is one person's appearance on one contract, as entered.")
+    if query["searched"]:
+        counted.append(FIND_PARTNER_CONDITIONS["word"]["note"])
+    return {
+        "counted": counted,
+        "steps": steps,
+        "left_out": spellings,
+        "near_misses": near_misses,
+        "inference": inference,
+        "searched": query["searched"],
+        "sql": query["list_sql"],
+        "params": query["list_params"],
+    }
+
+
+class FindRequest(BaseModel):
+    spec: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.get("/api/analysis/find/registry")
+def analysis_find_registry() -> dict[str, Any]:
+    return find_registry()
+
+
+@app.post("/api/analysis/find")
+def analysis_find(payload: FindRequest) -> dict[str, Any]:
+    query = find_prepare(payload.spec)
+    counts, undated = _find_counts(query)
+    listing = run_readonly_sql(query["list_sql"], tuple(query["list_params"]))
+    return {
+        **listing,
+        "labels": query["labels"],
+        "sentence": query["sentence"],
+        "answer": find_answer(query, counts, undated),
+        "total": int(counts.get("total") or 0),
+        "names": query["names"],
+        "groupings": find_groupings(query),
+        "sql": query["list_sql"],
+        "params": query["list_params"],
+    }
+
+
+@app.post("/api/analysis/find/how")
+def analysis_find_how(payload: FindRequest) -> dict[str, Any]:
+    return find_how(payload.spec)
+
+
+class FindCounts(BaseModel):
+    specs: list[Any] = Field(default_factory=list)
+
+
+FIND_MAX_COUNTS = 40  # questions counted in one request (a picker's values)
+
+
+@app.post("/api/analysis/find/counts")
+def analysis_find_counts(payload: FindCounts) -> dict[str, Any]:
+    """How many contracts each of several questions finds: the counts inside the
+    pickers, a value in this question and in the corpus, and the same partner
+    against another (12.2), each with its sentence in parts. A question that does
+    not fit counts as null."""
+    if len(payload.specs) > FIND_MAX_COUNTS:
+        raise HTTPException(status_code=400, detail=f"Up to {FIND_MAX_COUNTS} questions are counted at once.")
+    built = _find_build_all(payload.specs)
+    ready = [q for q in built if not isinstance(q, HTTPException)]
+    totals = iter(_find_rows([(q["total_sql"], q["total_params"]) for q in ready]))
+    return {
+        "counts": [
+            None if isinstance(q, HTTPException)
+            else {"total": int(next(totals)[0][0] or 0), "parts": [s["reading"] for s in q["steps"][1:]]}
+            for q in built
+        ]
+    }
+
+
+class FindExport(BaseModel):
+    spec: dict[str, Any] = Field(default_factory=dict)
+    link: str = ""
+
+
+@app.post("/api/analysis/find/export")
+def analysis_find_export(payload: FindExport) -> StreamingResponse:
+    """Every row of the List, opening with the question, its answer, the date
+    and the link that reopens it (12.4)."""
+    query = find_prepare(payload.spec)
+    counts, undated = _find_counts(query)
+    link = payload.link.strip()
+    if not re.fullmatch(r"https?://[^\s]{1,4000}", link):
+        link = ""
+    today = datetime.now(timezone.utc)
+    downloaded = f"Downloaded on {today.day} {today:%B %Y}" + (f" from {link}" if link else "")
+    preamble = [[query["sentence"]], [" ".join(find_answer(query, counts, undated))], [downloaded]]
+    return export_readonly_csv(query["list_sql"], tuple(query["list_params"]), preamble=preamble, labels=query["labels"])
+
+
+class FindCountRequest(BaseModel):
+    spec: dict[str, Any] = Field(default_factory=dict)
+    by: str = "decade"
+    by2: str | None = None
+
+
+def _find_view(run: Any) -> Any:
+    connection = _readonly_connection()
+    try:
+        return run(connection)
+    except sqlite3.Error as exc:
+        raise _sql_error(exc)
+    finally:
+        connection.close()
+
+
+@app.post("/api/analysis/find/count")
+def analysis_find_count(payload: FindCountRequest) -> dict[str, Any]:
+    """Count (12.3): the set grouped once or twice, with each row's and cell's
+    contracts, so every cell opens its contracts in the List."""
+    query = find_prepare(payload.spec)
+    return _find_view(lambda connection: find_count(connection, query, payload.by, payload.by2 or None))
+
+
+class FindTimeRequest(BaseModel):
+    spec: dict[str, Any] = Field(default_factory=dict)
+    period: str = "decade"
+    split: str | None = None
+    beside: list[Any] = Field(default_factory=list)
+
+
+@app.post("/api/analysis/find/time")
+def analysis_find_time(payload: FindTimeRequest) -> dict[str, Any]:
+    """Over time and Compare (12.3): counts per period on the shared axis, for
+    the question, split by a grouping, or beside the same question with one chip
+    changed, each series with its bases."""
+    if len(payload.beside) > FIND_MAX_BESIDE:
+        raise HTTPException(status_code=400, detail=f"Up to {FIND_MAX_BESIDE} questions can be set beside this one.")
+    queries = _find_build_all([payload.spec] + list(payload.beside))
+    for query in queries:
+        if isinstance(query, HTTPException):
+            raise query
+    names: dict[str, dict[str, str]] = {}
+    for query in queries:
+        for kind, named in query["names"].items():
+            names.setdefault(kind, {}).update(named)
+    return {**_find_view(lambda connection: find_time(connection, queries, payload.period, payload.split or None)), "names": names}
+
+
+@app.get("/api/analysis/find/values")
+def analysis_find_values(kind: str, q: str = "") -> dict[str, Any]:
+    """A picker's values with their counts in the corpus (find_values); for a
+    word, the word itself with the contracts it finds and the stored spellings it
+    matches. The counts within this question come from /find/counts."""
+    if kind == "word":
+        word = q.strip()
+        if len(word) > FIND_MAX_WORD or not _FIND_WORD.fullmatch(word):
+            return {"values": []}
+        query = find_prepare({"partners": [{"quantifier": "any", "conditions": [{"kind": "word", "values": [word]}]}]})
+        total = int(_find_rows([(query["total_sql"], query["total_params"])])[0][0][0] or 0)
+        found = query["searched"][0]
+        return {"values": [{"value": word, "name": word, "contracts": total, "inferred": 0,
+                            "titles": found["titles"], "professions": found["professions"]}]}
+    connection = open_db()
+    try:
+        return {"values": find_values(connection, kind, q, limit=50 if kind == "register" else 12)}
+    finally:
+        connection.close()
 
 
 @app.get("/api/db/record/{table}/{record_id}")

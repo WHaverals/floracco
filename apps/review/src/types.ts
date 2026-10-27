@@ -649,6 +649,110 @@ export type AnalysisResult = {
   total_more_than?: number | null;
 };
 
+/** One condition kind of the Find pane, with its words (find_registry): a kind
+ * with `choices` is read as the choice; one with `values` as its label and the
+ * names of the values chosen in its picker; `_not` readings are "is not". */
+export type FindKind = {
+  kind: string;
+  menu: string;
+  label?: string;
+  label_not?: string;
+  values?: string;
+  pick?: string;
+  none?: string | null;
+  note?: string | null;
+  choices?: { key: string; reading: string; reading_not: string }[];
+};
+
+/** The Find pane's condition kinds and their readings (find_registry). */
+export type FindRegistry = {
+  unit: string;
+  rule: string;
+  contract_conditions: FindKind[];
+  quantifiers: { key: "any" | "no" | "every"; reading: string; later: string }[];
+  same_or_another: string;
+  placements: { same: string; another: string };
+  partner_conditions: FindKind[];
+};
+
+/** A Find question's answer and List (POST /api/analysis/find). */
+export type FindResult = AnalysisResult & {
+  /** The column headers in words, in the order of `columns`. */
+  labels: string[];
+  sentence: string;
+  /** The answer line, sentence by sentence. */
+  answer: string[];
+  total: number;
+  /** The stored name of each value the question uses, by kind of value and value. */
+  names: Record<string, Record<string, string>>;
+  /** The groupings this question can be counted or split by. */
+  groupings: FindGroup[];
+  sql: string;
+  params: (string | number)[];
+};
+
+export type FindGroup = { key: string; label: string };
+
+/** Count (POST /api/analysis/find/count): each row, column and cell with its contracts. */
+export type FindCountResult = {
+  total: number;
+  by: FindGroup;
+  by2?: FindGroup;
+  rows: { value: number | string | null; name: string; ids: number[]; cells?: { ids: number[] }[] }[];
+  columns?: { value: number | string | null; name: string; ids: number[] }[];
+  notes: string[];
+};
+
+/** One series over time; `bases` are its question's earlier steps, period by period. */
+export type FindSeries = {
+  label: string;
+  sentence?: string;
+  counts: number[];
+  undated: number;
+  total: number;
+  bases: { label: string; counts: number[] }[];
+  parts?: { label: string; counts: number[] }[];
+};
+
+/** Over time and Compare (POST /api/analysis/find/time). */
+export type FindTimeResult = {
+  period: "decade" | "half";
+  width: number;
+  periods: number[];
+  partial: { first?: string; last?: string };
+  series: FindSeries[];
+  notes: string[];
+  /** The stored names of the values the questions use (beside ones included). */
+  names: Record<string, Record<string, string>>;
+};
+
+/** A value a Find picker offers (GET /api/analysis/find/values); `value` null
+ * is "not recorded". `contracts` is the count in the corpus. */
+export type FindValue = {
+  value: number | string | null;
+  name: string;
+  contracts: number;
+  inferred: number;
+  titles?: string[];
+  professions?: string[];
+};
+
+/** How many contracts a question finds, with its sentence in parts; null when
+ * the question does not fit (POST /api/analysis/find/counts). */
+export type FindCount = { total: number; parts: string[] } | null;
+
+/** How this was found (POST /api/analysis/find/how, review 12.4). */
+export type FindHow = {
+  counted: string[];
+  steps: { reading: string; count: number; alone?: number }[];
+  left_out: { chosen: string; name: string; contracts: number; adds: number }[];
+  near_misses: { sentence: string; count: number; spec: import("./utils/findSpec").FindSpec }[];
+  inference: string[];
+  searched: { word: string; titles: string[]; professions: string[] }[];
+  sql: string;
+  params: (string | number)[];
+};
+
 export type DbFacets = {
   registers: { folder: string; label: string; count: number }[];
   year_histogram: { decade: number; count: number }[];

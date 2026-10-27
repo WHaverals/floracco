@@ -3499,6 +3499,589 @@ progress {
   margin: 10px 0 0;
 }
 
+/* Find (Analysis): the question as a sentence of chips, the answer, the List. */
+.an-result.find-pane {
+  max-width: 1180px;
+}
+
+.find-sentence {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.find-row {
+  align-items: center;
+  color: #4a3f33;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.95rem;
+  gap: 8px;
+}
+
+.find-line {
+  border-left: 2px solid #e3d3ba;
+  margin-left: 14px;
+  padding-left: 12px;
+}
+
+.find-line > select,
+.find-chip select {
+  background: #fffaf3;
+  border: 1px solid #d8c7ac;
+  border-radius: 8px;
+  color: #2e2620;
+  font-size: 0.9rem;
+  max-width: 100%;
+  padding: 5px 8px;
+}
+
+.find-unit {
+  font-weight: 700;
+}
+
+.find-chip {
+  flex-wrap: wrap;
+  position: relative;
+}
+
+.find-chip input {
+  max-width: 96px;
+}
+
+.find-token-group {
+  max-width: 100%;
+}
+
+.find-chip-partner {
+  flex-wrap: nowrap;
+  max-width: 100%;
+}
+
+.find-chip-partner select {
+  min-width: 0;
+}
+
+.find-token,
+.find-token-group {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.find-token {
+  font-weight: 600;
+}
+
+.find-or {
+  color: #7e5c44;
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+.find-picker {
+  display: inline-block;
+  position: relative;
+}
+
+.find-picker input {
+  max-width: 150px;
+}
+
+.find-suggest,
+.find-menu {
+  background: #fffaf3;
+  border: 1px solid #d8c7ac;
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(46, 38, 32, 0.12);
+  display: flex;
+  flex-direction: column;
+  left: 0;
+  min-width: 320px;
+  padding: 4px;
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 20;
+}
+
+.find-suggest-item,
+.find-menu-item {
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  color: #2e2620;
+  cursor: pointer;
+  display: flex;
+  font-size: 0.86rem;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.find-suggest-item:hover,
+.find-menu-item:hover {
+  background: #f5ece0;
+}
+
+.find-suggest-note {
+  font-size: 0.84rem;
+  padding: 6px 8px;
+}
+
+.find-menu-wrap {
+  display: inline-block;
+  position: relative;
+}
+
+.find-menu-section {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0;
+}
+
+.find-menu-title {
+  color: #7e5c44;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 6px 8px 2px;
+  text-transform: uppercase;
+}
+
+.find-rule {
+  font-size: 0.8rem;
+}
+
+.find-answer {
+  color: #2e2620;
+  font-size: 0.98rem;
+  line-height: 1.5;
+  margin: 0 0 10px;
+  max-width: 720px;
+}
+
+.find-answer-wrap.is-updating .find-table {
+  opacity: 0.55;
+}
+
+.find-sort {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.find-table td {
+  max-width: 320px;
+}
+
+.find-table td:nth-child(3) {
+  min-width: 200px;
+}
+
+/* Find, step 2: menus and pickers with two counts per value, "about which
+ * partner?", and How this was found beside the List. */
+.find-choice {
+  background: #fffaf3;
+  border: 1px solid #d8c7ac;
+  border-radius: 8px;
+  color: #2e2620;
+  cursor: pointer;
+  font-size: 0.9rem;
+  max-width: 100%;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.find-choice:hover {
+  background: #f5ece0;
+}
+
+.find-caret {
+  color: #7e5c44;
+  font-size: 0.75rem;
+}
+
+.find-menu.find-counted,
+.find-suggest.find-counted {
+  max-height: 420px;
+  max-width: min(640px, 92vw);
+  min-width: 420px;
+  overflow-y: auto;
+}
+
+.find-count-head,
+.find-counted-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 6.5em 6.5em;
+}
+
+.find-count-head {
+  color: #7e5c44;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 6px 8px 2px;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.find-count {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.find-menu-item.is-current {
+  background: #f5ece0;
+  font-weight: 600;
+}
+
+.find-spellings {
+  display: block;
+  font-size: 0.78rem;
+  margin-top: 2px;
+}
+
+.find-staged {
+  border: 1px dashed #c2a878;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-left: 14px;
+  padding: 10px 12px;
+}
+
+.find-staged-title {
+  color: #7e5c44;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.find-placements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.find-placement {
+  align-items: baseline;
+  background: #fffaf3;
+  border: 1px solid #d8c7ac;
+  border-radius: 10px;
+  color: #2e2620;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.86rem;
+  gap: 2px;
+  max-width: 420px;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.find-placement:hover:not(:disabled) {
+  background: #f5ece0;
+}
+
+.find-placement:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.find-body {
+  align-items: start;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+
+.find-body-list {
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .find-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.find-how {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 10px;
+  color: #2e2620;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  padding: 12px 14px;
+}
+
+.find-how.is-updating {
+  opacity: 0.55;
+}
+
+.find-how h3 {
+  font-size: 0.98rem;
+  margin: 0 0 8px;
+}
+
+.find-how h4 {
+  color: #7e5c44;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  margin: 12px 0 4px;
+  text-transform: uppercase;
+}
+
+.find-how p {
+  margin: 0 0 6px;
+}
+
+.find-steps {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.find-steps li {
+  margin-bottom: 6px;
+}
+
+.find-steps li > strong {
+  font-variant-numeric: tabular-nums;
+  margin-left: 6px;
+}
+
+.find-steps li > .muted {
+  display: block;
+  font-size: 0.8rem;
+}
+
+.find-query {
+  margin-top: 12px;
+}
+
+.find-query summary {
+  color: #7e5c44;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.find-query .an-sql {
+  font-size: 0.72rem;
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* Find, step 3: the views over the set (List, Count, Over time, Compare). */
+.find-tabs-row {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.find-tabs {
+  border: 1px solid #d8c7ac;
+  border-radius: 999px;
+  display: inline-flex;
+  overflow: hidden;
+}
+
+.find-tab {
+  background: #fffaf3;
+  border: none;
+  border-right: 1px solid #e3d3ba;
+  color: #5e5248;
+  cursor: pointer;
+  font-size: 0.86rem;
+  padding: 6px 14px;
+}
+
+.find-tab:last-child {
+  border-right: none;
+}
+
+.find-tab.is-active {
+  background: #4a3f33;
+  color: #fffaf3;
+}
+
+.find-tab:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.find-view.is-updating {
+  opacity: 0.55;
+}
+
+.find-view-controls {
+  align-items: center;
+  color: #4a3f33;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+  gap: 10px 18px;
+  margin-bottom: 12px;
+}
+
+.find-view-controls select {
+  background: #fffaf3;
+  border: 1px solid #d8c7ac;
+  border-radius: 8px;
+  color: #2e2620;
+  font-size: 0.88rem;
+  max-width: 340px;
+  padding: 4px 8px;
+}
+
+.find-segmented {
+  border: 1px solid #d8c7ac;
+  border-radius: 8px;
+  display: inline-flex;
+  overflow: hidden;
+}
+
+.find-segmented button {
+  background: #fffaf3;
+  border: none;
+  border-right: 1px solid #e3d3ba;
+  color: #4a3f33;
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 4px 10px;
+}
+
+.find-segmented button:last-child {
+  border-right: none;
+}
+
+.find-segmented button.is-active {
+  background: #efe3d1;
+  font-weight: 600;
+}
+
+.find-count-table td.num,
+.find-count-table th.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.find-count-table tr.is-aside td:first-child {
+  color: #7d7064;
+  font-style: italic;
+}
+
+.find-count-table .find-total-row td {
+  border-top: 1px solid #d8c7ac;
+  font-weight: 600;
+}
+
+.find-cell {
+  background: none;
+  border: none;
+  color: #6d4a2c;
+  cursor: pointer;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+  text-decoration: underline;
+  text-decoration-color: #d8c7ac;
+}
+
+.find-cell:hover:not(:disabled) {
+  text-decoration-color: currentColor;
+}
+
+.find-cell:disabled {
+  color: #b5a998;
+  cursor: default;
+  text-decoration: none;
+}
+
+.find-share {
+  background: #f3ebdf;
+  border-radius: 3px;
+  display: inline-block;
+  height: 10px;
+  margin-right: 8px;
+  vertical-align: middle;
+  width: 160px;
+}
+
+.find-share-bar {
+  background: #2a78d6;
+  border-radius: 3px;
+  display: block;
+  height: 100%;
+}
+
+.find-share-text {
+  font-variant-numeric: tabular-nums;
+}
+
+.find-cross th {
+  vertical-align: bottom;
+}
+
+.find-figure {
+  margin: 0 0 8px;
+}
+
+.find-figure-frame {
+  border: 1px solid #eadfcc;
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+}
+
+.find-figure-frame svg {
+  display: block;
+}
+
+.find-tip {
+  pointer-events: none;
+  top: 18%;
+}
+
+.find-tip-key {
+  border-radius: 1px;
+  display: inline-block;
+  height: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+  width: 14px;
+}
+
+.find-figure-tools {
+  margin-top: 8px;
+}
+
+.find-figures summary {
+  color: #7e5c44;
+  cursor: pointer;
+  font-size: 0.85rem;
+  margin: 6px 0;
+}
+
+.find-beside {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.find-opened {
+  background: #f5ece0;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+}
+
 /* ---- Browse filters ---- */
 .db-filter-bar {
   align-items: center;
@@ -10697,4 +11280,21 @@ a.db-history-subject:hover {
 .worklist-more:hover {
   background: #2a221b;
   color: #f6f1ea;
+}
+
+.find-tip .muted {
+  color: #cbbda8;
+}
+
+.find-cross caption {
+  caption-side: top;
+  color: #5e5248;
+  font-size: 0.85rem;
+  padding-bottom: 6px;
+  text-align: left;
+}
+
+.find-cross th:not(:first-child) {
+  max-width: 160px;
+  white-space: normal;
 }

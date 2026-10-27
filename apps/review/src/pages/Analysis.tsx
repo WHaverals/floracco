@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import CopyLinkButton from "../components/CopyLinkButton";
+import FindPane from "../components/FindPane";
 import { downloadAnalysisCsv, loadAnalysisLibrary, runAnalysisBuild, runAnalysisLibrary } from "../api";
 import type { AnalysisBuildSpec } from "../api";
 import { useLatest } from "../utils/latest";
@@ -490,7 +491,8 @@ export default function Analysis() {
   const navigate = useNavigate();
   const location = useLocation();
   const { view } = useParams<{ view?: string }>();
-  const mode: "library" | "builder" | "console" = view === "build" ? "builder" : view === "console" ? "console" : "library";
+  const mode: "find" | "library" | "builder" | "console" =
+    view === "find" ? "find" : view === "build" ? "builder" : view === "console" ? "console" : "library";
   const selectedId = mode === "library" ? (view ?? null) : null;
 
   // library state
@@ -533,6 +535,10 @@ export default function Analysis() {
   // Where each tab was, so switching tabs returns there (and the address follows).
   const builderWritten = useRef<string | null>(null);
   const consoleWritten = useRef<string | null>(null);
+  const findWritten = useRef<string | null>(null);
+  const rememberFind = useCallback((search: string) => {
+    findWritten.current = search;
+  }, []);
   const lastLibrary = useRef<string | null>(null);
   useEffect(() => {
     if (selectedId) lastLibrary.current = selectedId;
@@ -697,6 +703,13 @@ export default function Analysis() {
           <div className="db-tabs an-mode">
             <button
               type="button"
+              className={mode === "find" ? "db-tab is-active" : "db-tab"}
+              onClick={() => mode !== "find" && navigate(`/analysis/find${findWritten.current ? `?${findWritten.current}` : ""}`)}
+            >
+              Find
+            </button>
+            <button
+              type="button"
               className={mode === "library" ? "db-tab is-active" : "db-tab"}
               onClick={() => mode !== "library" && navigate(lastLibrary.current ? `/analysis/${lastLibrary.current}` : "/analysis")}
             >
@@ -756,6 +769,12 @@ export default function Analysis() {
                 <p className="db-empty muted">Loading…</p>
               ))}
           </div>
+        ) : mode === "find" ? (
+          <div className="an-library">
+            <p className="db-empty muted" style={{ padding: "8px 10px" }}>
+              Find contracts by place, years and partners, then read the list or download it.
+            </p>
+          </div>
         ) : mode === "builder" ? (
           <div className="an-library">
             <p className="db-empty muted" style={{ padding: "8px 10px" }}>
@@ -772,7 +791,9 @@ export default function Analysis() {
       </aside>
 
       <section className="db-detail">
-        {mode === "library" ? (
+        {mode === "find" ? (
+          <FindPane onAddress={rememberFind} />
+        ) : mode === "library" ? (
           selectedId && !selected ? (
             <div className="an-empty">
               <p className="eyebrow">Analysis</p>
@@ -798,7 +819,8 @@ export default function Analysis() {
               <p className="eyebrow">Analysis</p>
               <h2>Ask a question of the corpus</h2>
               <p className="muted an-note">
-                Pick a query from the library, or compose your own under <strong>Build a query</strong>.
+                Find contracts by place, years and partners under <strong>Find</strong>, pick a query from the
+                library, or compose your own under <strong>Build a query</strong>.
               </p>
             </div>
           ) : (
