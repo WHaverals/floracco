@@ -224,6 +224,8 @@ export function decidePersonLinkage(
     expected_status: import("./types").PersonLinkagePreview["status"];
     expected_event_id: string | null;
     review_mode?: "standard" | "blind_labeling";
+    /** With flag_split only: which acts are whose (see PersonSeamInput). */
+    seam?: import("./types").PersonSeamInput;
   },
 ): Promise<{ ok: boolean; event_id: string; link_ids: string[] }> {
   return request(`/api/person-linkage/cases/${encodeURIComponent(caseId)}/decision`, {

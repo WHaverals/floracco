@@ -7517,6 +7517,378 @@ a.db-history-subject:hover {
   text-decoration: none;
 }
 
+/* ---- Marking which acts are whose (one-entry case) ----------------------
+   Position carries the meaning (three lanes, a column of words); the rust of
+   the flag chip marks "someone else", amber "unsure", ink "this entry". */
+.pl-seam {
+  display: grid;
+  gap: 14px;
+}
+
+.pl-seam-entry {
+  background: #fffaf3;
+  border: 1px solid #ece1cb;
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+
+.pl-seam-entry h2 {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 1.25rem;
+  font-weight: 500;
+  margin: 2px 0 4px;
+}
+
+.pl-seam-entry .muted {
+  margin: 0;
+}
+
+.pl-seam-definition {
+  color: #6b5c4d;
+  font-size: 0.8rem;
+  margin: 6px 0 0;
+}
+
+.pl-seam-ribbon .pl-career-summary {
+  flex-wrap: wrap;
+}
+
+.pl-seam-band rect {
+  fill: #d6aa7d;
+  opacity: 0.22;
+}
+
+.pl-seam-band text {
+  fill: #82442f;
+  font-size: 10px;
+}
+
+.pl-seam-lane.is-other .pl-seam-point {
+  fill: #a95742;
+}
+
+.pl-seam-lane.is-unsure .pl-seam-point {
+  fill: #b48a3c;
+}
+
+.pl-seam-unmarked {
+  fill: #fffaf3;
+  stroke: #9f9181;
+  stroke-dasharray: 2 2;
+  stroke-width: 1.5;
+}
+
+.pl-career-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.pl-seam-legend-band {
+  background: rgba(214, 170, 125, 0.4);
+  display: inline-block;
+  height: 10px;
+  margin-right: 5px;
+  width: 14px;
+}
+
+.pl-seam-observed {
+  background: #f8f1e5;
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.pl-seam-observed ul {
+  display: grid;
+  gap: 3px;
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+.pl-seam-observed li {
+  color: #4a3d31;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.pl-seam-table {
+  background: #fffaf3;
+  border: 1px solid #ece1cb;
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+
+.pl-seam-table .pl-section-head h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.pl-seam-other-entry {
+  align-items: center;
+  color: #6b5c4d;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  gap: 6px;
+}
+
+.pl-seam-other-entry input {
+  border: 1px solid #d9cbb5;
+  border-radius: 6px;
+  font: inherit;
+  padding: 3px 6px;
+  width: 70px;
+}
+
+.pl-seam-other-entry small {
+  color: #9f9181;
+}
+
+.pl-seam-aids {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 2px;
+}
+
+.pl-seam-aids-label,
+.pl-seam-aids-mark {
+  color: #6b5c4d;
+  font-size: 0.74rem;
+  font-weight: 650;
+}
+
+.pl-seam-aids > button,
+.pl-seam-aids select {
+  background: #f4ebdc;
+  border: 1px solid #d9cbb5;
+  border-radius: 999px;
+  color: #3d3128;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.74rem;
+  padding: 4px 11px;
+}
+
+.pl-seam-aids > button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.pl-seam-aids-mark {
+  align-items: center;
+  border-left: 1px solid #e3d6c2;
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 6px;
+  padding-left: 10px;
+}
+
+.pl-seam-aids-mark small {
+  color: #9f9181;
+  font-weight: 500;
+}
+
+.pl-seam-side,
+.pl-seam-choice button {
+  background: #fff;
+  border: 1px solid #d9cbb5;
+  border-radius: 999px;
+  color: #3d3128;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+  padding: 3px 9px;
+}
+
+.pl-seam-side:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.pl-seam-side.is-this,
+.pl-seam-choice button.is-this.is-on {
+  background: #2e2620;
+  border-color: #2e2620;
+  color: #fff;
+}
+
+.pl-seam-side.is-other,
+.pl-seam-choice button.is-other.is-on {
+  background: #a95742;
+  border-color: #a95742;
+  color: #fff;
+}
+
+.pl-seam-side.is-unsure,
+.pl-seam-choice button.is-unsure.is-on {
+  background: #d9b56a;
+  border-color: #d9b56a;
+  color: #3d2f12;
+}
+
+.pl-seam-aids-note {
+  font-size: 0.74rem;
+  margin: 4px 0 8px;
+}
+
+.pl-seam-choice {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.pl-seam-grid td,
+.pl-seam-grid th {
+  vertical-align: top;
+}
+
+.pl-seam-grid td small {
+  color: #9f9181;
+  display: block;
+  font-size: 0.68rem;
+}
+
+.pl-seam-row td:first-child {
+  border-left: 3px solid transparent;
+}
+
+.pl-seam-row.is-other td:first-child {
+  border-left-color: #a95742;
+}
+
+.pl-seam-row.is-unsure td:first-child {
+  border-left-color: #d9b56a;
+}
+
+.pl-seam-row.is-this td:first-child {
+  border-left-color: #2e2620;
+}
+
+.pl-seam-row.is-unmarked td:first-child {
+  border-left-color: #c9bba8;
+  border-left-style: dashed;
+}
+
+.pl-seam-row.is-selected td {
+  background: #f6ecd9;
+}
+
+.pl-seam-col-tick {
+  width: 24px;
+}
+
+.pl-seam-col-date a {
+  white-space: nowrap;
+}
+
+.pl-seam-col-firm span {
+  display: block;
+}
+
+.pl-seam-named {
+  color: #5c4a36;
+  display: block;
+  font-size: 0.74rem;
+  margin-top: 2px;
+}
+
+.pl-seam-named.is-empty {
+  color: #a99a88;
+}
+
+.pl-seam-word {
+  font-weight: 650;
+}
+
+.pl-seam-word.is-other {
+  color: #a95742;
+}
+
+.pl-seam-word.is-unsure {
+  color: #8a6a1c;
+}
+
+.pl-seam-word.is-unmarked {
+  color: #9f9181;
+  font-weight: 500;
+}
+
+.pl-seam-drift {
+  color: #8a6a1c;
+}
+
+.pl-seam-col-notes {
+  color: #6b5c4d;
+  font-size: 0.76rem;
+}
+
+.pl-seam-summary-row td {
+  background: #fdf7ec;
+  padding: 8px 12px 10px;
+}
+
+.pl-seam-summary-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+.pl-seam-footnote {
+  font-size: 0.72rem;
+  margin: 10px 0 0;
+}
+
+/* The dark bar of the marking mode: the count, the note and the two ways out. */
+.pl-seam-bar .pl-seam-bar-inner {
+  display: grid;
+  gap: 8px;
+}
+
+.pl-seam-bar-count {
+  display: grid;
+  gap: 2px;
+}
+
+.pl-seam-bar-count span {
+  color: #d6aa7d;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pl-seam-bar-count strong {
+  color: #fff;
+  font-size: 0.92rem;
+}
+
+.pl-seam-bar-count small {
+  color: #c7b8a6;
+  font-size: 0.7rem;
+}
+
+.pl-back-link {
+  color: #6b5c4d;
+  font-size: 0.76rem;
+  text-decoration: none;
+}
+
+.pl-back-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 1100px) {
+  .pl-seam-grid th:nth-child(6),
+  .pl-seam-grid td:nth-child(6),
+  .pl-seam-grid th:nth-child(7),
+  .pl-seam-grid td:nth-child(7) {
+    display: none;
+  }
+}
+
 /* Third line of a Decided or Flagged row: initials · date · the note. */
 .pl-case .pl-case-note {
   color: #a99a88;

@@ -170,14 +170,57 @@ export type PersonIdentityHint = {
   split_flagged?: boolean;
 };
 
+/** A side in "which acts are whose": the entry, someone else, or not sure. */
+export type PersonSeamSide = "this" | "other" | "unsure";
+
+/** What the page posts with a flag: one mark per live appearance. */
+export type PersonSeamInput = {
+  version?: number;
+  assignments: Array<{ investor_id: number; side: PersonSeamSide }>;
+  other_entry_id?: number | null;
+  revises_event_id?: string | null;
+};
+
+/** The standing marks of a split case, read against its live appearances. */
+export type PersonSeamView = {
+  version: number;
+  event_id: string;
+  root_event_id: string;
+  assignments: Array<{
+    investor_id: number;
+    contract_id: number | null;
+    registration_date: string | null;
+    side: PersonSeamSide | "unmarked";
+  }>;
+  counts: { this: number; other: number; unsure: number; unmarked: number; hidden: number };
+  unmarked: number[];
+  hidden: number[];
+  band: [number, number] | null;
+  other_entry_id: number | null;
+};
+
 export type PersonSplitFlag = {
   person_id: number;
   case_id: string;
-  /** The flag event; lifting the flag is a reopen posted against it. */
+  /** The latest flag event; lifting the flag is a reopen posted against it. */
   event_id: string;
+  /** The first flag's author, date and note (kept across changes of marks). */
   created_by: string;
   created_at: string;
   rationale: string | null;
+  root_event_id?: string;
+  /** Set when the marks were changed after the first flag. */
+  changed_by?: string | null;
+  changed_at?: string | null;
+  change_note?: string | null;
+  /** Side counts of the standing marks, or null when the flag carries none. */
+  marks?: {
+    this: number;
+    other: number;
+    unsure: number;
+    total: number;
+    other_entry_id: number | null;
+  } | null;
 };
 
 export type DbSearchResponse = {
@@ -387,7 +430,14 @@ export type PersonAppearance = {
   residence?: string | null;
   origin?: string | null;
   title?: string | null;
+  father_mother_title?: string | null;
+  grandfather_title?: string | null;
+  husband_title?: string | null;
   economic_activity?: string | null;
+  /** 1 when the act was made through a proxy. */
+  via_proxy?: number | null;
+  /** The firm's name a stake is entered under, when it is not the person's own. */
+  stake_names?: string | null;
 };
 
 export type PersonLinkagePerson = {
@@ -507,6 +557,10 @@ export type PersonLinkageCase = {
   shared_contracts: PersonCaseContract[];
   /** Split cases only: the entry's own acts in date order, each with its summaries. */
   entry_sources?: PersonCaseContract[];
+  /** Split cases only: the standing marks, or null. */
+  seam?: PersonSeamView | null;
+  /** Split cases only: true while the open blind round holds the entry (no marking). */
+  marks_held_by_round?: boolean;
   business_context: {
     exact_firms: Array<{
       normalized_name: string;

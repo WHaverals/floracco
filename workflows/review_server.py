@@ -3701,14 +3701,194 @@ def _person_split_flag(
         matches,
         key=lambda item: (str(item.get("created_at") or ""), str(item.get("event_id") or "")),
     )
+    # A change of marks is a later flag_split event carrying the first
+    # flag's authorship as `seam.root`; the flag keeps the original flagger
+    # and note, and says who changed the marks last. `event_id` stays the
+    # latest event: it is what a lift (reopen) must name.
+    seam = _event_seam(event)
+    root = (seam or {}).get("root") or None
     return {
         "person_id": wanted,
         "case_id": str(event.get("case_id") or f"split:{wanted}"),
         "event_id": str(event.get("event_id") or ""),
-        "created_by": event.get("created_by") or "",
-        "created_at": event.get("created_at") or "",
-        "rationale": event.get("rationale") or "",
+        "created_by": (root or event).get("created_by") or "",
+        "created_at": (root or event).get("created_at") or "",
+        "rationale": (root or event).get("rationale") or "",
+        "root_event_id": str((root or event).get("event_id") or ""),
+        "changed_by": (event.get("created_by") or "") if root else None,
+        "changed_at": (event.get("created_at") or "") if root else None,
+        "change_note": (event.get("rationale") or "") if root else None,
+        "marks": _seam_counts(seam) if seam else None,
     }
+
+
+def _event_seam(event: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The marks stored with a flag_split event, if any."""
+    if not event:
+        return None
+    seam = (event.get("evidence_snapshot") or {}).get("seam")
+    return seam if isinstance(seam, dict) else None
+
+
+def _seam_counts(seam: dict[str, Any]) -> dict[str, Any]:
+    """Side counts from the stored marks alone; no database needed."""
+    counts: dict[str, Any] = {side: 0 for side in SEAM_SIDES}
+    for mark in seam.get("assignments") or []:
+        side = str(mark.get("side") or "")
+        if side in counts:
+            counts[side] += 1
+    counts["total"] = sum(counts[side] for side in SEAM_SIDES)
+    counts["other_entry_id"] = seam.get("other_entry_id")
+    return counts
+
+
+def _appearance_year(appearance: dict[str, Any]) -> int | None:
+    date = str(appearance.get("registration_date") or "")
+    if appearance.get("heirs_of") or not date or date == PLACEHOLDER_DATE:
+        return None
+    try:
+        return int(date[:4])
+    except ValueError:
+        return None
+
+
+def _person_seam_view(
+    person: dict[str, Any], event: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """The standing marks of one entry, read against its live appearances.
+
+    Every live appearance is listed with its side; counts, the band between
+    the two men (when their dated living acts separate in time) and drift —
+    appearances added since the marking (`unmarked`) or hidden since
+    (`hidden`) — are derived here, never stored.
+    """
+    if not event or event.get("action") != "flag_split":
+        return None
+    seam = _event_seam(event)
+    if not seam:
+        return None
+    marks = {
+        int(mark["investor_id"]): str(mark.get("side") or "unsure")
+        for mark in seam.get("assignments") or []
+        if mark.get("investor_id") is not None
+    }
+    live = {
+        int(appearance["investor_id"]): appearance
+        for appearance in person.get("appearances") or []
+    }
+    assignments: list[dict[str, Any]] = []
+    years: dict[str, list[int]] = {"this": [], "other": []}
+    counts: dict[str, int] = {side: 0 for side in SEAM_SIDES}
+    for investor_id, appearance in live.items():
+        side = marks.get(investor_id, "unmarked")
+        if side in counts:
+            counts[side] += 1
+        year = _appearance_year(appearance)
+        if side in years and year is not None:
+            years[side].append(year)
+        assignments.append(
+            {
+                "investor_id": investor_id,
+                "contract_id": appearance.get("contract_id"),
+                "registration_date": appearance.get("registration_date"),
+                "side": side,
+            }
+        )
+    assignments.sort(
+        key=lambda item: (
+            str(item["registration_date"] or "9999"),
+            int(item["contract_id"] or 0),
+            item["investor_id"],
+        )
+    )
+    hidden = sorted(set(marks) - set(live))
+    unmarked = sorted(set(live) - set(marks))
+    band: list[int] | None = None
+    if years["this"] and years["other"]:
+        if max(years["this"]) < min(years["other"]):
+            band = [max(years["this"]), min(years["other"])]
+        elif max(years["other"]) < min(years["this"]):
+            band = [max(years["other"]), min(years["this"])]
+    root = seam.get("root") or {}
+    return {
+        "version": seam.get("version", 1),
+        "event_id": str(event.get("event_id") or ""),
+        "root_event_id": str(root.get("event_id") or event.get("event_id") or ""),
+        "assignments": assignments,
+        "counts": {**counts, "unmarked": len(unmarked), "hidden": len(hidden)},
+        "unmarked": unmarked,
+        "hidden": hidden,
+        "band": band,
+        "other_entry_id": seam.get("other_entry_id"),
+    }
+
+
+def _person_ids_in_open_round(
+    run: dict[str, Any], latest: dict[str, dict[str, Any]]
+) -> set[int]:
+    """Entries that an open blind-round case still holds."""
+    ids: set[int] = set()
+    for case_id in _person_labeling_open_case_ids(run, latest):
+        for part in case_id.removeprefix("pair:").split(":"):
+            if part.isdigit():
+                ids.add(int(part))
+    return ids
+
+
+def _validate_seam(seam: PersonSeam, person_id: int) -> None:
+    """Marks must cover exactly the entry's live appearances, once each."""
+    for mark in seam.assignments:
+        if mark.side not in SEAM_SIDES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown mark '{mark.side}' on appearance #{mark.investor_id}.",
+            )
+    ids = [int(mark.investor_id) for mark in seam.assignments]
+    if len(set(ids)) != len(ids):
+        raise HTTPException(status_code=400, detail="An appearance is marked twice.")
+    connection = open_db()
+    try:
+        live = {
+            int(row["investor_id"])
+            for row in connection.execute(
+                "SELECT investor_id FROM investor WHERE person_id=? AND is_deleted=0",
+                (person_id,),
+            )
+        }
+        unknown = sorted(set(ids) - live)
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Appearance #{unknown[0]} is not a live appearance of entry "
+                    f"#{person_id}."
+                ),
+            )
+        missing = sorted(live - set(ids))
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Every appearance needs a mark; missing: "
+                    + ", ".join(f"#{value}" for value in missing)
+                    + "."
+                ),
+            )
+        if seam.other_entry_id is not None:
+            if int(seam.other_entry_id) == int(person_id):
+                raise HTTPException(
+                    status_code=400, detail="The other entry cannot be the entry itself."
+                )
+            row = connection.execute(
+                "SELECT is_deleted FROM person WHERE person_id=?", (seam.other_entry_id,)
+            ).fetchone()
+            if not row or row["is_deleted"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Entry #{seam.other_entry_id} is not in the database.",
+                )
+    finally:
+        connection.close()
 
 
 def _person_standing_split_flags(latest: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -4853,8 +5033,17 @@ def _person_card(connection: sqlite3.Connection, person_id: int) -> dict[str, An
             "unavailable": True,
         }
     data = dict(person)
+    # Two facts the marking screen shows per act, absent from the reduced
+    # schemas some tests build: whether the act was made through a proxy, and
+    # the firm's name a stake is entered under (Gherardi's bank).
+    proxy_column = "i.via_proxy" if "via_proxy" in table_columns(connection, "investor") else "0"
+    stake_column = (
+        "GROUP_CONCAT(DISTINCT inv.partnership_name)"
+        if "partnership_name" in table_columns(connection, "investment")
+        else "NULL"
+    )
     appearances = connection.execute(
-        """
+        f"""
         SELECT i.investor_id, i.contract_id, i.profession, i.heirs_of,
                c.registration_date, c.firm_name, c.folder,
                residence.place_name AS residence,
@@ -4864,7 +5053,9 @@ def _person_card(connection: sqlite3.Connection, person_id: int) -> dict[str, An
                grandfather_title.title_name AS grandfather_title,
                husband_title.title_name AS husband_title,
                activity.activity AS economic_activity,
-               GROUP_CONCAT(DISTINCT inv.type) AS roles
+               GROUP_CONCAT(DISTINCT inv.type) AS roles,
+               {proxy_column} AS via_proxy,
+               {stake_column} AS stake_names
         FROM investor i
         LEFT JOIN contract c ON c.contract_id=i.contract_id AND c.is_deleted=0
         LEFT JOIN place residence ON residence.place_id=i.place_of_residence
@@ -5285,6 +5476,13 @@ def _person_case_payload(case_id: str) -> dict[str, Any]:
             if flag
         ]
         split_flagged_person_ids = [int(flag["person_id"]) for flag in split_flags]
+        # One-entry case: the standing marks read against the live appearances,
+        # and whether the open blind round still holds the entry (then the
+        # screen offers no marking and the server refuses one).
+        seam_view = _person_seam_view(persons[0], latest.get(case_id)) if len(ids) == 1 else None
+        marks_held_by_round = (
+            ids[0] in _person_ids_in_open_round(run, latest) if len(ids) == 1 else False
+        )
     finally:
         clog.close()
     case_status = _person_case_status(
@@ -5348,6 +5546,9 @@ def _person_case_payload(case_id: str) -> dict[str, Any]:
         # Split cases only: the Word summaries of the entry's own acts, in
         # date order. Not part of `evidence_basis` (see _entry_word_sources).
         **({"entry_sources": entry_sources} if entry_sources is not None else {}),
+        # Split cases only: the standing marks, or null (see _person_seam_view),
+        # and whether marking is blocked by the open blind round.
+        **({"seam": seam_view, "marks_held_by_round": marks_held_by_round} if len(ids) == 1 else {}),
     }
 
 
@@ -5476,6 +5677,25 @@ def person_linkage_case(case_id: str) -> dict[str, Any]:
     return payload
 
 
+# Marking which acts are whose, on a flagged entry: one mark per live
+# appearance (investor row), stored inside the flag_split event's snapshot.
+# Scope: docs/person_linkage/seam_scope_v2_2026-10-26.md §5.
+SEAM_SIDES = ("this", "other", "unsure")
+SEAM_REVISION_REASON = "seam_revision"
+
+
+class PersonSeamMark(BaseModel):
+    investor_id: int
+    side: str
+
+
+class PersonSeam(BaseModel):
+    version: int = 1
+    assignments: list[PersonSeamMark]
+    other_entry_id: int | None = None
+    revises_event_id: str | None = None
+
+
 class PersonLinkageDecision(BaseModel):
     reviewer: str = Field(min_length=1)
     action: str
@@ -5486,6 +5706,7 @@ class PersonLinkageDecision(BaseModel):
     expected_status: str
     expected_event_id: str | None
     review_mode: str = "standard"
+    seam: PersonSeam | None = None
 
 
 def _validate_person_decision_scope(case: dict[str, Any], ids: list[int], action: str) -> None:
@@ -5556,18 +5777,66 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
             status_code=400,
             detail="Explain why the sources override the rule.",
         )
+    # Marks (which acts are whose) ride on a flag_split of the entry's own
+    # case. Changing standing marks is an explicit revision: the same action,
+    # with reason_code "seam_revision" naming the event it revises.
+    seam = action.seam
+    revising = (
+        action.action == "flag_split"
+        and seam is not None
+        and action.reason_code.strip() == SEAM_REVISION_REASON
+    )
+    if seam is not None and action.action != "flag_split":
+        raise HTTPException(status_code=400, detail="Marks go with a flag, not with this decision.")
+    if (
+        action.action == "flag_split"
+        and action.reason_code.strip() == SEAM_REVISION_REASON
+        and seam is None
+    ):
+        raise HTTPException(status_code=400, detail="A change of marks needs the marks.")
+    if seam is not None:
+        if len(action.person_ids) != 1:
+            raise HTTPException(status_code=400, detail="Marks belong to one entry.")
+        marked_person = int(action.person_ids[0])
+        if case_id != f"split:{marked_person}":
+            raise HTTPException(
+                status_code=400, detail="Mark the acts on the entry's own case."
+            )
+        if marked_person in _person_ids_in_open_round(case["run"], latest):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This entry is in the open Judge-blind round; marks can be made "
+                    "once it is judged."
+                ),
+            )
+        _validate_seam(seam, marked_person)
     if action.action == "flag_split" and case["status"] == "flag_split":
-        # Flagging an already-flagged entry used to fall through to the
-        # "case changed, reload" conflict below, which is false and alarming.
         prior = latest.get(case_id) or {}
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Already flagged by {prior.get('created_by') or 'a reviewer'} on "
-                f"{_plain_date(str(prior.get('created_at') or ''))}. "
-                "Open the entry to read or lift the flag."
-            ),
-        )
+        if revising:
+            if (
+                seam.revises_event_id != case["latest_event_id"]
+                or action.expected_event_id != case["latest_event_id"]
+                or action.expected_status != "flag_split"
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="The marks changed after you opened them. Reload before changing them.",
+                )
+        else:
+            # Flagging an already-flagged entry used to fall through to the
+            # "case changed, reload" conflict below, which is false and
+            # alarming. A plain re-flag can never replace standing marks.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Already flagged by {prior.get('created_by') or 'a reviewer'} on "
+                    f"{_plain_date(str(prior.get('created_at') or ''))}. "
+                    "Open the entry to read or lift the flag."
+                ),
+            )
+    elif revising:
+        raise HTTPException(status_code=400, detail="Nothing to change: this entry is not flagged.")
     if action.action != "bulk_rule_ack" and (
         action.expected_status != case["status"]
         or action.expected_event_id != case["latest_event_id"]
@@ -5581,7 +5850,7 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
         # case in a way that reopen can undo.
         if case["status"] not in {"defer", "flag_split"}:
             raise HTTPException(status_code=409, detail="Only a deferred or flagged case can be reopened.")
-    elif action.action != "bulk_rule_ack" and case["status"] != "open":
+    elif action.action != "bulk_rule_ack" and case["status"] != "open" and not revising:
         raise HTTPException(
             status_code=409,
             detail="This case already has a decision. Undo or reopen it before deciding again.",
@@ -5646,6 +5915,30 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
         "citations": citations,
         "labeling": labeling_metadata,
     }
+    if seam is not None:
+        # Outside `evidence_basis`, so the "evidence changed" check ignores it.
+        root = None
+        if revising:
+            prior = latest.get(case_id) or {}
+            root = (_event_seam(prior) or {}).get("root") or {
+                "event_id": str(prior.get("event_id") or ""),
+                "created_by": prior.get("created_by") or "",
+                "created_at": prior.get("created_at") or "",
+                "rationale": prior.get("rationale") or "",
+            }
+        snapshot["seam"] = {
+            "version": 1,
+            "assignments": sorted(
+                (
+                    {"investor_id": int(mark.investor_id), "side": mark.side}
+                    for mark in seam.assignments
+                ),
+                key=lambda mark: mark["investor_id"],
+            ),
+            "other_entry_id": seam.other_entry_id,
+            "revises_event_id": seam.revises_event_id if revising else None,
+            "root": root,
+        }
     clog = open_corrections()
     try:
         try:
@@ -8445,11 +8738,19 @@ def _person_split_flag_items(connection: sqlite3.Connection) -> list[dict[str, A
         if person_id not in names:
             continue
         note = str(flag["rationale"] or "").strip()
+        marks = flag.get("marks") or {}
+        marked = (
+            f" · {marks['other']} of {marks['total']} appearances marked as someone else's"
+            if marks
+            else ""
+        )
         items.append(
             {
-                # The event id in the key: a lifted and later re-flagged entry
-                # is a new item, so an old dismissal cannot hide it.
-                "key": f"person:{person_id}:person_split_flagged:{flag['event_id']}",
+                # The root flag's event id in the key: a lifted and later
+                # re-flagged entry is a new item, so an old dismissal cannot
+                # hide it, while a change of marks keeps the item (and its
+                # dismissal) it had.
+                "key": f"person:{person_id}:person_split_flagged:{flag['root_event_id']}",
                 "group": "person_split_flagged",
                 "table": "person",
                 "pk": str(person_id),
@@ -8457,6 +8758,7 @@ def _person_split_flag_items(connection: sqlite3.Connection) -> list[dict[str, A
                     f"{names[person_id]} — {flag['created_by'] or 'a reviewer'}, "
                     f"{_plain_date(str(flag['created_at']))}"
                     + (f": {note}" if note else "")
+                    + marked
                 ),
                 "severity": PERSON_SPLIT_GROUP_META["severity"],
                 "explanation": PERSON_SPLIT_GROUP_META["explanation"],

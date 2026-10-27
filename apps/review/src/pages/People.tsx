@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   decidePersonLinkage,
   loadPersonLinkageCase,
@@ -9,6 +9,8 @@ import {
 } from "../api";
 import CopyLinkButton from "../components/CopyLinkButton";
 import CareerSpanRibbon from "../components/person-linkage/CareerSpanRibbon";
+import SeamMarking from "../components/person-linkage/SeamMarking";
+import SeamRibbon, { seamSummary, type SeamMark } from "../components/person-linkage/SeamRibbon";
 import PersonLinkagePrimer from "../components/person-linkage/PersonLinkagePrimer";
 import ModelWaterfall from "../components/person-linkage/ModelWaterfall";
 import WordSourceDrawer from "../components/WordSourceDrawer";
@@ -23,7 +25,11 @@ import type {
   PersonLinkagePerson,
   PersonLinkagePreview,
   PersonLinkageSummary,
+  PersonReviewEvent,
+  PersonSeamSide,
+  PersonSeamView,
   PersonSplitFlag,
+  WordEntryDetail,
 } from "../types";
 
 const REVIEWER_KEY = "floracco_reviewer";
@@ -69,6 +75,27 @@ const STATUS_LABEL: Record<string, string> = {
   bulk_rule_ack: "Rule sample inspected",
 };
 
+/** The reader's words for a mark on one appearance. */
+const SEAM_WORD: Record<SeamMark, string> = {
+  this: "This entry",
+  unsure: "Unsure",
+  other: "Someone else",
+  unmarked: "Not marked",
+};
+
+/** The history drawer's word for an event: a change of marks and a lifted
+ *  flag read as such, not as a second flag or a generic reopen. */
+function historyLabel(event: PersonReviewEvent, kind: PersonLinkageCase["kind"]): string {
+  if (event.action === "flag_split" && event.reason_code === "seam_revision") return "Marks changed";
+  if (event.action === "reopen" && kind === "split") return "Flag lifted";
+  return STATUS_LABEL[event.action] ?? event.action.replace(/_/g, " ");
+}
+
+/** The standing marks as the lanes chart and the table read them. */
+function marksFromView(view: PersonSeamView): Record<number, SeamMark> {
+  return Object.fromEntries(view.assignments.map((item) => [item.investor_id, item.side]));
+}
+
 function plainDate(iso: string | null | undefined): string {
   if (!iso) return "";
   const date = new Date(iso);
@@ -82,14 +109,38 @@ function FlagChip({
   flag,
   busy,
   onLift,
+  kind,
+  caseId,
+  onChangeMarks,
 }: {
   flag: PersonSplitFlag;
   busy: boolean;
   onLift: (flag: PersonSplitFlag) => void;
+  kind?: PersonLinkageCase["kind"];
+  caseId?: string;
+  onChangeMarks?: () => void;
 }) {
+  const title = [
+    flag.rationale ? `Note: ${flag.rationale}` : "",
+    flag.change_note ? `Last change: ${flag.change_note}` : "",
+  ].filter(Boolean).join("\n");
   return (
-    <span className="pl-split-status" title={flag.rationale || undefined}>
+    <span className="pl-split-status" title={title || undefined}>
       Flagged by {flag.created_by || "a reviewer"}, {plainDate(flag.created_at)}
+      {flag.changed_by ? ` · marks changed by ${flag.changed_by}, ${plainDate(flag.changed_at)}` : ""}
+      {flag.marks ? ` · ${flag.marks.other} of ${flag.marks.total}` : ""}
+      {kind === "split" && onChangeMarks ? (
+        <button type="button" disabled={busy} onClick={onChangeMarks} title="Change which acts are whose">
+          {flag.marks ? "Change" : "Mark the acts"}
+        </button>
+      ) : kind && kind !== "split" ? (
+        <Link
+          to={`/people/split:${flag.person_id}${caseId ? `?from=${encodeURIComponent(caseId)}` : ""}`}
+          title="Open the entry's own case to mark which acts are whose"
+        >
+          Mark which acts are whose →
+        </Link>
+      ) : null}
       <button
         type="button"
         disabled={busy}
@@ -176,12 +227,18 @@ function PersonMatrix({
   splitFlags,
   busy,
   onLiftFlag,
+  kind,
+  caseId,
+  onChangeMarks,
 }: {
   persons: PersonLinkagePerson[];
   pair: PersonLinkageCase["pairs"][number] | null;
   splitFlags: PersonSplitFlag[];
   busy: boolean;
   onLiftFlag: (flag: PersonSplitFlag) => void;
+  kind?: PersonLinkageCase["kind"];
+  caseId?: string;
+  onChangeMarks?: () => void;
 }) {
   const flagsById = new Map(splitFlags.map((flag) => [flag.person_id, flag]));
   const nameReview = (
@@ -230,6 +287,9 @@ function PersonMatrix({
                         flag={flagsById.get(person.person_id) as PersonSplitFlag}
                         busy={busy}
                         onLift={onLiftFlag}
+                        kind={kind}
+                        caseId={caseId}
+                        onChangeMarks={onChangeMarks}
                       />
                     ) : null}
                   </span>
@@ -524,11 +584,15 @@ function ContextProfiles({ persons }: { persons: PersonLinkagePerson[] }) {
   );
 }
 
-function AppearanceTables({ persons }: { persons: PersonLinkagePerson[] }) {
+function AppearanceTables({ persons, seam }: { persons: PersonLinkagePerson[]; seam?: PersonSeamView | null }) {
+  const markedSide = seam ? new Map(seam.assignments.map((item) => [item.investor_id, item.side])) : null;
   return (
     <section className="pl-section" aria-labelledby="pl-appearance-heading">
       <p className="eyebrow">Database context</p>
       <h2 id="pl-appearance-heading">Contract appearances</h2>
+      {markedSide ? (
+        <p className="muted">“Marked as” is the reader's marking of which acts are whose; the entry itself is unchanged.</p>
+      ) : null}
       <div className="pl-appearance-grid">
         {persons.map((person) => (
           <div className="pl-appearance-card" key={person.person_id}>
@@ -537,13 +601,20 @@ function AppearanceTables({ persons }: { persons: PersonLinkagePerson[] }) {
             {person.appearances.length ? (
               <div className="pl-table-scroll">
                 <table className="pl-contract-table">
-                  <thead><tr><th>Date</th><th>Firm</th><th>Role</th></tr></thead>
+                  <thead><tr><th>Date</th><th>Firm</th><th>Role</th>{markedSide ? <th>Marked as</th> : null}</tr></thead>
                   <tbody>
                     {person.appearances.map((appearance) => (
                       <tr key={appearance.investor_id}>
                         <td><Link to={`/database/contract/${appearance.contract_id}`}>{recordedDate(appearance.registration_date) || "—"}</Link></td>
                         <td>{appearance.firm_name || "—"}</td>
                         <td>{roleListLabel(appearance.roles) || "—"}</td>
+                        {markedSide ? (
+                          <td>
+                            <span className={`pl-seam-word is-${markedSide.get(appearance.investor_id) ?? "unmarked"}`}>
+                              {SEAM_WORD[markedSide.get(appearance.investor_id) ?? "unmarked"]}
+                            </span>
+                          </td>
+                        ) : null}
                       </tr>
                     ))}
                   </tbody>
@@ -612,7 +683,7 @@ function EvidenceDrawer({
           <button className="drawer-close" onClick={onClose} type="button" aria-label="Close evidence drawer">×</button>
         </header>
         <div className="pl-evidence-drawer-body">
-          {kind === "contracts" ? <AppearanceTables persons={detail.persons} /> : null}
+          {kind === "contracts" ? <AppearanceTables persons={detail.persons} seam={detail.seam ?? null} /> : null}
           {kind === "business" ? (
             <>
               <SharedOverlapPanel detail={detail} />
@@ -749,7 +820,7 @@ function EvidenceDrawer({
                     && event.link_ids.some((linkId) => activeIds.has(linkId));
                   return (
                   <li key={event.event_id}>
-                    <strong>{STATUS_LABEL[event.action] ?? event.action.replace(/_/g, " ")}</strong>
+                    <strong>{historyLabel(event, detail.kind)}</strong>
                     <span>
                       {event.person_ids.map((personId) => `#${personId}`).join(" · ")}
                       {" · "}{event.created_by} · {event.created_at.slice(0, 16).replace("T", " ")}
@@ -856,11 +927,26 @@ export default function People() {
   // "undone" note; the case reads as open again); a flag is lifted (a reopen on
   // its split case).
   const [lastDecision, setLastDecision] = useState<{
-    action: "same_as" | "distinct" | "flag_split";
+    action: "same_as" | "distinct" | "flag_split" | "seam_revision";
     caseId: string;
     eventId: string;
     personIds: number[];
+    /** The marks a change replaced, so Undo can post them back as a further change. */
+    previous?: {
+      assignments: Array<{ investor_id: number; side: PersonSeamSide }>;
+      other_entry_id: number | null;
+    };
   } | null>(null);
+  // "Mark which acts are whose" on a one-entry case: the marks being edited,
+  // their baseline (for the unsaved guard) and the other-entry note.
+  const [marking, setMarking] = useState(false);
+  const [marks, setMarks] = useState<Record<number, SeamMark>>({});
+  const [marksBase, setMarksBase] = useState("");
+  const [otherEntry, setOtherEntry] = useState("");
+  const marksDirty = marking && JSON.stringify({ marks, otherEntry }) !== marksBase;
+  useUnsavedChange(marksDirty && !busy, "your marks on this entry", ["people-note"]);
+  const [searchParams] = useSearchParams();
+  const cameFrom = searchParams.get("from") ?? "";
   // "One entry, two people?": the rule's candidates, or the entries reviewers
   // have flagged (any span, newest first).
   const [splitFacet, setSplitFacet] = useState<"to_check" | "flagged">("to_check");
@@ -896,6 +982,7 @@ export default function People() {
     setStranded(false);
     setStrandedAll(false);
     setSplitFacet("to_check");
+    setMarking(false);
     setOffset(0);
     setShowPrimer(false);
     setLoading(true);
@@ -922,6 +1009,7 @@ export default function People() {
     setStranded(false);
     setStrandedAll(false);
     setSplitFacet("to_check");
+    setMarking(false);
     setOffset(0);
   };
 
@@ -1073,6 +1161,7 @@ export default function People() {
     // right after advancing, so only a hand-picked case drops it.
     setMessage("");
     setLastDecision(null);
+    setMarking(false);
     setRationale("");
     setScopeKey("");
     setPendingDecision(null);
@@ -1088,6 +1177,7 @@ export default function People() {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if (marking) return; // marks in progress: the keys would leave them behind
       if (event.key === "ArrowRight" || event.key === "j") {
         if (nextCase) selectCase(nextCase);
       } else if (event.key === "ArrowLeft" || event.key === "k") {
@@ -1097,7 +1187,7 @@ export default function People() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cases, nextCase, selectCase, selectedIndex]);
+  }, [cases, nextCase, selectCase, selectedIndex, marking]);
 
   const scopedIds = useMemo(() => {
     if (!detail) return [];
@@ -1267,6 +1357,10 @@ export default function People() {
 
   const undoLast = async () => {
     if (!lastDecision) return;
+    if (lastDecision.action === "seam_revision" && lastDecision.previous) {
+      await restoreMarks(lastDecision.caseId, lastDecision.eventId, lastDecision.personIds[0], lastDecision.previous);
+      return;
+    }
     if (lastDecision.action === "flag_split") {
       await liftFlag({
         case_id: lastDecision.caseId,
@@ -1276,6 +1370,176 @@ export default function People() {
       return;
     }
     await undoDecision(lastDecision.eventId);
+  };
+
+  // A Word summary attached to the note as evidence (toggles), from the
+  // reading drawer or from the marking table.
+  const useEntryAsEvidence = (entry: WordEntryDetail) => {
+    setSelectedCitations((current) => {
+      if (current.some((item) => item.source_entry_id === entry.source_entry_id)) {
+        return current.filter((item) => item.source_entry_id !== entry.source_entry_id);
+      }
+      const sourceText = entry.rich?.clean_text || entry.text || "";
+      return [
+        ...current,
+        {
+          source_entry_id: entry.source_entry_id,
+          source_entry_key: entry.source_entry_key,
+          register_id: entry.register_id,
+          date: entry.date,
+          folio: entry.folio,
+          label: entry.label,
+          source_quote: sourceText.slice(0, 500),
+        },
+      ];
+    });
+  };
+
+  // ---- Mark which acts are whose (one-entry case) --------------------------
+  const startMarking = () => {
+    if (!detail || detail.kind !== "split") return;
+    if (!confirmDiscard("people-note")) return;
+    const standing = new Map((detail.seam?.assignments ?? []).map((item) => [item.investor_id, item.side]));
+    const initial: Record<number, SeamMark> = {};
+    detail.persons[0].appearances.forEach((appearance) => {
+      const side = standing.get(appearance.investor_id);
+      initial[appearance.investor_id] = side && side !== "unmarked" ? side : "this";
+    });
+    const other = detail.seam?.other_entry_id ? String(detail.seam.other_entry_id) : "";
+    setMarks(initial);
+    setOtherEntry(other);
+    setMarksBase(JSON.stringify({ marks: initial, otherEntry: other }));
+    setPendingDecision(null);
+    setSplitPersonId(null);
+    setRationale("");
+    setMessage("");
+    setError("");
+    setEvidenceDrawer(null);
+    setMarking(true);
+  };
+
+  const leaveMarking = () => {
+    if (!confirmDiscard("people-note")) return;
+    setMarking(false);
+    setRationale("");
+    setError("");
+  };
+
+  const markAppearances = (ids: number[], side: PersonSeamSide) =>
+    setMarks((current) => {
+      const next = { ...current };
+      ids.forEach((id) => { next[id] = side; });
+      return next;
+    });
+
+  const seamTally = (() => {
+    if (!detail || !marking) return "";
+    const counts = seamSummary(detail.persons[0].appearances, marks).counts;
+    const total = detail.persons[0].appearances.length;
+    return `This entry ${counts.this} · someone else ${counts.other} · unsure ${counts.unsure} · of ${total} appearance${total === 1 ? "" : "s"}`;
+  })();
+
+  const saveMarks = async () => {
+    if (!detail || detail.kind !== "split" || detail.case_id !== selected) return;
+    if (!reviewer.trim()) {
+      setError("Enter your initials before saving the marks.");
+      return;
+    }
+    if (!rationale.trim()) {
+      setError("Say what separates the two: the names in the acts, the gap, the titles…");
+      return;
+    }
+    const personId = detail.person_ids[0];
+    const revising = detail.status === "flag_split";
+    const assignments = Object.entries(marks)
+      .map(([id, side]) => ({ investor_id: Number(id), side: (side === "unmarked" ? "this" : side) as PersonSeamSide }))
+      .sort((left, right) => left.investor_id - right.investor_id);
+    const otherId = otherEntry.trim() ? Number(otherEntry.trim()) : null;
+    const previous = detail.seam
+      ? {
+        assignments: detail.seam.assignments
+          .filter((item) => item.side !== "unmarked")
+          .map((item) => ({ investor_id: item.investor_id, side: item.side as PersonSeamSide })),
+        other_entry_id: detail.seam.other_entry_id,
+      }
+      : undefined;
+    setBusy(true);
+    try {
+      localStorage.setItem(REVIEWER_KEY, reviewer.trim());
+      const saved = await decidePersonLinkage(detail.case_id, {
+        reviewer: reviewer.trim(),
+        action: "flag_split",
+        person_ids: [personId],
+        reason_code: revising ? "seam_revision" : "",
+        rationale: rationale.trim(),
+        expected_status: detail.status,
+        expected_event_id: detail.latest_event_id ?? null,
+        citations: selectedCitations,
+        review_mode: "standard",
+        seam: {
+          version: 1,
+          assignments,
+          other_entry_id: otherId,
+          revises_event_id: revising ? detail.latest_event_id ?? null : null,
+        },
+      });
+      const counts = seamSummary(detail.persons[0].appearances, marks).counts;
+      const tally = `${counts.other} of ${assignments.length} appearance${assignments.length === 1 ? "" : "s"} marked as someone else's`
+        + (counts.unsure ? `, ${counts.unsure} unsure` : "");
+      setMessage(
+        revising
+          ? `Marks changed on entry #${personId}: ${tally}. Nothing is split.`
+          : `Flagged entry #${personId} as possibly two people: ${tally}. Nothing is split.`,
+      );
+      setLastDecision(
+        revising && previous
+          ? { action: "seam_revision", caseId: detail.case_id, eventId: saved.event_id, personIds: [personId], previous }
+          : { action: "flag_split", caseId: detail.case_id, eventId: saved.event_id, personIds: [personId] },
+      );
+      setRationale("");
+      setSelectedCitations([]);
+      setMarking(false);
+      await reload();
+      setDetail(await loadPersonLinkageCase(detail.case_id));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Undo after a change of marks: the previous marks come back as a further
+  // change; the flag stands and the history keeps every version.
+  const restoreMarks = async (
+    caseId: string,
+    eventId: string,
+    personId: number,
+    previous: { assignments: Array<{ investor_id: number; side: PersonSeamSide }>; other_entry_id: number | null },
+  ) => {
+    if (!reviewer.trim()) return;
+    setBusy(true);
+    try {
+      await decidePersonLinkage(caseId, {
+        reviewer: reviewer.trim(),
+        action: "flag_split",
+        person_ids: [personId],
+        reason_code: "seam_revision",
+        rationale: "Marks restored to the previous version.",
+        expected_status: "flag_split",
+        expected_event_id: eventId,
+        citations: [],
+        review_mode: "standard",
+        seam: { version: 1, assignments: previous.assignments, other_entry_id: previous.other_entry_id, revises_event_id: eventId },
+      });
+      setMessage("Marks restored to the previous version.");
+      setLastDecision(null);
+      await reload();
+      if (selected) setDetail(await loadPersonLinkageCase(selected));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const primaryPair = useMemo(() => {
@@ -1570,6 +1834,7 @@ export default function People() {
                   {item.decided_by ? (
                     <small className="pl-case-note">
                       {item.decided_by} · {plainDate(item.decided_at)}
+                      {item.flag?.marks ? ` · ${item.flag.marks.other} of ${item.flag.marks.total} marked as someone else's` : ""}
                       {item.note ? ` · ${item.note}` : ""}
                     </small>
                   ) : null}
@@ -1640,9 +1905,18 @@ export default function People() {
             <header className="case-bar pl-case-bar">
               <div>
                 <p className="eyebrow">{detail.kind === "split" ? "Possible combined identity" : "Identity review"}</p>
-                <p className="case-bar-question">{laneQuestion(detail)}</p>
+                <p className="case-bar-question">
+                  {marking && detail.kind === "split"
+                    ? `Which of these ${detail.persons[0].n_appearances} acts are this man's, and which belong to someone else?`
+                    : laneQuestion(detail)}
+                </p>
               </div>
               <div className="case-bar-tools">
+                {detail.kind === "split" && (cameFrom.startsWith("pair:") || cameFrom.startsWith("group:")) ? (
+                  <Link className="pl-back-link" to={`/people/${encodeURIComponent(cameFrom)}`}>
+                    ← Back to the {cameFrom.startsWith("group:") ? "group" : "pair"}
+                  </Link>
+                ) : null}
                 <span className="pl-case-position">{selectedIndex >= 0 ? `${selectedIndex + 1} / ${cases.length}` : ""}</span>
                 {/* Never on Judge blind: a shared link must not hand a packet case to a second reader. */}
                 {detail.lane !== "labeling_round" && lane !== "labeling_round" ? (
@@ -1677,22 +1951,50 @@ export default function People() {
                 </div>
               ) : null}
 
+              {marking && detail.kind === "split" ? (
+                <SeamMarking
+                  person={detail.persons[0]}
+                  entrySources={detail.entry_sources ?? []}
+                  seam={detail.seam ?? null}
+                  marks={marks}
+                  editable
+                  onMark={markAppearances}
+                  otherEntry={otherEntry}
+                  onOtherEntry={setOtherEntry}
+                  onOpenSource={setSourceEntryId}
+                  onUseEvidence={useEntryAsEvidence}
+                  citedIds={new Set(selectedCitations.map((item) => item.source_entry_id))}
+                />
+              ) : (<>
               <PersonMatrix
                 persons={detail.persons}
                 pair={primaryPair}
                 splitFlags={detail.split_flags ?? []}
                 busy={busy}
                 onLiftFlag={(flag) => void liftFlag(flag)}
+                kind={detail.kind}
+                caseId={detail.case_id}
+                onChangeMarks={detail.kind === "split" && !detail.marks_held_by_round ? startMarking : undefined}
               />
               <GroupPairMatrix detail={detail} scopeKey={scopeKey} onSelectScope={setScopeKey} />
               <section className="pl-primary-visual" aria-labelledby="pl-career-heading">
                 <div className="pl-primary-visual-head">
                   <div>
                     <p className="eyebrow">Time</p>
-                    <h2 id="pl-career-heading">Dated contract appearances</h2>
+                    <h2 id="pl-career-heading">
+                      {detail.kind === "split" && detail.seam ? "The acts, by the man they are marked for" : "Dated contract appearances"}
+                    </h2>
                   </div>
                 </div>
-                <CareerSpanRibbon persons={detail.persons} />
+                {detail.kind === "split" && detail.seam ? (
+                  <SeamRibbon
+                    appearances={detail.persons[0].appearances}
+                    marks={marksFromView(detail.seam)}
+                    caption="From the standing marks; the entry itself is unchanged"
+                  />
+                ) : (
+                  <CareerSpanRibbon persons={detail.persons} />
+                )}
               </section>
 
               {primaryPair && detail.lane !== "labeling_round" ? (
@@ -1777,10 +2079,51 @@ export default function People() {
                 {scopedIds.length > 1 ? " → 1 reviewed identity if linked" : ""}
                 {" · "}{scopedAppearanceCount} appearance{scopedAppearanceCount === 1 ? " remains" : "s remain"} unchanged
               </p>
+              </>)}
             </div>
 
-            <section className="pl-decision-bar" aria-label="Identity decision">
-              {pendingDecision ? (
+            <section className={marking ? "pl-decision-bar pl-seam-bar" : "pl-decision-bar"} aria-label="Identity decision">
+              {marking && detail.kind === "split" ? (
+                <div className="pl-seam-bar-inner">
+                  <div className="pl-seam-bar-count">
+                    <span>Marking the acts · entry #{detail.person_ids[0]}</span>
+                    <strong>{seamTally}</strong>
+                    <small>Nothing is split. Saved with the flag as your signed note; you can change or lift it later.</small>
+                  </div>
+                  {error ? <p className="pl-decision-error" role="alert">{error}</p> : null}
+                  <div className="pl-decision-fields">
+                    {!reviewerLocked ? (
+                      <input
+                        className="reviewer-input"
+                        value={reviewer}
+                        onChange={(event) => setReviewer(event.target.value)}
+                        placeholder="Your initials"
+                        aria-label="Reviewer"
+                      />
+                    ) : (
+                      <span className="pl-reviewer-identity">{reviewer}</span>
+                    )}
+                    <input
+                      className="note-input"
+                      value={rationale}
+                      onChange={(event) => setRationale(event.target.value)}
+                      placeholder="What separates the two? The names in the acts, the gap, the titles… (required)"
+                      aria-label="Why the acts are marked this way"
+                    />
+                    <button type="button" className="pl-decision-cancel" disabled={busy} onClick={leaveMarking}>
+                      Leave without saving
+                    </button>
+                    <button
+                      type="button"
+                      className="pl-confirm-button"
+                      disabled={busy || !reviewer.trim() || !rationale.trim()}
+                      onClick={() => void saveMarks()}
+                    >
+                      {busy ? "Saving…" : detail.status === "flag_split" ? "Save the changed marks" : "Flag with these marks"}
+                    </button>
+                  </div>
+                </div>
+              ) : pendingDecision ? (
                 <div className="pl-decision-confirm">
                   <div className="pl-decision-confirm-head">
                     <div>
@@ -1850,7 +2193,14 @@ export default function People() {
                         .filter((flag) => scopedIds.includes(flag.person_id))
                         .map((flag) => `#${flag.person_id}`)
                         .join(" and ")}
-                      {" "}is flagged as possibly two people. Linking it attaches all its contracts to one person.
+                      {" "}is flagged as possibly two people
+                      {(() => {
+                        const marked = (detail.split_flags ?? []).filter((flag) => scopedIds.includes(flag.person_id) && flag.marks?.other);
+                        return marked.length
+                          ? `, and ${marked.map((flag) => `${flag.marks!.other} of its ${flag.marks!.total} appearances are marked as someone else's`).join("; ")}`
+                          : "";
+                      })()}
+                      . Linking attaches all of them to one person.
                     </p>
                   ) : null}
                   {selectedCitations.length ? (
@@ -1948,9 +2298,16 @@ export default function People() {
                           </button>
                         </>
                       ) : (
-                        <button className="is-split" onClick={() => chooseDecision("flag_split")} type="button">
-                          <span aria-hidden="true">⑂</span>Flag as possibly two people
-                        </button>
+                        detail.marks_held_by_round ? (
+                          <p className="pl-scope-required">
+                            This entry is in the open Judge-blind round; marks can be made once it is judged.
+                          </p>
+                        ) : (
+                          <button className="is-split" onClick={startMarking} type="button">
+                            <span aria-hidden="true">⑂</span>
+                            {detail.status === "flag_split" ? "Change the marks" : "Flag as possibly two people"}
+                          </button>
+                        )
                       )}
                       <button className="is-uncertain" onClick={() => chooseDecision("defer")} type="button">
                         <span aria-hidden="true">?</span>Not enough evidence
@@ -1990,26 +2347,7 @@ export default function People() {
           sourceEntryId={sourceEntryId}
           onClose={() => setSourceEntryId(null)}
           evidenceSelected={selectedCitations.some((item) => item.source_entry_id === sourceEntryId)}
-          onUseEvidence={(entry) => {
-            setSelectedCitations((current) => {
-              if (current.some((item) => item.source_entry_id === entry.source_entry_id)) {
-                return current.filter((item) => item.source_entry_id !== entry.source_entry_id);
-              }
-              const sourceText = entry.rich?.clean_text || entry.text || "";
-              return [
-                ...current,
-                {
-                  source_entry_id: entry.source_entry_id,
-                  source_entry_key: entry.source_entry_key,
-                  register_id: entry.register_id,
-                  date: entry.date,
-                  folio: entry.folio,
-                  label: entry.label,
-                  source_quote: sourceText.slice(0, 500),
-                },
-              ];
-            });
-          }}
+          onUseEvidence={useEntryAsEvidence}
         />
       ) : null}
     </div>

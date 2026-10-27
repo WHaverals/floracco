@@ -26,8 +26,15 @@ function folioLabel(folio: string): string {
  * comparison, with the editorial record (tracked changes, comments) visible
  * via the Clean | Tracked toggle. Lazy-loaded on first expand.
  */
-export default function WordSummaryInline({ source }: { source: DbWordSource }) {
-  const [open, setOpen] = useState(false);
+export default function WordSummaryInline({
+  source,
+  defaultOpen = false,
+}: {
+  source: DbWordSource;
+  /** Start unfolded (the marking table opens a summary under its row on demand). */
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const [entry, setEntry] = useState<WordEntryDetail | null>(null);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"clean" | "tracked">("clean");
