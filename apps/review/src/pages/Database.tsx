@@ -153,7 +153,7 @@ function SplitFlagBlock({
   return (
     <div className="pl-identity-split">
       <p>
-        Possibly two people in one entry — flagged by {flag.created_by || "a reviewer"}
+        Flagged by {flag.created_by || "a reviewer"}
         {flag.created_at ? ` on ${formatIdentityWhen(flag.created_at)}` : ""}
         {note ? <>: &ldquo;{note}&rdquo;</> : "."}
       </p>
@@ -163,7 +163,7 @@ function SplitFlagBlock({
           {flag.marks.other === 1 ? "is" : "are"} marked as another person&rsquo;s
           {flag.marks.unsure ? `, ${flag.marks.unsure} as unsure` : ""}
           {flag.changed_by ? ` (marks last changed by ${flag.changed_by}${flag.changed_at ? ` on ${formatIdentityWhen(flag.changed_at)}` : ""})` : ""}
-          . A reader&rsquo;s marking, not a change to the record: the entry keeps every act.
+          . A reader&rsquo;s marking.
         </p>
       ) : null}
       <div className="pl-identity-split-actions">
@@ -679,7 +679,7 @@ export default function Database() {
               type="button"
               className={reviewMode ? "db-tab db-tab-review is-active" : "db-tab db-tab-review"}
               onClick={() => navigate(routeId ? `/database/${routeTable}/${routeId}?review=1` : "/database?review=1")}
-              title="Records the data flags as possibly needing a fix"
+              title="Items that may need a fix"
             >
               ⚑ Needs review{flagTotal === null ? (flagsFailed && !flagsLoading ? "" : " (…)") : flagTotal ? ` (${flagTotal})` : ""}
             </button>
@@ -692,7 +692,7 @@ export default function Database() {
                 ? "The check for records that need review did not run."
                 : flagTotal === 0
                 ? "All clear — no records flagged."
-                : `${flagTotal} record${flagTotal === 1 ? "" : "s"} flagged in ${flagGroups.length} categor${flagGroups.length === 1 ? "y" : "ies"}. Click a category to open it. Suggestions only — you decide; nothing changes until you edit.`}
+                : `${flagTotal} item${flagTotal === 1 ? "" : "s"} in ${flagGroups.length} categor${flagGroups.length === 1 ? "y" : "ies"}.`}
             </p>
           ) : (
             <>
@@ -820,20 +820,12 @@ export default function Database() {
             )}
             {flagsFailed && !flagsLoading && (
               <p className="db-empty error-text">
-                {flagGroups.length === 0
-                  ? "The records that need review could not be loaded."
-                  : "The list could not be refreshed and may be out of date."}{" "}
+                {flagGroups.length > 0 && <>The list could not be refreshed and may be out of date.{" "}</>}
                 <button type="button" className="link-like" onClick={loadFlagsNow}>
                   Try again
                 </button>
               </p>
             )}
-            {flagGroups.length === 0 &&
-              (flagsLoading && (flagTotal === null || flagsFailed) ? (
-                <p className="db-empty muted">Checking records for anything that needs review…</p>
-              ) : flagsFailed ? null : (
-                <p className="db-empty muted">All clear.</p>
-              ))}
             {flagGroups.map((group) => {
               const open = openGroups.has(group.group);
               const visible = showAllGroups.has(group.group) ? group.items : group.items.slice(0, WORKLIST_FOLD_AT);
@@ -934,9 +926,6 @@ export default function Database() {
               </li>
             );
           })}
-          {results.length === 0 && !listError && total !== null && (
-            <li className="db-empty muted">No records match.</li>
-          )}
           {results.length > 0 && total !== null && results.length < total && (
             <li className="db-load-more">
               {/* Not while a new search runs: its next page would land under the old rows. */}
@@ -963,9 +952,8 @@ export default function Database() {
             <p className="eyebrow">Record viewer</p>
             <h2>Pick a contract, sub-contract or person on the left</h2>
             <p className="muted">
-              You will see its details, partners and places, the Word summary, the manuscript page and
-              every change made so far. Move the mouse over a value and click Edit to correct it. Every
-              change is recorded and can be undone.
+              Its details, partners, places, Word summary, manuscript page and change history appear
+              here. To correct a value, hover over it and click Edit.
             </p>
           </div>
         )}
@@ -1127,7 +1115,7 @@ function WorklistDismissConfirm({
   return (
     <div className="worklist-confirm">
       <p className="worklist-confirm-lead">
-        Take this item off the list? The record is not changed, and you can undo this right after.
+        Take this item off the list? You can undo this right after.
       </p>
       <input
         className="worklist-confirm-reason"
@@ -1157,8 +1145,9 @@ function WorklistDismissConfirm({
 }
 
 /** A self-contained confirm panel for removing or restoring a partner: captures
- * the reviewer + (for removal) a required reason, states the consequence, and
- * runs the audited cascade. Mirrors InlineFieldEditor's pattern. */
+ * the reviewer + (for removal) a required reason, states the consequence (when
+ * there is one to state), and runs the audited cascade. Mirrors
+ * InlineFieldEditor's pattern. */
 function PartnerActionConfirm({
   mode,
   subject = "partner",
@@ -1171,7 +1160,8 @@ function PartnerActionConfirm({
   mode: "remove" | "restore";
   /** What is being removed or restored — a partner, a stake nobody holds, or a place. */
   subject?: "partner" | "stake" | "place";
-  consequence: string;
+  /** Shown after the question; omit when it would only restate the question. */
+  consequence?: string;
   warning: string;
   onConfirm: (reviewer: string, reason: string) => Promise<void>;
   onClose: () => void;
@@ -1212,8 +1202,13 @@ function PartnerActionConfirm({
   return (
     <div className="partner-confirm">
       <p className="partner-confirm-lead">
-        {mode === "remove" ? `Remove this ${subject}? ` : `Restore this ${subject}? `}
-        <span className="muted">{consequence}</span>
+        {mode === "remove" ? `Remove this ${subject}?` : `Restore this ${subject}?`}
+        {consequence ? (
+          <>
+            {" "}
+            <span className="muted">{consequence}</span>
+          </>
+        ) : null}
       </p>
       {warning && <p className="partner-confirm-warn">{warning}</p>}
       <div className="inline-editor-row">
@@ -1337,9 +1332,7 @@ function InlineLookupEditor({
       </div>
       {error && <p className="error-text">{error}</p>}
       <p className="inline-editor-foot muted">
-        Saving links this field to the phrase you pick, or to a new phrase stored exactly as you typed it; an empty
-        box clears the field. The phrase itself is not changed here, since other records may share it. The change is
-        recorded under your initials.
+        The phrase itself is not changed here, since other records may share it.
       </p>
     </div>
   );
@@ -1578,7 +1571,7 @@ function PartnersBlock({
   const unattachedLabel = (
     <span
       className="partner-unattached"
-      title="A role and a sum recorded without a person: left over from data entry, or a partner who was removed. Attach the right person, or remove the stake if it was entered in error."
+      title="A role and a sum recorded without a person: left over from data entry, or a partner who was removed."
     >
       No partner attached
     </span>
@@ -1710,8 +1703,7 @@ function PartnersBlock({
       )}
       {count === 0 ? (
         <p className="muted">
-          No partners are recorded yet. Every accomandita needs at least one general partner (accomandatario)
-          and one external investor (accomandante).
+          No partners are recorded yet.
         </p>
       ) : (
         <div className="partners-scroll">
@@ -1732,9 +1724,7 @@ function PartnersBlock({
             {liveRows.map((row: DbPartnerRow) => {
               const notable = row.attributes?.notable ?? 0;
               const isOpen = expanded === row.key;
-              const panelTitle = notable
-                ? `${notable} recorded attribute${notable === 1 ? "" : "s"} — click to view/edit`
-                : "View / edit all attributes";
+              const panelTitle = "Show and edit all attributes";
               const togglePanel = () => {
                 // Collapsing or switching the panel closes its editors: ask first.
                 if (expanded && !confirmDiscard(`partner-panel:${expanded}`)) return;
@@ -1800,7 +1790,7 @@ function PartnersBlock({
                             if (pending && !confirmDiscard("partner-confirm")) return;
                             setPending(pending?.key === row.key ? null : { key: row.key, mode: "remove" });
                           }}
-                          title="Remove this stake from the contract (reversible)"
+                          title="Remove this stake from the contract"
                         >
                           ✕ Remove stake
                         </button>
@@ -1823,7 +1813,7 @@ function PartnersBlock({
                           guardScope="partner-confirm"
                           mode="remove"
                           subject="stake"
-                          consequence="The role and sum leave the record; nothing else changes. Restorable under Show hidden."
+                          consequence="The role and sum leave the contract; you can restore them from the Removed list below the table."
                           warning=""
                           onClose={() => setPending(null)}
                           onConfirm={async (reviewer, reason) => {
@@ -1860,7 +1850,7 @@ function PartnersBlock({
       {removedRows.length > 0 && (
         <div className="partners-removed">
           <p className="partners-removed-head muted">
-            Removed ({removedRows.length}) — hidden from the record, kept in the audit trail.
+            Removed ({removedRows.length})
           </p>
           <div className="partners-scroll">
           <table className="db-table partners-table is-removed">
@@ -2133,7 +2123,6 @@ function PlacesBlock({
                         subject="place"
                         guardScope="place-confirm"
                         mode="remove"
-                        consequence={`"${row.place}" will be removed from this contract.`}
                         warning=""
                         onClose={() => setPending(null)}
                         onConfirm={async (reviewer, reason) => {
@@ -2154,7 +2143,7 @@ function PlacesBlock({
       {removed.length > 0 && (
         <div className="partners-removed">
           <p className="partners-removed-head muted">
-            Removed place{removed.length > 1 ? "s" : ""} ({removed.length}) — kept in the audit trail.
+            Removed place{removed.length > 1 ? "s" : ""} ({removed.length})
           </p>
           <table className="db-table is-removed">
             <tbody>
@@ -2186,7 +2175,6 @@ function PlacesBlock({
                           subject="place"
                           guardScope="place-confirm"
                           mode="restore"
-                          consequence="The place comes back on this contract."
                           warning=""
                           onClose={() => setPending(null)}
                           onConfirm={async (reviewer, reason) => {
@@ -2248,9 +2236,8 @@ function WordDateCheckPanel({ check, autoOpen = false }: { check: WordDateCheck;
       {open && (
         <div className="word-check-body">
           <p className="word-check-statement">
-            Word source records this registration date as <strong>{check.word_display}</strong>; the
-            database records <strong>{check.db_display}</strong>. Consult the narrative and folio image
-            before correcting.
+            The Word summary gives <strong>{check.word_display}</strong>; the database has{" "}
+            <strong>{check.db_display}</strong>.
           </p>
           <p className="word-check-raw muted">transcribed: “{check.word_raw}”</p>
 
@@ -2279,8 +2266,7 @@ function WordDateCheckPanel({ check, autoOpen = false }: { check: WordDateCheck;
           )}
 
           <p className="word-check-hint muted">
-            Word is evidence, not the truth — verify against the image, then correct with ✎ Edit above
-            only if the database is wrong.
+            Check the narrative and the folio image; edit the date above only if the database is wrong.
           </p>
         </div>
       )}
@@ -2458,15 +2444,14 @@ function RecordDetail({
         </div>
         <div className="db-record-head-actions">
         {/* A clean link: never the ?review / ?fix worklist state. */}
-        <CopyLinkButton path={`/database/${record.table}/${record.id}`} title="Copy a link to this record, to send or to reopen later" />
+        <CopyLinkButton path={`/database/${record.table}/${record.id}`} title="Copy a link to this record" />
         {!record.is_deleted && (
           <details className="db-actions">
             <summary>Hide this record…</summary>
             <div className="db-actions-body">
               <div className="db-danger-body">
                 <p className="muted">
-                  Hiding removes the record from lists and matching. It stays in the archive and can be
-                  restored.
+                  Hiding removes the record from lists, search and matching. It can be restored.
                 </p>
                 {depParts.length > 0 && (
                   <p className="db-deps-warning">
@@ -2503,8 +2488,7 @@ function RecordDetail({
       {record.is_deleted && (
         <div className="db-hidden-banner">
           <p>
-            <strong>This record is hidden</strong> — excluded from search, browse, and matching, but kept in
-            full for the audit trail.
+            <strong>This record is hidden</strong> from search, browsing and matching.
           </p>
           <div className="db-record-actions">
             <input
@@ -2865,8 +2849,8 @@ function RecordDetail({
           {record.table !== "person" && record.word_sources.length === 0 && created && (
             <p className="db-native-provenance muted">
               Added directly to the database by <strong>{created.by}</strong> · {historyDay(created.at)}
-              {created.source ? <> · source: {created.source}</> : null} — no Word summary exists for
-              this record (the Word corpus is frozen); this narrative is its primary text.
+              {created.source ? <> · source: {created.source}</> : null}. There is no Word summary for this
+              record.
             </p>
           )}
         </section>
@@ -2932,7 +2916,6 @@ function RecordDetail({
                 </button>
                 <figcaption>
                   {manuscriptImageCaption(img)}
-                  {img.needs_review ? " · mapping needs review" : ""}
                 </figcaption>
               </figure>
             ))}

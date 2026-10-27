@@ -358,9 +358,6 @@ export default function ManuscriptLightbox({ src, alt, onClose, label, toolbarEx
           <button type="button" className="manuscript-lightbox-btn" title="Actual pixels" onClick={applyOneToOne}>
             1:1
           </button>
-          <button type="button" className="manuscript-lightbox-btn" onClick={applyFit}>
-            Reset
-          </button>
         </div>
         <div className="manuscript-lightbox-toolbar-right">
           {toolbarExtra}

@@ -210,7 +210,7 @@ export default function AddInvestorPanel({
     if (creatingPerson && npLast.trim().length >= 2 && surnameCheck === "pending")
       return setError("Still checking for existing people with this surname — one moment.");
     if (creatingPerson && npLast.trim().length >= 2 && surnameCheck === "failed")
-      return setError("The check for existing people with this surname did not run. Click “Try again” next to it before creating a new person.");
+      return setError("Click “Try again” above before creating a new person.");
     if (creatingPerson && surnameHits.length > 0 && !confirmedNew)
       return setError(`Confirm that none of the existing people named “${npLast.trim()}” is this person.`);
     if (mode === "join" && !joinId) return setError("Pick the stake this person shares.");
@@ -332,8 +332,7 @@ export default function AddInvestorPanel({
             {pickedPerson.identity_hint?.split_flagged ? (
               <div className="pl-identity-split">
                 <p>
-                  This entry is flagged as possibly two people. Adding another contract to it would make that
-                  worse; read the flag first.
+                  This entry is flagged as possibly two people; read the flag before adding another contract to it.
                 </p>
               </div>
             ) : (
@@ -370,8 +369,8 @@ export default function AddInvestorPanel({
             )}
             {surnameCheck === "failed" && (
               <p className="error-text">
-                The check for existing people named “{npLast.trim()}” did not run. A new person can be created once
-                the check has run.{" "}
+                The check for existing people named “{npLast.trim()}” did not run, so a new person cannot be created
+                yet.{" "}
                 <button type="button" className="link-like" onClick={() => setSurnameRetry((n) => n + 1)}>
                   Try again
                 </button>
@@ -388,11 +387,10 @@ export default function AddInvestorPanel({
                 — is yours one of these?
                 {surnameTotal > surnameHits.length && (
                   <p className="muted">
-                    {surnameHits.length} of them are listed:{" "}
                     {npFirst.trim()
-                      ? `first those with the first name “${npFirst.trim()}”, then those on the most contracts.`
-                      : "those on the most contracts."}{" "}
-                    The others can be found from the search, with a first name or patronymic.
+                      ? `Showing ${surnameHits.length}: those named “${npFirst.trim()}” first, then those on the most contracts.`
+                      : `Showing ${surnameHits.length}, those on the most contracts first.`}{" "}
+                    Search with a first name or patronymic to find the others.
                   </p>
                 )}
                 <ul>
@@ -437,8 +435,7 @@ export default function AddInvestorPanel({
             {personSearch === "pending" && <span className="lookup-status muted">Searching…</span>}
             {personSearch === "failed" && (
               <p className="error-text">
-                The search for existing people did not run, so it is not known whether this person is already in
-                the database. A new person can be created once the search has run.{" "}
+                The search for existing people did not run, so a new person cannot be created yet.{" "}
                 <button
                   type="button"
                   className="link-like"
@@ -541,7 +538,7 @@ export default function AddInvestorPanel({
                 value={cash}
                 onChange={(e) => setCash(e.target.value)}
                 disabled={cashUnspecified}
-                placeholder={role === "gp" ? "0 — contributes work (the norm)" : "e.g. 2000"}
+                placeholder={role === "gp" ? "0" : "e.g. 2000"}
               />
               <span className="lookup-status is-new">
                 {role === "gp"
@@ -577,7 +574,7 @@ export default function AddInvestorPanel({
             </select>
             <span className="lookup-status is-new">
               {takesOver
-                ? "This stake has no partner yet. The person you add takes it over; role and capital stay as recorded."
+                ? "Role and capital stay as recorded."
                 : "Role and capital come from the shared stake; it is marked joint for every partner who holds it."}
             </span>
           </label>
@@ -660,8 +657,7 @@ export default function AddInvestorPanel({
       </div>
       {error && <p className="error-text">{error}</p>}
       <p className="inline-editor-foot muted">
-        Saves the person, the role and the capital together, under your initials. The panel stays open, since
-        every contract needs at least two partners.
+        The panel stays open for the next partner.
       </p>
     </div>
   );

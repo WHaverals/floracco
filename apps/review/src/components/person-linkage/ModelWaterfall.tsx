@@ -65,7 +65,7 @@ export default function ModelWaterfall({
         </div>
       </header>
       <p className="pl-model-note">
-        Bar direction shows how each recorded feature affects review order. It is not a verdict.
+        Bar direction shows how each recorded feature affects review order.
         {reviewRank !== null ? ` Queue rank #${reviewRank.toLocaleString()}.` : ""}
       </p>
       <div className="pl-model-body">

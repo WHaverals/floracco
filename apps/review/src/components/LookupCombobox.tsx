@@ -150,7 +150,7 @@ export default function LookupCombobox({
       {check === "pending" && <span className="lookup-status muted">Searching the existing phrases…</span>}
       {check === "failed" && (
         <span className="lookup-status error-text">
-          The search of existing phrases did not run, so it is not known whether this phrase is already recorded.{" "}
+          The search of existing phrases did not run.{" "}
           <button
             type="button"
             className="link-like"
@@ -166,7 +166,7 @@ export default function LookupCombobox({
       {check === "ok" &&
         (reusing ? (
           <span className="lookup-status is-reuse">
-            An existing phrase, {usedOn(exact!.used)}. The record will point to it.
+            An existing phrase, {usedOn(exact!.used)}.
           </span>
         ) : exact ? (
           <span className="lookup-status is-new">
@@ -174,7 +174,7 @@ export default function LookupCombobox({
             spacing: “{exact.value}” ({usedOn(exact.used)}).
           </span>
         ) : (
-          <span className="lookup-status is-new">A new phrase. It will be stored exactly as typed.</span>
+          <span className="lookup-status is-new">A new phrase, stored exactly as typed.</span>
         ))}
     </label>
   );

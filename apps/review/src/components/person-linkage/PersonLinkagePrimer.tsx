@@ -130,9 +130,8 @@ const PRIMER_NOTES: ReactNode[] = [
   ),
   (
     <>
-      The actual decision that a human reviewer of these cases makes is then
-      written down as a dated note under the reviewer&rsquo;s name, next to
-      the two entries. No entry is ever forcefully merged or deleted.
+      The reviewer&rsquo;s decision is then written down as a dated note
+      under the reviewer&rsquo;s name, next to the two entries.
     </>
   ),
   (
@@ -156,8 +155,7 @@ const PRIMER_NOTES: ReactNode[] = [
     <>
       Sixty years is the longest working life the tool allows one person.
       Only five person entries in the database span more, and the longest,
-      Agnolo Guicciardini&rsquo;s 69 years, is the fused entry of the second
-      section.
+      Agnolo Guicciardini&rsquo;s 69 years, is a fused entry.
     </>
   ),
   (
@@ -267,9 +265,9 @@ const PRIMER_NOTES: ReactNode[] = [
   ),
   (
     <>
-      The rules always take precedence. A pair the sixty-year rule refuses
+      The rules always take precedence: a pair the sixty-year rule refuses
       stays refused whatever the model scores, and a high score never removes
-      a caution. The model orders what is undecided; it does not overrule.
+      a caution.
     </>
   ),
   (
@@ -861,8 +859,6 @@ function TorrigianiFigure() {
           Each card is one person entry, with its number in the database.
           The dots below a card are the contracts that entry appears in,
           one dot per dated contract (a 2 marks two contracts in one year).
-          Nothing is drawn between the dots: the registers say nothing about
-          the years in between.
         </>
       }
     />
@@ -921,8 +917,8 @@ export default function PersonLinkagePrimer() {
           Each contract in this database names the people behind a firm, its{" "}
           <span className="term">general partners</span> and its{" "}
           <span className="term">external investors</span>. Across the 4,866
-          contracts that comes to 17,495 appearances. Of course, the same
-          person can appear on multiple contracts over many years.
+          contracts that comes to 17,495 appearances. The same person can
+          appear on several contracts over many years.
           <Fn n={1} /> The registers never give these people a unique person
           identifier; what is recorded is a given name, usually a
           father&rsquo;s name, sometimes the grandfather&rsquo;s, and a family
@@ -961,8 +957,7 @@ export default function PersonLinkagePrimer() {
           side draws those conclusions at a glance, from the spellings, the
           names and the years. With 11,391 entries the same task outgrows any
           reader: there is too much to keep in mind and far too many pairs to
-          compare. No reader can do it by hand.
-
+          compare.
         </p>
         <p>
           <span className="term">Probabilistic record linkage</span> is the
@@ -993,18 +988,15 @@ export default function PersonLinkagePrimer() {
       <section className="pl-primer-panel pl-primer-body">
         <h3>Three shapes the problem takes</h3>
         <p>
-          The problem comes in three shapes. All three arose when the
-          registers were typed into the database:
+          All three arose when the registers were typed into the database:
         </p>
         <ShapeCards />
         <p>
           With probabilistic linkage we can find split entries and link them,
-          so that from then on they count as one person (both entries stay in
-          the database as they were; nothing about the entries{" "}
-          <em>themselves</em> changes). Copies are found and linked in the
-          same way. When an entry seems to combine evidence that points to two
-          different people, a potential fused entry, we can flag it for
-          further attention (we do not take it apart).<Fn n={7} />
+          so that from then on they count as one person. Copies are found and
+          linked in the same way. When an entry seems to combine evidence that
+          points to two different people, a potential fused entry, we can flag
+          it for further attention, but not take it apart.<Fn n={7} />
         </p>
       </section>
 
@@ -1037,9 +1029,8 @@ export default function PersonLinkagePrimer() {
           father&rsquo;s name would join them, as the table below shows. The
           father&rsquo;s name, <em>di Francesco</em> or <em>di Giovanni</em>,
           is the nearest thing the registers have to an identifier, and here
-          it is the only thing that keeps the two apart. The tool does not
-          merge such a pair; it sends it to a reviewer with both fathers in
-          view.
+          it is the only thing that keeps the two apart. The tool sends such a
+          pair to a reviewer with both fathers in view.
         </p>
         <RecordPairs
           groups={COUSIN_GROUPS}
@@ -1093,7 +1084,7 @@ export default function PersonLinkagePrimer() {
           everything. It is also why a person entry with no contracts can
           never look certain: it has only the name and the father&rsquo;s name
           to offer, about 21 bits in all, and that leaves it just short of the
-          threshold. Both situations are drawn at the end of this section.
+          threshold.
         </p>
         <p>
           The tool compares two entries on five things: the name as written;
@@ -1109,8 +1100,7 @@ export default function PersonLinkagePrimer() {
           is called <em>m</em>, the second <em>u</em>. Their ratio, about 130,
           says how much more often true matches agree than strangers do, and
           that ratio is the strength of the evidence. Its logarithm to base
-          two, about 7, is the weight in bits. The arithmetic is set out
-          below.
+          two, about 7, is the weight in bits.
         </p>
         <div className="pl-pg-eqn" aria-label={
           "Fathers agree exactly: among true matches about eight in ten, m; " +
@@ -1139,7 +1129,7 @@ export default function PersonLinkagePrimer() {
           database 43 entries in 100 lack the father&rsquo;s name and 87 in
           100 lack the grandfather&rsquo;s, so that last rule decides more
           comparisons than any other. The strip below shows the four possible
-          outcomes for the father&rsquo;s name, with illustrative weights.
+          outcomes for the father&rsquo;s name.
         </p>
         <div className="pl-pg-levels" aria-label={
           "The father's name at four outcomes, illustrative weights: fathers " +
@@ -1173,11 +1163,9 @@ export default function PersonLinkagePrimer() {
           by counting how often the outcome occurs across all 64 million
           possible pairs, <em>m</em> by an iterative fit within the groups of
           entries that share a name (because there is not yet a reviewed set
-          of confirmed matches to count from).<Fn n={17} /> The weights in the
-          father&rsquo;s-name strip above are illustrative. The fitted weights
+          of confirmed matches to count from).<Fn n={17} /> The fitted weights
           appear in the figure above, on every case, and in the ladder of the
-          next section, and they will be re-estimated once the first round of
-          reviewed decisions exists.
+          next section.
         </p>
         <p>
           Not every pair of entries is compared. Eleven thousand entries make
@@ -1206,10 +1194,8 @@ export default function PersonLinkagePrimer() {
           Andrea di Neri Corsini is entered as entry 5305, with five contracts
           from 1631 to 1644, and as entry 11633, with three contracts from
           1645 to 1657 and a grandfather, Lorenzo, that the first entry
-          lacks. Neither entry is part of the labeling round. The weights
-          below are the tool&rsquo;s own as fitted today; they will change when
-          the model is re-estimated after the first reviewed decisions. The
-          table below compares the two entries field by field.
+          lacks. Neither entry is among the Judge blind cases. The weights
+          below are the tool&rsquo;s own as fitted today.
         </p>
         <PairGrid
           rows={CORSINI_ROWS}
@@ -1242,8 +1228,6 @@ export default function PersonLinkagePrimer() {
           strongest to weakest: the very same firm; a shared business
           partner; and firm names with only a word or two in common, which
           proves little, because firm names are made of common given names.
-          The figure below shows the two entries on one time line, with the
-          two contracts of the shared firm marked.
         </p>
         <CorsiniFigure />
         <p>
@@ -1254,10 +1238,9 @@ export default function PersonLinkagePrimer() {
         </p>
         <PairCircle data={CORSINI_CIRCLE} />
         <p>
-          The ladder below lists the outcomes this comparison can have for
-          two entries whose working lives together fit within thirty years,
-          as here (1631 to 1657), with the weights as the tool fitted them.
-          The rung this pair stands on is marked.
+          The ladder below lists the outcomes this comparison can have when
+          the two working lives together fit within thirty years, as here
+          (1631 to 1657).
         </p>
         <figure className="pl-ladder">
           <figcaption>Time and business partners, when the two working lives together fit within thirty years (fitted weights):</figcaption>
@@ -1312,17 +1295,15 @@ export default function PersonLinkagePrimer() {
         </p>
         <figure className="pl-primer-tool">
           <EvidenceBars rows={CORSINI_EVIDENCE} idPrefix="pl-primer-evidence" />
-          <figcaption>Andrea di Neri Corsini, entries 5305 and 11633: the chart as the case page draws it.</figcaption>
+          <figcaption>Andrea di Neri Corsini, entries 5305 and 11633.</figcaption>
         </figure>
         <p>
-          The score orders the queue; it is not a verdict. As a ranking it
-          works well: the pairs at the top are the ones worth a
-          reviewer&rsquo;s time. As a probability it is rough, because the
-          weights were estimated without a single confirmed match and the
-          prior rests on a guess about how many true matches the strict rule
-          finds.<Fn n={20} /> For that reason the probability is shown on a
-          case only under its technical details. The Corsini pair itself is
-          still undecided, in the queue, waiting for a reviewer.
+          The score orders the queue. As a ranking it works well: the pairs
+          at the top are the ones worth a reviewer&rsquo;s time. As a
+          probability it is rough, because the weights were estimated without
+          a single confirmed match and the prior rests on a guess about how
+          many true matches the strict rule finds.<Fn n={20} /> For that reason the probability is shown on a
+          case only under its technical details.
         </p>
       </section>
 
@@ -1356,11 +1337,11 @@ export default function PersonLinkagePrimer() {
             </div>
             <div>
               <dt>Name and context agree</dt>
-              <dd>The same name, or one letter off, with the father&rsquo;s name, the years or a firm in agreement. These need a human eye; the tool never claims a match here on its own.</dd>
+              <dd>The same name, or one letter off, with the father&rsquo;s name, the years or a firm in agreement. These need a human eye.</dd>
             </div>
             <div>
               <dt>Check the contract</dt>
-              <dd>The pairs marked as needing a reading of the contract. The contract itself decides.</dd>
+              <dd>The pairs marked as needing a reading of the contract.</dd>
             </div>
             <div>
               <dt>Other possible matches</dt>
@@ -1368,11 +1349,11 @@ export default function PersonLinkagePrimer() {
             </div>
             <div>
               <dt>One entry, two people?</dt>
-              <dd>Entries that may hold two people. They can be flagged with a note, not split; your flags are listed here too.</dd>
+              <dd>Entries that may hold two people. Flag one with a note; your flags are listed here too.</dd>
             </div>
             <div>
               <dt>Decided</dt>
-              <dd>What has been answered, with its history and an undo.</dd>
+              <dd>Answered cases; open one to read its history or undo it.</dd>
             </div>
             <div>
               <dt>Ruled out by the rules</dt>
@@ -1429,16 +1410,14 @@ export default function PersonLinkagePrimer() {
           </li>
           <li>
             <strong>Flag one entry as possibly two people.</strong>{" "}
-            Marks a single entry that may hold two men, like the Guicciardini
-            entry above, with a note saying where the seam is. Nothing is
-            split; your flags are listed under &ldquo;One entry, two
-            people?&rdquo; and on the entry&rsquo;s page, and you can lift
-            them.
+            Marks a single entry that may hold two men, with a note on which
+            contracts seem to belong to someone else. Your flags are listed
+            under &ldquo;One entry, two people?&rdquo; and on the
+            entry&rsquo;s page.
           </li>
         </ul>
         <p className="pl-primer-note">
-          Every answer is recorded under your initials and can be undone. In
-          the labeling round the scores stay hidden until you have answered.
+          Every answer is recorded under your initials and can be undone.
           <Fn n={22} />
         </p>
       </section>

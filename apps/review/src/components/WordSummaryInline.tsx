@@ -69,7 +69,7 @@ export default function WordSummaryInline({
         {(source.comment_count ?? 0) > 0 && (
           <span
             className="ws-inline-comments"
-            title="This summary carries editorial comments (often paleographic doubts) — expand to read them"
+            title="Editorial comments in the Word file; open the summary to read them"
           >
             {source.comment_count} comment{source.comment_count === 1 ? "" : "s"}
           </span>

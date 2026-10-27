@@ -3141,10 +3141,6 @@ progress {
   color: #b07a47;
 }
 
-.ref-noun-foot {
-  margin-top: 18px;
-}
-
 .ref-records {
   list-style: none;
   margin: 0;
@@ -8510,13 +8506,6 @@ a.db-history-subject:hover {
 
 .pl-context-profiles .pl-name-matrix {
   margin-top: 0;
-}
-
-.pl-context-intro {
-  color: #756555;
-  font-size: 0.8rem;
-  line-height: 1.45;
-  margin: 0 0 15px;
 }
 
 .pl-shared-section {

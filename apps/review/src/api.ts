@@ -62,7 +62,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       // not JSON (a proxy or host error page, a bare "Internal Server Error", an empty body): keep the default
     }
     if (/database is locked/i.test(message)) {
-      message = "The server is busy — nothing was lost. Please try again.";
+      message = "The server is busy. Please try again.";
     }
     console.warn("API request failed:", path, response.status, text.slice(0, 300));
     throw apiError(message, response.status);

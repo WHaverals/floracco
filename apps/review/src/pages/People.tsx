@@ -38,10 +38,10 @@ const REVIEWER_KEY = "floracco_reviewer";
 // repeats them in the same order; keep the two in step). The ids are the
 // server's and never change.
 const LANES: Array<{ id: PersonLinkageLane; label: string; note: string }> = [
-  { id: "labeling_round", label: "Judge blind", note: "Cases chosen to cover every kind of evidence; the scores stay hidden until you answer" },
+  { id: "labeling_round", label: "Judge blind", note: "Cases chosen to cover every kind of evidence" },
   { id: "likely_duplicates", label: "Likely duplicates", note: "The same name typed twice, or the same full name with one plausible working life" },
   { id: "high_concordance", label: "Name and context agree", note: "The same name, or one letter off, with the father, the years or a firm agreeing" },
-  { id: "read_source", label: "Check the contract", note: "The fields cannot settle it; the contract itself decides" },
+  { id: "read_source", label: "Check the contract", note: "The fields cannot settle it; read the contract" },
   { id: "other_matches", label: "Other possible matches", note: "Every pair the model ranks, best first" },
   { id: "possible_splits", label: "One entry, two people?", note: "Entries that may hold two people, and the ones you have flagged" },
   { id: "decided", label: "Decided", note: "What has been answered, with its history and an undo" },
@@ -128,7 +128,7 @@ function FlagChip({
     <span className="pl-split-status" title={title || undefined}>
       Flagged by {flag.created_by || "a reviewer"}, {plainDate(flag.created_at)}
       {flag.changed_by ? ` · marks changed by ${flag.changed_by}, ${plainDate(flag.changed_at)}` : ""}
-      {flag.marks ? ` · ${flag.marks.other} of ${flag.marks.total}` : ""}
+      {flag.marks ? ` · ${flag.marks.other} of ${flag.marks.total} marked as someone else's` : ""}
       {kind === "split" && onChangeMarks ? (
         <button type="button" disabled={busy} onClick={onChangeMarks} title="Change which acts are whose">
           {flag.marks ? "Change" : "Mark the acts"}
@@ -136,7 +136,7 @@ function FlagChip({
       ) : kind && kind !== "split" ? (
         <Link
           to={`/people/split:${flag.person_id}${caseId ? `?from=${encodeURIComponent(caseId)}` : ""}`}
-          title="Open the entry's own case to mark which acts are whose"
+          title="Opens the entry's own case"
         >
           Mark which acts are whose →
         </Link>
@@ -366,8 +366,7 @@ function GroupPairMatrix({
       <p className="eyebrow">Whole-group check</p>
       <h2 id="pl-pair-matrix-heading">How the entries are connected</h2>
       <p className="muted">
-        A group can be held together by only some pair suggestions. Choose whether the next decision covers every
-        entry, or only one pair.
+        A group can be held together by only some pair suggestions.
       </p>
       <ul className="pl-pair-matrix">
         <li>
@@ -432,12 +431,7 @@ function SharedOverlapPanel({ detail }: { detail: PersonLinkageCase }) {
 
   return (
     <section className="pl-section" aria-labelledby="pl-overlap-heading">
-      <p className="eyebrow">Business context</p>
       <h2 id="pl-overlap-heading">Shared connections</h2>
-      <p className="pl-context-intro">
-        These entries occur in some of the same business settings. That is context—not proof that they describe one
-        person.
-      </p>
 
       <section className="pl-shared-section">
         <h3>Same full firm name</h3>
@@ -477,7 +471,6 @@ function SharedOverlapPanel({ detail }: { detail: PersonLinkageCase }) {
                   <Link to={`/database/person/${partner.person_id}`}>
                     {partner.display_name} · Entry #{partner.person_id}
                   </Link>
-                  <span>Shared contact</span>
                 </header>
                 <div className="pl-connection-sides">
                   {detail.persons.map((person) => (
@@ -577,8 +570,8 @@ function ContextProfiles({ persons }: { persons: PersonLinkagePerson[] }) {
         </table>
       </div>
       <p className="pl-quondam-guard">
-        A ‘quondam’ title dates the named relative’s death — the father’s or husband’s, not this
-        person’s — and its absence means nothing, since scribes often omitted it.
+        A ‘quondam’ title marks the death of the named father or husband, not of this person. Scribes often
+        left it out, so its absence means nothing.
       </p>
     </section>
   );
@@ -587,11 +580,9 @@ function ContextProfiles({ persons }: { persons: PersonLinkagePerson[] }) {
 function AppearanceTables({ persons, seam }: { persons: PersonLinkagePerson[]; seam?: PersonSeamView | null }) {
   const markedSide = seam ? new Map(seam.assignments.map((item) => [item.investor_id, item.side])) : null;
   return (
-    <section className="pl-section" aria-labelledby="pl-appearance-heading">
-      <p className="eyebrow">Database context</p>
-      <h2 id="pl-appearance-heading">Contract appearances</h2>
+    <section className="pl-section">
       {markedSide ? (
-        <p className="muted">“Marked as” is the reader's marking of which acts are whose; the entry itself is unchanged.</p>
+        <p className="muted">“Marked as” is the reader's marking of which acts are whose.</p>
       ) : null}
       <div className="pl-appearance-grid">
         {persons.map((person) => (
@@ -725,8 +716,7 @@ function EvidenceDrawer({
               {relatedSources.length ? (
                 <section className="pl-drawer-source-list">
                   <p className="muted">
-                    Word summaries from contracts where one of these entries appears. Context, not a direct
-                    person-to-document link.
+                    Word summaries of the contracts in which one of these entries appears.
                   </p>
                   {detail.persons.map((person) => {
                     const contracts = new Map(
@@ -767,8 +757,6 @@ function EvidenceDrawer({
                 <section className="pl-drawer-source-list pl-entry-sources">
                   <p className="muted">
                     The acts this entry appears in, oldest first, each with the Word summary linked to it.
-                    A link is the matcher's proposal unless it is marked confirmed; a rejected link is kept
-                    visible and marked.
                   </p>
                   {detail.entry_sources.map((act) => (
                     <article className="pl-source-card" key={act.contract_id}>
@@ -1237,17 +1225,17 @@ export default function People() {
       // sits above the next case after the queue advances.
       const label = ids.length === 1 ? `entry #${ids[0]}` : `entries ${ids.map((id) => `#${id}`).join(" and ")}`;
       const message =
-        action === "same_as" ? `Linked ${label} as one person. The entries stay as entered.`
+        action === "same_as" ? `Linked ${label} as one person.`
           : action === "distinct" ? `Kept ${label} as different people.`
             : action === "flag_split" ? (
               secondarySplit
                 ? `Flagged ${label} as possibly two people. The pair is still open: answer it as well.`
-                : `Flagged ${label} as possibly two people. The entry stays as it is; the note is kept for later.`
+                : `Flagged ${label} as possibly two people.`
             )
               : action === "reopen" ? "Reopened; the case is back in its lane."
               : action === "bulk_rule_ack"
-                ? "Recorded that you inspected a sample of this rule. No case was decided."
-              : `Set ${label} aside with your note until someone reopens it.`;
+                ? "Recorded that you inspected a sample of this rule."
+              : `Set ${label} aside until someone reopens it.`;
       setRationale("");
       setPendingDecision(null);
       setSplitPersonId(null);
@@ -1324,7 +1312,7 @@ export default function People() {
         citations: [],
         review_mode: "standard",
       });
-      setMessage(`Flag lifted from entry #${flag.person_id}. The note stays in the history.`);
+      setMessage(`Flag lifted from entry #${flag.person_id}.`);
       setLastDecision(null);
       await reload();
       if (selected) setDetail(await loadPersonLinkageCase(selected));
@@ -1488,8 +1476,8 @@ export default function People() {
         + (counts.unsure ? `, ${counts.unsure} unsure` : "");
       setMessage(
         revising
-          ? `Marks changed on entry #${personId}: ${tally}. Nothing is split.`
-          : `Flagged entry #${personId} as possibly two people: ${tally}. Nothing is split.`,
+          ? `Marks changed on entry #${personId}: ${tally}.`
+          : `Flagged entry #${personId} as possibly two people: ${tally}.`,
       );
       setLastDecision(
         revising && previous
@@ -1566,9 +1554,6 @@ export default function People() {
       .slice(0, 24);
   }, [detail]);
   const appearanceCount = detail?.persons.reduce((sum, person) => sum + person.n_appearances, 0) ?? 0;
-  const scopedAppearanceCount = detail?.persons
-    .filter((person) => scopedIds.includes(person.person_id))
-    .reduce((sum, person) => sum + person.n_appearances, 0) ?? 0;
   // Recurring firm words count as one signal, not one per word: three words
   // of one firm family are a single piece of context, not three.
   const sharedContextCount = detail?.pairs.reduce(
@@ -1692,7 +1677,7 @@ export default function People() {
                   Stranded entries
                 </button>
                 <small className="pl-stranded-help">
-                  One side never appears in a contract. These groups also stay in Likely duplicates.
+                  One side never appears in a contract. Groups of such entries are in Likely duplicates, not here.
                 </small>
                 {stranded ? (
                   <label className="pl-stranded-scope">
@@ -1728,7 +1713,7 @@ export default function People() {
                 </div>
                 <small className="pl-stranded-help">
                   {splitFacet === "flagged"
-                    ? "Entries a reviewer has flagged, newest first. Open one to read or lift the flag."
+                    ? "Entries a reviewer has flagged, newest first."
                     : "Entries whose contracts span more than sixty years."}
                 </small>
               </div>
@@ -1738,9 +1723,9 @@ export default function People() {
             {loading || (!listFailed && totalFor !== (searching ? "search" : lane))
               ? searching ? "Searching…" : "Loading…"
               : lane === "labeling_round" && summary?.labeling_packet_available === false
-                ? "Judge blind is not set up on this site yet."
+                ? "No cases"
               : lane === "labeling_round" && summary?.labeling_packet_stale
-                ? "Judge blind is paused: its cases were drawn from an earlier set of suggestions, and a new set has to be drawn before judging can resume."
+                ? "Paused"
               : listFailed
                 ? (
                   <>
@@ -1757,20 +1742,20 @@ export default function People() {
               : total
                 ? `${offset + 1}–${offset + cases.length} of ${total}`
                 : lane === "labeling_round" && summary?.labeling_packet_available === false
-                  ? "Judge blind is not set up on this site yet."
+                  ? "No cases"
                   : lane === "labeling_round" && summary?.labeling_packet_stale
-                    ? "Judge blind is paused: its cases were drawn from an earlier set of suggestions, and a new set has to be drawn before judging can resume."
+                    ? "Paused"
                     : reservedForLabeling > 0
                       ? reservedForLabeling === 1
-                        ? "The only case in this lane is part of the open labeling round. Decide it under Judge blind, or finish the round to review it here."
-                        : `All ${reservedForLabeling} cases in this lane are part of the open labeling round. Decide them under Judge blind, or finish the round to review them here.`
+                        ? "The only case in this lane is waiting under Judge blind. Decide it there, or finish the round to review it here."
+                        : `All ${reservedForLabeling} cases in this lane are waiting under Judge blind. Decide them there, or finish the round to review them here.`
                       : "No open cases"}
           </p>
           {!loading && !searching && total > 0 && reservedForLabeling > 0 ? (
             <p className="pl-queue-note">
               {reservedForLabeling === 1
-                ? "1 more case in this lane is in the open labeling round."
-                : `${reservedForLabeling} more cases in this lane are in the open labeling round.`}
+                ? "1 more case in this lane is waiting under Judge blind."
+                : `${reservedForLabeling} more cases in this lane are waiting under Judge blind.`}
             </p>
           ) : null}
           {lane === "rule_exclusions" && detail ? (
@@ -1876,7 +1861,7 @@ export default function People() {
             {!loading && !total && lane === "labeling_round" && summary?.labeling_packet_available === false ? (
               <>
                 <h2>Judge blind is unavailable</h2>
-                <p>Judge blind is not set up on this site yet.</p>
+                <p>It is not set up on this site yet.</p>
               </>
             ) : !loading && !total && lane === "labeling_round" && summary?.labeling_packet_stale ? (
               <>
@@ -1922,7 +1907,7 @@ export default function People() {
                 {detail.lane !== "labeling_round" && lane !== "labeling_round" ? (
                   <CopyLinkButton
                     path={`/people/${encodeURIComponent(detail.case_id)}`}
-                    title="Copy a link to this case, to send or to reopen later"
+                    title="Copy a link to this case"
                   />
                 ) : null}
               </div>
@@ -1930,16 +1915,19 @@ export default function People() {
             <div className="pl-review-body">
               {detail.stale?.stale ? (
                 <div className="notice warning" role="alert">
-                  The database or saved model has changed since these suggestions were built. The lane, the reasons and the score may no longer match the entries; judge from the entries and the sources.
+                  The database or saved model has changed since these suggestions were built. The lane, the reasons and the score may no longer match the entries.
                 </div>
               ) : null}
               {detail.needs_recheck ? (
                 <div className="notice warning" role="alert">
-                  Evidence changed after the last decision. The original decision and evidence remain in the Review
-                  history; review this case again before relying on it.
+                  Evidence changed after the last decision. Review this case again before relying on it; the original
+                  decision is in the Review history.
                 </div>
               ) : null}
-              {error ? <div className="notice error" role="alert">{error}</div> : null}
+              {/* Said once: an open confirm panel or marking bar shows the error itself. */}
+              {error && !pendingDecision && !(marking && detail.kind === "split") ? (
+                <div className="notice error" role="alert">{error}</div>
+              ) : null}
               {message ? (
                 <div className="notice success pl-decision-toast" role="status">
                   <span>{message}</span>
@@ -1990,7 +1978,6 @@ export default function People() {
                   <SeamRibbon
                     appearances={detail.persons[0].appearances}
                     marks={marksFromView(detail.seam)}
-                    caption="From the standing marks; the entry itself is unchanged"
                   />
                 ) : (
                   <CareerSpanRibbon persons={detail.persons} />
@@ -2013,8 +2000,7 @@ export default function People() {
                 />
               ) : detail.lane === "labeling_round" ? (
                 <section className="pl-blind-labeling-note">
-                  <strong>The scores are hidden in the labeling round.</strong>
-                  <span>Decide from the entries and the sources. The scores appear once you have answered.</span>
+                  <strong>The scores are hidden until you have answered.</strong>
                 </section>
               ) : detail.persons.length >= 3 ? (
                 <section className="pl-blind-labeling-note">
@@ -2025,8 +2011,8 @@ export default function People() {
                   </strong>
                   <span>
                     {scopeKey && scopeKey !== "all"
-                      ? "Judge from the fields and the sources; a missing score is not evidence that the people differ."
-                      : "Choose one pair above to see its evidence chart. No single score sums up a whole group."}
+                      ? "A missing score is no evidence that they differ."
+                      : "Choose one pair above to see its evidence chart."}
                   </span>
                 </section>
               ) : null}
@@ -2074,11 +2060,11 @@ export default function People() {
                 ) : null}
               </nav>
 
-              <p className="pl-impact-note">
-                <strong>{scopedIds.length} {scopedIds.length === 1 ? "entry" : "entries"}</strong>
-                {scopedIds.length > 1 ? " → 1 reviewed identity if linked" : ""}
-                {" · "}{scopedAppearanceCount} appearance{scopedAppearanceCount === 1 ? " remains" : "s remain"} unchanged
-              </p>
+              {scopedIds.length > 1 ? (
+                <p className="pl-impact-note">
+                  <strong>{scopedIds.length} entries</strong> → 1 reviewed identity if linked
+                </p>
+              ) : null}
               </>)}
             </div>
 
@@ -2088,7 +2074,7 @@ export default function People() {
                   <div className="pl-seam-bar-count">
                     <span>Marking the acts · entry #{detail.person_ids[0]}</span>
                     <strong>{seamTally}</strong>
-                    <small>Nothing is split. Saved with the flag as your signed note; you can change or lift it later.</small>
+                    <small>The marks are saved with the flag and your note; you can change them or lift the flag later.</small>
                   </div>
                   {error ? <p className="pl-decision-error" role="alert">{error}</p> : null}
                   <div className="pl-decision-fields">
@@ -2143,12 +2129,12 @@ export default function People() {
                       ) : null}
                       <small className="pl-decision-scope">
                         {pendingDecision === "flag_split"
-                          ? "Keeps a signed note on the entry; you can lift it later. Nothing is split."
+                          ? "Adds a flag and your note to the entry; you can lift it later."
                           : pendingDecision === "defer"
                             ? "Sets the case aside with your note until someone reopens it."
                             : pendingDecision === "bulk_rule_ack"
                               ? "Records that you inspected a sample of this rule; no case is decided."
-                              : "Writes a signed note that can be undone later; the entries themselves stay unchanged."}
+                              : "The entries stay as entered; you can undo this later."}
                       </small>
                     </div>
                     <button
@@ -2163,27 +2149,22 @@ export default function People() {
                       Cancel
                     </button>
                   </div>
-                  {pendingDecision === "flag_split" ? (
+                  {pendingDecision === "flag_split" && detail.persons.length > 1 ? (
                     <>
-                      {detail.persons.length > 1 ? (
-                        <div className="pl-split-choices" role="group" aria-label="Which entry may hold two people">
-                          {detail.persons.map((person, index) => (
-                            <button
-                              autoFocus={index === 0}
-                              className={splitPersonId === person.person_id ? "is-selected" : ""}
-                              key={person.person_id}
-                              onClick={() => setSplitPersonId(person.person_id)}
-                              type="button"
-                            >
-                              #{person.person_id} · {person.display_name}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                      <p className="pl-decision-caution">
-                        {detail.persons.length > 1 ? "Which entry? " : ""}
-                        Nothing is split now; the note is kept for a later split.
-                      </p>
+                      <p className="pl-decision-caution">Which entry?</p>
+                      <div className="pl-split-choices" role="group" aria-label="Which entry may hold two people">
+                        {detail.persons.map((person, index) => (
+                          <button
+                            autoFocus={index === 0}
+                            className={splitPersonId === person.person_id ? "is-selected" : ""}
+                            key={person.person_id}
+                            onClick={() => setSplitPersonId(person.person_id)}
+                            type="button"
+                          >
+                            #{person.person_id} · {person.display_name}
+                          </button>
+                        ))}
+                      </div>
                     </>
                   ) : null}
                   {pendingDecision === "same_as"
@@ -2300,7 +2281,7 @@ export default function People() {
                       ) : (
                         detail.marks_held_by_round ? (
                           <p className="pl-scope-required">
-                            This entry is in the open Judge-blind round; marks can be made once it is judged.
+                            This entry is waiting under Judge blind; its acts can be marked once it is judged.
                           </p>
                         ) : (
                           <button className="is-split" onClick={startMarking} type="button">

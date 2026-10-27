@@ -153,12 +153,11 @@ export default function CreateRecordForm({
     setError("");
     if (!reviewer.trim()) return setError("Your initials are needed.");
     if (!folder.trim()) return setError("Pick the register.");
-    if (!folio.trim())
-      return setError(`The folio is required: it locates the ${table === "contract" ? "contract" : "sub-contract"} in the register.`);
+    if (!folio.trim()) return setError("The folio is required.");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return setError("Registration date must be YYYY-MM-DD.");
-    if (docText.trim().length < 10) return setError("Write the narrative (the regest) — it is the record's text.");
+    if (docText.trim().length < 10) return setError("The narrative is required (at least 10 characters).");
     if (source.trim().length < 3)
-      return setError("A source line is required: this record has no Word summary, so the source is its provenance.");
+      return setError("A source line is required (at least 3 characters).");
     if (table === "contract") {
       const wait = lookupCheckBlock(activityCheck, "the economic activity");
       if (wait) return setError(wait);
@@ -219,7 +218,7 @@ export default function CreateRecordForm({
       <header className="db-record-head">
         <div className="db-record-titles">
           <p className="eyebrow">
-            {table === "contract" ? "New contract — added directly to the database" : "New sub-contract of an existing contract"}
+            {table === "contract" ? "New contract" : "New sub-contract"}
           </p>
           <h2>{table === "contract" ? "Add a contract" : `Add a sub-contract${parent ? ` · ${parent.title}` : ""}`}</h2>
           {table === "sub_contract" && parent && (
@@ -359,14 +358,13 @@ export default function CreateRecordForm({
 
       {similarFailed && (
         <p className="error-text">
-          The duplicate check failed — could not verify whether a contract already exists at this
-          register &amp; folio. Check your connection before creating.
+          Could not check for an existing contract at this register and folio. Check your connection before
+          creating.
         </p>
       )}
       {similar.length > 0 && (
         <div className="create-warning">
-          <strong>Possible duplicates in this register</strong> — same {similar[0].match} (worth a look
-          before creating):
+          <strong>Possible duplicates in this register</strong> (check before creating):
           <ul>
             {similar.map((row) => (
               <li key={row.row_id}>
@@ -381,7 +379,7 @@ export default function CreateRecordForm({
       )}
 
       <label className="create-field create-narrative">
-        <span className="create-label">Narrative — the record’s own regest, written directly into the database</span>
+        <span className="create-label">Narrative (regest)</span>
         <textarea
           rows={10}
           value={docText}
@@ -391,7 +389,7 @@ export default function CreateRecordForm({
       </label>
 
       <label className="create-field">
-        <span className="create-label">Source (required — this record has no Word summary; the source is its provenance)</span>
+        <span className="create-label">Source (required, since there is no Word summary)</span>
         <input
           value={source}
           onChange={(e) => setSource(e.target.value)}
@@ -426,8 +424,7 @@ export default function CreateRecordForm({
       </div>
       {error && <p className="error-text">{error}</p>}
       <p className="inline-editor-foot muted">
-        The new record is saved under your initials and listed in its change history. Add partners, places
-        and further details afterwards on the record page.
+        Add partners, places and further details afterwards on the record page.
       </p>
     </article>
   );

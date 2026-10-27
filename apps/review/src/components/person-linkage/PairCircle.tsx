@@ -306,11 +306,9 @@ export default function PairCircle({ data }: { data: CircleData }) {
         <span><i className="pl-circle-key" /> partner of one entry only</span>
         <span><i className="pl-circle-key-line is-firm" /> a contract of the renewed firm</span>
         <span className="pl-circle-caption">
-          The two entries are drawn apart and never joined: this figure shows
-          company, not identity. Each entry&rsquo;s own partners fan out from
-          it, from its earliest contract at the top to its latest at the
-          bottom. Hover over a partner or a line to see the contracts behind
-          it.
+          Each entry&rsquo;s own partners fan out from it, from its earliest
+          contract at the top to its latest at the bottom. Hover over a
+          partner or a line to see the contracts behind it.
         </span>
       </figcaption>
     </figure>

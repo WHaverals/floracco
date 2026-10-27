@@ -170,7 +170,7 @@ export default function InlineFieldEditor({
       </div>
       {error && <p className="error-text">{error}</p>}
       <p className="inline-editor-foot muted">
-        Saved at once and recorded under your initials.
+        Saved at once. To reverse it, edit the field again.
       </p>
     </div>
   );

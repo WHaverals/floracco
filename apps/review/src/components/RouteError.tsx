@@ -10,10 +10,7 @@ export default function RouteError() {
   return (
     <div className="error-boundary">
       <p className="eyebrow">Something went wrong</p>
-      <h2>This page could not be shown</h2>
-      <p className="muted" title={detail}>
-        A display error stopped it. Reload the page to continue.
-      </p>
+      <h2 title={detail}>This page could not be shown</h2>
       <div className="error-boundary-actions">
         <button type="button" className="pill-button is-primary" onClick={() => window.location.reload()}>
           Reload

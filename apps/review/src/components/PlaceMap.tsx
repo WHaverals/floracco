@@ -200,9 +200,7 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
       <div className="ref-overview">
         <p className="eyebrow">Map</p>
         <h2>Places on the map</h2>
-        <p className="muted ref-note">
-          No coordinates have been worked out for the places yet, so there is nothing to show on the map.
-        </p>
+        <p className="muted ref-note">No places have map coordinates yet.</p>
       </div>
     );
   }
@@ -213,7 +211,7 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
       <div className="pm-head">
         <div>
           <p className="eyebrow">Map</p>
-          <h2>Where the partners traded</h2>
+          <h2>Places on the map</h2>
         </div>
         {tf.k > 1 && (
           <div className="db-tabs pm-views">
@@ -232,8 +230,7 @@ export default function PlaceMap({ onPick }: { onPick: (p: PlaceMapPoint) => voi
         </p>
       ) : (
         <p className="muted ref-note pm-caption">
-          {points ? `${shown.toLocaleString()} places in view` : "Loading…"} · dot size = contracts ·
-          hollow ring = approximate · scroll to zoom, drag to pan
+          {points ? `${shown.toLocaleString()} places in view` : "Loading…"} · scroll to zoom, drag to pan
         </p>
       )}
 

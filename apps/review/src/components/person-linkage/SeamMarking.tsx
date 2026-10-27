@@ -266,7 +266,7 @@ export default function SeamMarking({
       </section>
 
       <section className="pl-seam-observed" aria-label="Observed in the entered data">
-        <p className="eyebrow">Observed in the entered data, not a judgment</p>
+        <p className="eyebrow">Observed in the entered data</p>
         <ul>
           {observed.map((line) => <li key={line}>{line}</li>)}
         </ul>
@@ -288,7 +288,7 @@ export default function SeamMarking({
                 inputMode="numeric"
                 aria-label="Entry number of the other person, if known"
               />
-              <small>optional; kept as a note, never acted on</small>
+              <small>optional; kept as a note</small>
             </label>
           ) : seam?.other_entry_id ? (
             <p className="muted">Someone else may be entry <Link to={`/people/split:${seam.other_entry_id}`}>#{seam.other_entry_id}</Link> (a note).</p>
@@ -354,8 +354,8 @@ export default function SeamMarking({
         ) : null}
         <p className="muted pl-seam-aids-note">
           {editable
-            ? "The buttons above only select; you decide the mark. Every act starts on “This entry”."
-            : "Marked by the reader; the entry itself is unchanged."}
+            ? "The buttons above only select acts. Every act starts on “This entry”."
+            : "Marked by the reader."}
         </p>
 
         <div className="pl-table-scroll">
@@ -477,11 +477,11 @@ export default function SeamMarking({
           </table>
         </div>
         {seam?.hidden.length ? (
-          <p className="muted">Hidden since the marks: {seam.hidden.map((id) => `#${id}`).join(", ")} (appearances no longer live).</p>
+          <p className="muted">Hidden since the marks: {seam.hidden.map((id) => `#${id}`).join(", ")}.</p>
         ) : null}
         <p className="muted pl-seam-footnote">
           “Named in the summary as”: the words around “{givenName || "the given name"}” in each linked Word summary,
-          found by a plain text search and shown as written. It is not a reading of the act; open the summary to check.
+          found by a plain text search and shown as written; open the summary to check.
         </p>
       </section>
     </div>

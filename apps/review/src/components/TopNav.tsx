@@ -79,7 +79,7 @@ export default function TopNav({ identityEmail }: { identityEmail?: string | nul
       {identityEmail ? (
         <span
           className="top-nav-identity"
-          title={`${identityEmail} — signed in via Cloudflare Access; your edits are attributed to this account`}
+          title={`Signed in as ${identityEmail}. Your edits are recorded under this account.`}
         >
           {/* the domain gives way first on narrow windows (see styles.css) */}
           <span>{identityEmail.includes("@") ? identityEmail.slice(0, identityEmail.indexOf("@")) : identityEmail}</span>

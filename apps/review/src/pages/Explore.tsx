@@ -16,7 +16,7 @@ const TOOLS = [
     to: "/database",
     key: "database",
     title: "Browse & edit the database",
-    blurb: "Browse and edit database records alongside their Word summaries, and manuscript pages.",
+    blurb: "Records beside their Word summaries and manuscript pages.",
   },
   {
     to: "/reconcile",
@@ -170,7 +170,7 @@ export default function Explore() {
                       <strong>{t.term}</strong>: {t.count.toLocaleString()}
                     </span>
                   ))}{" "}
-                  · together: 0 — these never co-occur in one record; try fewer terms.
+                  · together: 0. Try fewer terms.
                 </p>
               )}
             </div>

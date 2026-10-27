@@ -85,7 +85,7 @@ GROUP_META: dict[str, dict[str, str]] = {
     "placeholder_text": {
         "label": "Placeholder text",
         "severity": "medium",
-        "explanation": "A field holds the word NULL (or a dash) where the source has nothing — an export artefact or a slip at the keyboard, not information. Open the field and clear it; if the source does record a value, enter that instead.",
+        "explanation": "A field holds “NULL” or a dash instead of a value. Clear it, or enter the value if the source records one.",
     },
     "broken_economic_sector": {
         "label": "Economic activity not in the list",
@@ -100,12 +100,12 @@ GROUP_META: dict[str, dict[str, str]] = {
     "no_partners": {
         "label": "No partners recorded",
         "severity": "high",
-        "explanation": "This accomandita has no partners entered; it needs at least one general partner (accomandatario) and one external investor (accomandante). Add them from the source.",
+        "explanation": "This contract has a narrative but no partners entered. Add them from the source.",
     },
     "dup_partner": {
         "label": "Possible duplicate partner",
         "severity": "medium",
-        "explanation": "This person appears more than once on the contract without a second, distinct stake: either an extra appearance with no stake attached, or two links to the same stake. It was probably entered twice. Check the source; if so, remove the redundant appearance (the stake and its capital stay as they are).",
+        "explanation": "This person appears more than once on the contract without a second stake, so was probably entered twice. Check the source; if so, remove the extra appearance. The stake and its capital stay.",
     },
     "person_no_name": {
         "label": "Unnamed person",
@@ -135,7 +135,7 @@ GROUP_META: dict[str, dict[str, str]] = {
     "orphan_stake": {
         "label": "Stake with no partner",
         "severity": "medium",
-        "explanation": "A role and a sum are recorded on this contract without a person attached — left over from data entry, or a partner who was removed. Open the Partners block and attach the right person, or remove the stake if it was entered in error.",
+        "explanation": "A role and a sum are recorded on this contract without a person attached: left over from data entry, or a partner who was removed.",
     },
     "widow_not_woman": {
         "label": "Marked widow, not a woman",

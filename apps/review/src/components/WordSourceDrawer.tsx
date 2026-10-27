@@ -113,11 +113,8 @@ export default function WordSourceDrawer({
                   </div>
                 )}
               </div>
-              {hasEditorialRecord && (
-                <p className="word-drawer-note muted">
-                  This summary carries an editorial record ({summaryParts.join(", ")}). The Word file
-                  itself stays frozen; this is its history, shown as evidence.
-                </p>
+              {hasEditorialRecord && summaryParts.length > 0 && (
+                <p className="word-drawer-note muted">Editorial record: {summaryParts.join(", ")}.</p>
               )}
               {hasEditorialRecord && rich ? (
                 <TrackedText rich={rich} highlights={[]} mode={mode} />

@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
  * clipboard, the link is shown in a field to copy by hand. */
 export default function CopyLinkButton({
   path,
-  title = "Copy a link to this page, to send or to reopen later",
+  title = "Copy a link to this page",
   disabledReason,
 }: {
   /** The page's path and query, e.g. "/reference/title/235". */

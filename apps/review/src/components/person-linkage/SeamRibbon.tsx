@@ -122,7 +122,7 @@ export default function SeamRibbon({
   const bandLine = band
     ? `Nearest acts of the two men: ${band[1] - band[0]} years apart (${band[0]} → ${band[1]})`
     : interleaved
-      ? "The two men's acts interleave: these marks are not a cut in time"
+      ? "The two men's acts interleave in time"
       : "";
 
   return (
@@ -218,8 +218,8 @@ export default function SeamRibbon({
       <figcaption className="pl-career-legend">
         <span><i className="pl-career-legend-event" /> dated appearance</span>
         <span><i className="pl-career-legend-posthumous" /> posthumous (heirs of)</span>
-        {band ? <span><i className="pl-seam-legend-band" /> where the change falls, from the marks</span> : null}
-        <span><i className="pl-career-legend-extent" /> first-to-last extent, not continuity</span>
+        {band ? <span><i className="pl-seam-legend-band" /> where the change falls</span> : null}
+        <span><i className="pl-career-legend-extent" /> span from first to last dated appearance</span>
       </figcaption>
     </figure>
   );

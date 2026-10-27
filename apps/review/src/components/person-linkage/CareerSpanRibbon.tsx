@@ -79,10 +79,10 @@ export default function CareerSpanRibbon({ persons }: { persons: PersonLinkagePe
         );
       });
       relationship = sharedYears.length === 1
-        ? `Both records have appearances dated ${sharedYears[0]} · ${
+        ? `Both entries have appearances dated ${sharedYears[0]} · ${
           sameContract ? "same contract" : "different contracts"
         }`
-        : `Both records have appearances in ${sharedYears.join(", ")} · ${
+        : `Both entries have appearances in ${sharedYears.join(", ")} · ${
           sameContract ? "at least one shared contract" : "different contracts"
         }`;
     } else {
@@ -100,7 +100,7 @@ export default function CareerSpanRibbon({ persons }: { persons: PersonLinkagePe
       <div className={groupSpan > 60 ? "pl-career-summary is-warning" : "pl-career-summary"}>
         <strong>{relationship}</strong>
         {groupSpan <= 60 ? (
-          <span>Shown within a consistent 60-year reference window</span>
+          <span>Drawn on a window of at least 60 years</span>
         ) : null}
       </div>
       <svg
@@ -231,7 +231,7 @@ export default function CareerSpanRibbon({ persons }: { persons: PersonLinkagePe
       </svg>
       <figcaption>
         <span><i className="pl-career-legend-event" /> dated contract</span>
-        <span><i className="pl-career-legend-extent" /> first-to-last observed extent, not continuity</span>
+        <span><i className="pl-career-legend-extent" /> span from first to last dated contract (heirs’ contracts not included)</span>
         {rows.some((row) => row.posthumous.length) ? (
           <span><i className="pl-career-legend-posthumous" /> posthumous (heirs of)</span>
         ) : null}

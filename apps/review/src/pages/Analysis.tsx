@@ -637,7 +637,7 @@ export default function Analysis() {
                         onClick={() => selectedId !== q.id && navigate(`/analysis/${q.id}`)}
                       >
                         <span className="an-query-title">{q.title}</span>
-                        <span className="an-query-desc muted">{q.description}</span>
+                        {q.description && <span className="an-query-desc muted">{q.description}</span>}
                       </button>
                     </li>
                   ))}
@@ -659,14 +659,13 @@ export default function Analysis() {
         ) : mode === "builder" ? (
           <div className="an-library">
             <p className="db-empty muted" style={{ padding: "8px 10px" }}>
-              Compose a question from the controls — it runs as you change it. Nothing here can modify the data.
+              Compose a question from the controls; it runs as you change it.
             </p>
           </div>
         ) : (
           <div className="an-library">
             <p className="db-empty muted" style={{ padding: "8px 10px" }}>
-              Write your own read-only SQL for anything the builder can't express. SELECT only —
-              writes are refused, results are capped.
+              Write your own SQL for anything the builder can't express.
             </p>
           </div>
         )}
@@ -680,7 +679,7 @@ export default function Analysis() {
               {queries.length === 0 ? (
                 libraryFailed ? (
                   <p className="error-text an-note">
-                    The query library could not be loaded, so this query cannot be shown yet. Use Try again in the list.
+                    The query library could not be loaded. Use Try again in the list.
                   </p>
                 ) : (
                   <p className="muted an-note">Loading…</p>
@@ -699,8 +698,7 @@ export default function Analysis() {
               <p className="eyebrow">Analysis</p>
               <h2>Ask a question of the corpus</h2>
               <p className="muted an-note">
-                Pick a query from the library to see its result as a table and a chart, and export it to CSV — or switch
-                to <strong>Build a query</strong> to compose your own. Every query is read-only.
+                Pick a query from the library, or compose your own under <strong>Build a query</strong>.
               </p>
             </div>
           ) : (
@@ -712,10 +710,10 @@ export default function Analysis() {
                 </div>
                 <CopyLinkButton
                   path={`/analysis/${selected.id}`}
-                  title="Copy a link to this query, to send or to reopen later. It runs on the current data when opened."
+                  title="Copy a link to this query. It runs on the current data when opened."
                 />
               </div>
-              <p className="muted an-note">{selected.description}</p>
+              {selected.description && <p className="muted an-note">{selected.description}</p>}
               {selected.notes && <p className="an-notes">{selected.notes}</p>}
               {error && <p className="error-text">{error}</p>}
               {libRunning && <p className="muted">Running…</p>}
@@ -730,7 +728,7 @@ export default function Analysis() {
               <p className="eyebrow">Build a query</p>
               <CopyLinkButton
                 path={`/analysis/build${currentBuild ? `?${currentBuild}` : ""}`}
-                title="Copy a link to this question, to send or to reopen later. It runs on the current data when opened."
+                title="Copy a link to this question. It runs on the current data when opened."
               />
             </div>
             {dropped.length > 0 && (
@@ -822,15 +820,15 @@ export default function Analysis() {
               {ranSql && consoleResult && !consoleRunning && (
                 <CopyLinkButton
                   path={consolePath(ranSql)}
-                  title="Copy a link that runs this SQL, to send or to reopen later. It runs on the current data when opened."
+                  title="Copy a link that runs this SQL on the current data when opened."
                   disabledReason={consolePath(ranSql).length > MAX_LINK_LENGTH ? "Too long to share as a link" : undefined}
                 />
               )}
             </div>
             <p className="muted an-note">
-              For anything the builder can't express. <strong>SELECT</strong> / <strong>WITH</strong> only —
-              the connection is opened read-only, so writes are impossible; multiple statements and any
-              write keyword are refused, results are capped at 5,000 rows. Press <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> to run.
+              <strong>SELECT</strong> or <strong>WITH</strong> only, one statement at a time. A query containing a
+              write word (insert, update, delete, replace and the like) is refused, even inside quoted text or as the
+              replace() function. Results are capped at 5,000 rows. Press <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> to run.
             </p>
             <textarea
               className="an-console"

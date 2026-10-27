@@ -24,16 +24,16 @@ import type {
  * reserved for later phases. (See docs/reference/scope.md.)
  */
 
-/* Every number counts contracts (WH, 2026-10-26). `hint` says what puts a
- * contract under a term: a place or a title can be recorded several times on
- * one contract (once per partner), and the contract still counts once. */
+/* Every number counts contracts (WH, 2026-10-26). `hint` (places and titles
+ * only) says what puts a contract under a term: a place or a title can be
+ * recorded several times on one contract (once per partner), and the contract
+ * still counts once. A contract has one currency and one economic activity. */
 const VOCABS: {
   kind: ReferenceKind;
   label: string;
   singular: string;
   noun: string;
-  aNoun: string;
-  hint: string;
+  hint?: string;
   quick: string[];
 }[] = [
   {
@@ -41,7 +41,6 @@ const VOCABS: {
     label: "Places",
     singular: "Place",
     noun: "place",
-    aNoun: "a place",
     hint: "A contract counts once, whether the place is its place of activity or a partner’s residence or place of origin.",
     quick: ["popolo", "fiere", "parti di"],
   },
@@ -50,7 +49,6 @@ const VOCABS: {
     label: "Titles",
     singular: "Title",
     noun: "title",
-    aNoun: "a title",
     hint: "A contract counts once, whether the title is a partner’s own or one recorded for a partner’s husband, father or mother, or grandfather.",
     quick: ["senatore", "cavaliere", "quondam", "signora"],
   },
@@ -59,8 +57,6 @@ const VOCABS: {
     label: "Currencies",
     singular: "Currency",
     noun: "currency",
-    aNoun: "a currency",
-    hint: "Each contract counts once, under the currency it is recorded in.",
     quick: ["scudi", "ducati", "fiorini", "lire", "pezze"],
   },
   {
@@ -68,8 +64,6 @@ const VOCABS: {
     label: "Economic activities",
     singular: "Economic activity",
     noun: "economic activity",
-    aNoun: "an economic activity",
-    hint: "Each contract counts once, under the economic activity recorded for it.",
     quick: ["seta", "lana", "cambi", "panni", "spezieria"],
   },
 ];
@@ -214,7 +208,7 @@ function DecadeBars({ data }: { data: { decade: number; count: number }[] }) {
 
 /** Review-duplicates worklist for one vocabulary. The matcher proposes; the human
  *  decides. Linking is additive + reversible and never alters the verbatim term. */
-function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: string; noun: string }) {
+function DuplicatesView({ kind, label }: { kind: ReferenceKind; label: string }) {
   const navigate = useNavigate();
   const [data, setData] = useState<ReferenceDuplicatesResponse | null>(null);
   const [error, setError] = useState("");
@@ -241,7 +235,7 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
 
   const act = async (fn: () => Promise<unknown>) => {
     if (!reviewer.trim()) {
-      setError("Enter your initials before linking.");
+      setError("Enter your initials first.");
       return;
     }
     localStorage.setItem("floracco_reviewer", reviewer.trim());
@@ -304,7 +298,7 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
               title={
                 t.id === canonId
                   ? "The spelling the others will point to"
-                  : "Click to make this the kept spelling"
+                  : "Make this the kept spelling"
               }
               onClick={() => setCanonical((c) => ({ ...c, [fam.signature]: t.id }))}
             >
@@ -333,7 +327,7 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
             onClick={() => linkFamily(fam.terms, canonId, "distinct")}
             title={
               reviewer.trim()
-                ? "Record that these are NOT the same — stops resurfacing them"
+                ? "They will not be suggested again."
                 : "Type your initials above first"
             }
           >
@@ -349,11 +343,6 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
       <div className="ref-overview">
         <p className="eyebrow">Review duplicates</p>
         <h2>{label}</h2>
-        <p className="muted ref-note">
-          The duplicate matcher for {label.toLowerCase()} isn’t built yet. Currency is the first one —
-          its grammar (coin + rate + place) is mechanical, so matching is safe. Places (with a
-          gazetteer) and the others come next.
-        </p>
       </div>
     );
   }
@@ -361,19 +350,10 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
   return (
     <div className="ref-dupes">
       <p className="eyebrow">Review duplicates</p>
-      <h2>{label} — possibly the same</h2>
+      <h2>{label}</h2>
       <p className="muted ref-note">
-        {kind === "place"
-          ? "Exact matches plus reviewed machine suggestions for historic/variant spellings — never a different place or administrative scope (città ≠ contado)."
-          : `The matcher folds only spelling (apostrophes, di/a/e, word order) — never ${
-              kind === "currency"
-                ? "a different number, coin, or place"
-                : kind === "title"
-                  ? "a different rank, gender, or status"
-                  : "a different word, trade, or commodity"
-            }.`}{" "}
-        Each pair below is a <strong>suggestion</strong>: linking records a reviewed{" "}
-        <em>“same as”</em> beside both terms — it never edits or deletes either, and it’s reversible.
+        {kind !== "place" && "Terms that differ only in spelling (apostrophes, di/a/e, word order). "}
+        Linking records <em>“same as”</em> beside both terms; neither term is changed.
       </p>
 
       <label className="ref-reviewer">
@@ -417,7 +397,7 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
             <>
               <p className="ref-block-label">Needs your eye ({data.uncertain.length})</p>
               <p className="muted ref-note ref-uncertain-note">
-                Suggestions the computer is less sure about — look before linking.
+                Suggestions the computer is less sure about.
               </p>
               <ul className="ref-fam-list">{data.uncertain.map(renderFamily)}</ul>
             </>
@@ -467,8 +447,7 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
               {showCautions && (
                 <>
                   <p className="muted ref-note">
-                    These look similar but differ by a <strong>number</strong> (a different exchange rate) — a
-                    real distinction. The matcher deliberately does <em>not</em> propose merging them.
+                    These look similar but differ by a <strong>number</strong> (a different exchange rate).
                   </p>
                   <ul className="ref-caution-list">
                     {data.cautions.map((c, i) => (
@@ -494,7 +473,6 @@ function DuplicatesView({ kind, label, noun }: { kind: ReferenceKind; label: str
           )}
         </>
       )}
-      <p className="muted ref-note ref-noun-foot">Curating the {noun} vocabulary.</p>
     </div>
   );
 }
@@ -763,7 +741,7 @@ export default function Reference() {
             </label>
             <label
               className="db-show-hidden"
-              title="Terms that no current record references (usage 0) — kept verbatim, surfaced for review"
+              title="Show only terms not linked to any contract"
             >
               <input type="checkbox" checked={orphansOnly} onChange={(e) => setOrphansOnly(e.target.checked)} />
               Unused only
@@ -781,9 +759,7 @@ export default function Reference() {
           </p>
           {orphansOnly && (
             <p className="ref-unused-note muted">
-              “Unused” = a term in the {vocab.label.toLowerCase()} dictionary that isn’t directly
-              linked to any contract. It may still appear in a contract’s narrative — open a term to
-              see.
+              Unused terms are not linked to any contract, but may still appear in a narrative; open one to see.
             </p>
           )}
           </>
@@ -800,13 +776,12 @@ export default function Reference() {
                 onClick={() => openTerm(t.id)}
               >
                 <span className="db-result-title">{t.value}</span>
-                <span className="db-result-meta muted" title={vocab.hint}>
+                <span className="db-result-meta muted" title={vocab.hint || undefined}>
                   {usageLabel(t.count)}
                 </span>
               </button>
             </li>
           ))}
-          {list && terms.length === 0 && !error && <li className="db-empty muted">No terms match.</li>}
           {list && terms.length > 0 && terms.length < list.total && (
             <li className="db-load-more">
               <button
@@ -826,24 +801,18 @@ export default function Reference() {
         {mode === "map" ? (
           <PlaceMap onPick={(p) => navigate(referencePath("place", p.id))} />
         ) : mode === "dupes" ? (
-          <DuplicatesView kind={kind} label={vocab.label} noun={vocab.noun} />
+          <DuplicatesView kind={kind} label={vocab.label} />
         ) : unknownKind ? (
           <div className="ref-term">
             <p className="eyebrow">Reference</p>
             <h2>Not a list on this site</h2>
-            <p className="muted ref-note">
-              This link names a list that does not exist (“{kindParam}”). The lists are Places, Titles, Currencies and
-              Economic activities.
-            </p>
+            <p className="muted ref-note">“{kindParam}” is not one of the lists.</p>
           </div>
         ) : notFound ? (
           <div className="ref-term">
             <p className="eyebrow">{vocab.singular}</p>
             <h2>Not in the list</h2>
-            <p className="muted ref-note">
-              This link points to {vocab.aNoun} that is not in the list of {vocab.label.toLowerCase()}. The list may
-              have changed since the link was made.
-            </p>
+            <p className="muted ref-note">The list may have changed since this link was made.</p>
             <button type="button" className="link-like" onClick={() => navigate(referencePath(kind, null))}>
               Show all {vocab.label.toLowerCase()}
             </button>
@@ -853,7 +822,7 @@ export default function Reference() {
             <p className="eyebrow">Most-referenced</p>
             <h2>{vocab.label} by usage</h2>
             <p className="muted ref-note">
-              How many contracts record each term. {vocab.hint} Select a term to read its contracts.
+              How many contracts record each term.{vocab.hint ? ` ${vocab.hint}` : ""}
             </p>
             {list && list.top.length > 0 ? (
               <UsageBars top={list.top} onPick={(value) => setSearch(value)} />
@@ -865,17 +834,17 @@ export default function Reference() {
           <div className="ref-term">
             <div className="page-head">
               <div>
-                <p className="eyebrow">{vocab.singular} · verbatim term</p>
+                <p className="eyebrow">{vocab.singular} · as recorded</p>
                 <h2 className="ref-term-value">{termValue || "\u00a0"}</h2>
               </div>
-              <CopyLinkButton path={referencePath(kind, termId)} title={`Copy a link to this ${vocab.noun}, to send or to reopen later`} />
+              <CopyLinkButton path={referencePath(kind, termId)} title={`Copy a link to this ${vocab.noun}`} />
             </div>
             {detail && <p className="muted ref-term-meta">{usageSentence(kind, detail)}</p>}
             {detail && (
               <p className="muted ref-narrative-line">
                 {detail.narrative_mentions > 0 ? (
                   <>
-                    The text “{termValue}” occurs in the narrative text of{" "}
+                    “{termValue}” occurs in the narratives of{" "}
                     {[
                       detail.narrative_contracts > 0 ? fmtContracts(detail.narrative_contracts) : "",
                       detail.narrative_sub_contracts > 0
@@ -896,7 +865,7 @@ export default function Reference() {
                     </button>
                   </>
                 ) : (
-                  `The text “${termValue}” does not occur in any narrative.`
+                  `“${termValue}” does not occur in any narrative.`
                 )}
               </p>
             )}
@@ -934,7 +903,7 @@ export default function Reference() {
                   </p>
                 )}
                 <p className="muted ref-resolution-foot">
-                  Suggested by the computer from the spelling as written — not authoritative; the original term stands.
+                  Based on the spelling as written.
                 </p>
               </div>
             )}
@@ -968,7 +937,7 @@ export default function Reference() {
                     <li className="db-load-more">
                       <p className="muted ref-records-count">
                         Showing {detail.records.length.toLocaleString()} of {detail.record_total.toLocaleString()}.
-                        {moreFailed ? " The next contracts did not load; please try again." : ""}
+                        {moreFailed ? " The next contracts did not load." : ""}
                       </p>
                       <button
                         type="button"
@@ -987,7 +956,7 @@ export default function Reference() {
               ) : (
                 <p className="muted">
                   {detail ? (
-                    `No contract records this term as ${vocab.aNoun}. It is in the list of terms but not linked to any record.`
+                    "None."
                   ) : detailFailed ? (
                     <>
                       The contracts for this term did not load.{" "}

@@ -32,7 +32,7 @@ if (typeof localStorage !== "undefined") {
 const NOT_IN_PILOT = (
   <ComingSoon
     title="Not in this pilot yet"
-    blurb="This tool is still in development and isn't part of the current pilot. It'll appear here when it's ready."
+    blurb="This tool is still in development."
   />
 );
 
@@ -90,7 +90,7 @@ export default function App() {
           <Route path="/reference/:kind/:termId" element={isToolHidden("reference") ? NOT_IN_PILOT : <Reference />} />
           <Route path="/analysis" element={isToolHidden("analysis") ? NOT_IN_PILOT : <Analysis />} />
           <Route path="/analysis/:view" element={isToolHidden("analysis") ? NOT_IN_PILOT : <Analysis />} />
-          <Route path="*" element={<ComingSoon title="Page not found" blurb="That route does not exist." />} />
+          <Route path="*" element={<ComingSoon title="Page not found" blurb="There is no page at this address." />} />
         </Routes>
         </ErrorBoundary>
       </main>

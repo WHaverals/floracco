@@ -324,11 +324,10 @@ def find_title_duplicates(terms: list[dict[str, Any]]) -> dict[str, Any]:
 # candidates come from the reviewed historic-name pass (P1), which writes cached,
 # attributed LLM suggestions into this same worklist (flagged source="llm").
 _PLACE_NOTE = (
-    "Place duplicates are archaic/exonym spelling drift (Reame=Regno, "
-    "Montelione=Monteleone) that spelling rules can’t find, and look-alikes here "
-    "are usually different towns (Lucca/Lecce). Below are only exact normalized "
-    "matches; the reviewed historic-name pass adds knowledge-based suggestions "
-    "(clearly marked as suggested by the computer) for a human to confirm."
+    "Look-alike place names are usually different towns (Lucca, Lecce). Spelling "
+    "rules find only exact matches, and never match a place with a descriptor, such "
+    "as contado di Firenze, to the bare name. Older forms such as Reame for Regno or "
+    "Montelione for Monteleone come from the computer's suggestions."
 )
 
 

@@ -1461,7 +1461,7 @@ def validate_correction(table: str, field: str, change_type: str, proposed_value
     if input_type in ("text", "textarea") and data_quality.is_placeholder_text(value):
         raise HTTPException(
             status_code=400,
-            detail=f"“{value}” is placeholder text, not a value. To blank the field, delete the text and save (Clear).",
+            detail=f"“{value}” is placeholder text. To blank the field, delete it and click Clear field.",
         )
     if input_type == "date" and not DATE_PATTERN.match(value):
         raise HTTPException(status_code=400, detail="Date must be in YYYY-MM-DD form.")
@@ -3139,7 +3139,7 @@ def db_reference_link_revoke(link_id: str, action: ReviewerOnly) -> dict[str, An
             )
         ok = corrections_db.revoke_reference_link(clog, link_id, by=action.reviewer)
         if not ok:
-            raise HTTPException(status_code=404, detail="No active link with that id.")
+            raise HTTPException(status_code=404, detail="This link no longer exists or was already undone.")
         return {"ok": True}
     finally:
         clog.close()
@@ -5699,9 +5699,8 @@ def _person_blind_case_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 _PERSON_GROUP_IN_ROUND_DETAIL = (
-    "This group is part of the open labeling round: some of its pairs are waiting "
-    "under Judge blind, where the scores stay hidden. Decide them there, or finish "
-    "the round, to review the group here."
+    "Some of this group's pairs are waiting under Judge blind. Decide them there, "
+    "or finish the round, to review the group here."
 )
 
 
@@ -5820,7 +5819,7 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
         # the labeler is judging blind. It thaws as the packet cases decide.
         raise HTTPException(
             status_code=409,
-            detail="Both records in this case are part of the open labeling round — finish the round first.",
+            detail="Both entries in this case are waiting under Judge blind; finish the round first.",
         )
     if action.review_mode != "blind_labeling":
         if case_id in round_open_ids:
@@ -5829,7 +5828,7 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
             # explicitly finished) before ordinary review resumes here.
             raise HTTPException(
                 status_code=409,
-                detail="This case is in the frozen labeling round — decide it there, or finish the round first.",
+                detail="This case is waiting under Judge blind. Decide it there, or finish the round first.",
             )
     if (
         action.action == "same_as"
@@ -5869,7 +5868,7 @@ def decide_person_linkage(case_id: str, action: PersonLinkageDecision) -> dict[s
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "This entry is in the open Judge-blind round; marks can be made "
+                    "This entry is waiting under Judge blind; its acts can be marked "
                     "once it is judged."
                 ),
             )
@@ -6154,7 +6153,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "contracts_per_year",
         "group": "Time",
         "title": "Contracts per registration year",
-        "description": "Number of accomandite registered each year.",
+        "description": "",
         "chart": "line",
         "sql": "SELECT CAST(substr(registration_date, 1, 4) AS INTEGER) AS year, COUNT(*) AS contracts\n"
         "FROM contract\n"
@@ -6175,7 +6174,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "currency_totals",
         "group": "Capital & currency",
         "title": "Total capital by currency",
-        "description": "Sum of stated capital per currency. Amounts are historical text, so sums are approximate.",
+        "description": "Amounts are historical text, so sums are approximate.",
         "chart": "bar",
         "sql": "SELECT cu.currency, COUNT(*) AS contracts, ROUND(SUM(CAST(c.total AS REAL))) AS total_capital\n"
         "FROM contract c JOIN currency cu ON cu.currency_id = c.currency_id\n"
@@ -6197,8 +6196,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "investors_per_contract",
         "group": "Structure",
         "title": "Contracts ranked by number of partners",
-        "description": "Each contract with the number of partner appearances recorded on it, most first. "
-        "A person entered twice on one contract counts twice.",
+        "description": "Partner appearances per contract. A person entered twice on one contract counts twice.",
         "chart": "none",
         "sql": "SELECT i.contract_id, COUNT(*) AS investors FROM investor i\n"
         "JOIN contract c ON c.contract_id = i.contract_id AND c.is_deleted = 0\n"
@@ -6218,8 +6216,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "investments_by_role",
         "group": "Structure",
         "title": "Stakes by role (general partner vs external investor)",
-        "description": "Number of stakes recorded for general partners and for external investors (accomandanti). "
-        "A stake shared by several partners counts once.",
+        "description": "A stake shared by several partners counts once.",
         "chart": "bar",
         "sql": "SELECT type AS role, COUNT(*) AS investments FROM investment\n"
         "WHERE is_deleted = 0 AND type IN ('gp', 'lp') GROUP BY type",
@@ -6228,7 +6225,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "women_investors",
         "group": "People & gender",
         "title": "Women partners",
-        "description": "Every contract with a woman recorded among its partners.",
+        "description": "Each woman recorded as a partner, one row per woman and contract.",
         "chart": "none",
         "sql": "SELECT DISTINCT c.contract_id, CAST(substr(c.registration_date, 1, 4) AS INTEGER) AS year,\n"
         "       pe.first_name, pe.last_name\n"
@@ -6250,7 +6247,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "no_place",
         "group": "Data quality",
         "title": "Contracts with no place of activity",
-        "description": "Contracts that have no place linked at all.",
+        "description": "",
         "chart": "none",
         "sql": "SELECT c.contract_id, c.registration_date, c.firm_name\n"
         "FROM contract c LEFT JOIN contract_place cp ON cp.contract_id = c.contract_id AND cp.is_deleted = 0\n"
@@ -6260,7 +6257,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "no_investors",
         "group": "Data quality",
         "title": "Contracts with no partners",
-        "description": "Contracts that have no partners recorded.",
+        "description": "",
         "chart": "none",
         "sql": "SELECT c.contract_id, c.registration_date, c.firm_name\n"
         "FROM contract c LEFT JOIN investor i ON i.contract_id = c.contract_id AND i.is_deleted = 0\n"
@@ -6270,7 +6267,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "no_economic_activity",
         "group": "Data quality",
         "title": "Contracts with no economic activity",
-        "description": "Contracts whose economic activity was never recorded.",
+        "description": "",
         "chart": "none",
         "sql": "SELECT contract_id, registration_date, firm_name FROM contract\n"
         "WHERE is_deleted = 0 AND (economic_sector = 0 OR economic_sector IS NULL) ORDER BY contract_id",
@@ -6308,8 +6305,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "gp_lp_per_contract",
         "group": "Structure",
         "title": "General partners and external investors per contract (fewest, average, most)",
-        "description": "How many general partners and external investors (accomandanti) a contract has. Each person is counted "
-        "once, even when several share one stake or one person holds several.",
+        "description": "Each person counts once, even when several share one stake or one person holds several.",
         "chart": "none",
         # Partners are PEOPLE reached through investor_group, never investment rows:
         # a joint tranche has N co-holders (counting rows collapsed them to 1), one
@@ -6377,8 +6373,8 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "jewish_over_time",
         "group": "Trends over time",
         "title": "Jewish partners (recorded or attributed), by decade",
-        "description": "Share of partner appearances that are Jewish by either provenance, stated in "
-        "the act or editorially attributed, by decade (decades with ≥30 partner appearances).",
+        "description": "Share of partner appearances by Jewish partners, stated in the act or editorially "
+        "attributed (decades with ≥30 partner appearances).",
         "chart": "line",
         "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
         "       COUNT(*) AS investors,\n"
@@ -6422,11 +6418,10 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "description": "Each contract's cash contributions against its stated capital, and whether a "
         "non-cash contribution is recorded.",
         # Reading notes live beside the chart, not in the menu (UI review 2026-09-10).
-        "notes": "The buckets say whether the record mentions a non-cash contribution — goods, a shop, "
-        "receivables — sometimes valued inside the cash sum itself. A shortfall of cash can mean "
-        "several things: a contribution in goods, capital supplied as credit, the rounding of old "
-        "fractional money, or a share the clerk never itemized — only the act says which. Every "
-        "comparison stays inside one contract, so currencies never mix.",
+        "notes": "A non-cash contribution (goods, a shop, receivables) is sometimes valued inside the "
+        "cash sum itself. A shortfall of cash can mean a contribution in goods, capital supplied as "
+        "credit, the rounding of old fractional money, or a share the clerk never itemized; only the "
+        "act says which. Every comparison stays inside one contract, so currencies never mix.",
         "chart": "bar",
         # The buckets are ARITHMETIC (cash vs stated total) crossed with whether the
         # source records a non-cash component (investment_non_cash text; '' and the
@@ -6469,8 +6464,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "later_acts_by_type",
         "group": "Structure",
         "title": "Sub-contracts by type",
-        "description": "Registered sub-contracts by kind. Event counts (a contract may have several or none), "
-        "not a share of contracts.",
+        "description": "Registered sub-contracts by type; a contract may have several or none.",
         "chart": "bar",
         "sql": "SELECT sub_type, COUNT(*) AS sub_contracts\n"
         "FROM sub_contract WHERE is_deleted = 0 AND sub_type NOT IN ('', '0') AND sub_type IS NOT NULL\n"
@@ -6654,8 +6648,7 @@ def build_analysis_sql(
         if group:
             raise HTTPException(status_code=400, detail=(
                 "Capital amounts are stated in 315 different currency formulations and cannot "
-                "be added together — the total would change with the currency mix, not with "
-                "capital. Add a “Currency is …” filter (e.g. scudi), or group by currency instead."
+                "be added together. Add a “Currency is …” filter (e.g. scudi), or group by currency."
             ))
         group = "currency"
 
@@ -8669,9 +8662,7 @@ WORD_DATE_GROUP_META = {
     "label": "Word summary gives another date",
     "severity": "medium",
     "explanation": (
-        "An independent transcription (the Word source) records a different registration date for "
-        "this contract or sub-contract. Open the record, compare against the narrative and the folio image, and correct "
-        "the date only if the database is wrong — Word is evidence, not the truth."
+        "The Word summary gives a different registration date from the database."
     ),
 }
 
@@ -8756,9 +8747,8 @@ PERSON_SPLIT_GROUP_META = {
     "label": "Flagged as possibly two people",
     "severity": "medium",
     "explanation": (
-        "A reviewer flagged this entry in People as possibly holding two different "
-        "people, with a note on where the seam is. Nothing has been split. Read the "
-        "note, then the contracts; lift the flag from the entry's page if it is wrong."
+        "A reviewer flagged this entry in People as possibly two people, with a note. "
+        "Read the note, then the contracts; if the flag is wrong, lift it on the entry's page."
     ),
 }
 

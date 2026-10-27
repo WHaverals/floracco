@@ -8,7 +8,7 @@ import IdentityHintLines from "./person-linkage/IdentityHintLines";
 export type PersonPick = { row_id: string; display_name: string; last_name: string };
 
 /**
- * Resolve a name mention to an existing person. Names recur heavily in this corpus,
+ * Pick which person's entry to open so their name can be edited. Names recur heavily in this corpus,
  * so a free-text field is unsafe — the reviewer must pick a specific person_id. We
  * default to the people already on the contract (the common, low-ambiguity case) and
  * offer an explicit cross-database search as an escape hatch. Creating a brand-new
@@ -69,8 +69,8 @@ export default function PersonPicker({
       <aside className="propose-drawer" onClick={(event) => event.stopPropagation()}>
         <header className="word-drawer-head">
           <div>
-            <p className="eyebrow">Resolve a name → person</p>
-            <h3>Which person is this?</h3>
+            <p className="eyebrow">Edit a name</p>
+            <h3>Whose name needs correcting?</h3>
             <p className="muted word-drawer-meta">On {contractTitle || `contract ${contractId}`}</p>
           </div>
           <button type="button" className="drawer-close" onClick={onClose} aria-label="Close">
@@ -81,8 +81,7 @@ export default function PersonPicker({
         <div className="propose-body">
           {error && <p className="error-text">{error}</p>}
           <p className="muted">
-            The same name can belong to many different people across the corpus — pick the exact person, don't
-            free-type. These are the partners recorded on this contract.
+            The partners recorded on this contract. Pick one to open their entry, where the name can be edited.
           </p>
           <input
             className="db-search"
@@ -127,7 +126,7 @@ export default function PersonPicker({
               {searching ? "Searching…" : "Search the whole database"}
             </button>
             {crossFailed && (
-              <p className="error-text">The search across the database did not run. Click the button to try again.</p>
+              <p className="error-text">The search across the database did not run.</p>
             )}
             {searchResults && (
               <ul className="picker-list">
@@ -152,8 +151,7 @@ export default function PersonPicker({
           </div>
 
           <p className="muted propose-foot">
-            Not listed? Search the whole database above. A person who is not in the database yet is added from the
-            contract’s Partners block, with “+ Add partner”.
+            Someone not yet in the database is added with “+ Add partner” in the Partners block.
           </p>
         </div>
       </aside>

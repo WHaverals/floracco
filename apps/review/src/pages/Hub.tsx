@@ -165,7 +165,7 @@ export default function Hub() {
               itself, so a roadmap note belongs on it and nowhere else. */}
           {TOOLS.some((tool) => isToolHidden(tool.key)) && (
             <p className="hub-roadmap muted">
-              In development, not yet in this pilot:{" "}
+              Not yet in this pilot:{" "}
               {TOOLS.filter((tool) => isToolHidden(tool.key))
                 .map((tool) => tool.title)
                 .join(", ")}
