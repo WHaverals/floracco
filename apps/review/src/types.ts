@@ -630,6 +630,8 @@ export type AnalysisQuery = {
   description: string;
   /** Longer reading notes, shown on the result page only (never in the menu). */
   notes?: string;
+  /** Rows can share a contract (places), so a chart lists the rest rather than adding them up. */
+  overlapping?: boolean;
   chart: AnalysisChart;
   sql: string;
 };
@@ -639,6 +641,11 @@ export type AnalysisResult = {
   rows: (string | number | null)[][];
   row_count: number;
   truncated: boolean;
+  /** Every row the question returns; more than row_count when truncated. Null
+   * when there are more than `total_more_than` (the download ceiling), or when
+   * counting the rest ran out of time (then `total_more_than` is null too). */
+  total_rows?: number | null;
+  total_more_than?: number | null;
 };
 
 export type DbFacets = {

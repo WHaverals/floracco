@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import itertools
 import json
 import os
@@ -30,7 +31,7 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -6095,10 +6096,14 @@ _ANALYSIS_FORBIDDEN = re.compile(
     re.IGNORECASE,
 )
 ANALYSIS_ROW_CAP = 5000
+# The CSV download holds every row up to this ceiling and refuses above it with
+# a sentence (review 2026-10-27, 4.1 #2). Rows are counted first and then
+# streamed from the cursor, so the server never holds the whole result.
+ANALYSIS_EXPORT_CAP = 100_000
 ANALYSIS_TIMEOUT_S = 6.0
 
 
-def run_readonly_sql(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
+def _readonly_statement(sql: str) -> str:
     statement = sql.strip().rstrip(";").strip()
     if not statement:
         raise HTTPException(status_code=400, detail="Empty query.")
@@ -6109,10 +6114,34 @@ def run_readonly_sql(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Only SELECT / WITH queries are allowed.")
     if _ANALYSIS_FORBIDDEN.search(statement):
         raise HTTPException(status_code=400, detail="Only read-only SELECT queries are allowed.")
-    connection = sqlite3.connect(f"file:{db_path()}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
+    return statement
+
+
+def _readonly_connection(any_thread: bool = False) -> sqlite3.Connection:
+    """A read-only connection that interrupts itself ANALYSIS_TIMEOUT_S from now.
+    Rows come back as plain tuples, read by position: two result columns may
+    share a name (SELECT s.contract_id, c.contract_id …), and a by-name lookup
+    would repeat the first one's value in the second."""
+    connection = sqlite3.connect(f"file:{db_path()}?mode=ro", uri=True, check_same_thread=not any_thread)
     deadline = time.monotonic() + ANALYSIS_TIMEOUT_S
     connection.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 100_000)
+    return connection
+
+
+def _sql_error(exc: sqlite3.Error) -> HTTPException:
+    message = str(exc)
+    if "interrupt" in message.lower():
+        return HTTPException(status_code=400, detail="Query timed out — narrow it and try again.")
+    return HTTPException(status_code=400, detail=f"SQL error: {message}")
+
+
+def run_readonly_sql(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
+    """Run one read-only SELECT for the screen: the first ANALYSIS_ROW_CAP rows,
+    and how many there are in all. Counting stops just past the download
+    ceiling (``total_more_than``), and if it runs out of time both totals are
+    None: the total is then unknown rather than wrong."""
+    statement = _readonly_statement(sql)
+    connection = _readonly_connection()
     try:
         cursor = connection.execute(statement, params)
         columns = [d[0] for d in cursor.description] if cursor.description else []
@@ -6122,21 +6151,110 @@ def run_readonly_sql(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
             if index >= ANALYSIS_ROW_CAP:
                 truncated = True
                 break
-            rows.append([row[c] for c in columns])
-        return {"columns": columns, "rows": rows, "row_count": len(rows), "truncated": truncated}
-    except sqlite3.OperationalError as exc:
-        message = str(exc)
-        if "interrupt" in message.lower():
-            raise HTTPException(status_code=400, detail="Query timed out — narrow it and try again.")
-        raise HTTPException(status_code=400, detail=f"SQL error: {message}")
+            rows.append(list(row))
+        total_rows: int | None = len(rows)
+        total_more_than: int | None = None
+        if truncated:
+            counted = len(rows) + 1  # the row that tripped the cap
+            try:
+                for _ in cursor:
+                    counted += 1
+                    if counted > ANALYSIS_EXPORT_CAP:
+                        break
+                if counted > ANALYSIS_EXPORT_CAP:
+                    total_rows, total_more_than = None, ANALYSIS_EXPORT_CAP
+                else:
+                    total_rows = counted
+            except sqlite3.OperationalError:
+                total_rows = None
+        return {
+            "columns": columns,
+            "rows": rows,
+            "row_count": len(rows),
+            "truncated": truncated,
+            "total_rows": total_rows,
+            "total_more_than": total_more_than,
+        }
     except sqlite3.Error as exc:
-        raise HTTPException(status_code=400, detail=f"SQL error: {exc}")
+        raise _sql_error(exc)
     finally:
         connection.close()
 
 
+def export_readonly_csv(sql: str, params: tuple[Any, ...] = ()) -> StreamingResponse:
+    """The CSV download: every row, or a refusal in words. A first pass counts
+    the rows under the time limit and keeps none of them; the second streams
+    them from the cursor under a fresh limit. Should that limit run out
+    mid-stream, the response breaks off and the browser saves nothing."""
+    statement = _readonly_statement(sql)
+    connection = _readonly_connection()
+    try:
+        cursor = connection.execute(statement, params)
+        for count, _ in enumerate(cursor, 1):
+            if count > ANALYSIS_EXPORT_CAP:
+                raise HTTPException(status_code=400, detail=(
+                    f"This result has more than {ANALYSIS_EXPORT_CAP:,} rows, too many to download. "
+                    "Narrow the question and try again."
+                ))
+    except sqlite3.Error as exc:
+        raise _sql_error(exc)
+    finally:
+        connection.close()
+    return StreamingResponse(_csv_stream(statement, params), media_type="text/csv; charset=utf-8")
+
+
+def _csv_stream(statement: str, params: tuple[Any, ...]):
+    # Starlette may resume this generator on different worker threads.
+    connection = _readonly_connection(any_thread=True)
+    try:
+        cursor = connection.execute(statement, params)
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, lineterminator="\n")
+        writer.writerow([d[0] for d in cursor.description] if cursor.description else [])
+        for row in cursor:
+            writer.writerow(row)
+            if buffer.tell() > 64_000:
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate()
+        yield buffer.getvalue()
+    finally:
+        connection.close()
+
+
+# The two Jewish lists, per contract, with how its Jewish partners are known:
+# stated in the act (is_jewish) or the data-entry team's attribution only
+# (jewish_db without is_jewish). The two layers are never merged into one mark
+# (review 2026-10-27, 4.1/Q4). A hidden person's appearance counts on no side.
+_JEWISH_PROVENANCE_NOTE = (
+    "“Stated in the act”: every Jewish partner on the contract is described as Jewish in the act. "
+    "“Attributed only”: none is; each was marked by the data-entry team, whose basis is not "
+    "recorded. “Partly stated, partly attributed”: some of each."
+)
+
+
+def _jewish_list_sql(partition: str) -> str:
+    return (
+        "SELECT CAST(substr(c.registration_date,1,4) AS INTEGER) AS year, c.contract_id, c.firm_name,\n"
+        "       CASE WHEN j.attributed = 0 THEN 'stated in the act'\n"
+        "            WHEN j.stated = 0 THEN 'attributed only'\n"
+        "            ELSE 'partly stated, partly attributed' END AS provenance\n"
+        "FROM contract c\n"
+        "JOIN (SELECT i.contract_id,\n"
+        "             SUM(CASE WHEN i.is_jewish = 1 THEN 1 ELSE 0 END) AS stated,\n"
+        "             SUM(CASE WHEN i.jewish_db = 1 AND COALESCE(i.is_jewish, 0) <> 1 THEN 1 ELSE 0 END) AS attributed,\n"
+        "             SUM(CASE WHEN i.is_jewish = 0 AND i.jewish_db = 0 THEN 1 ELSE 0 END) AS neither\n"
+        "      FROM investor i JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0\n"
+        "      WHERE i.is_deleted = 0 GROUP BY i.contract_id) j ON j.contract_id = c.contract_id\n"
+        f"WHERE c.is_deleted = 0 AND j.stated + j.attributed > 0 AND {partition}\n"
+        "ORDER BY year, c.contract_id"
+    )
+
+
 # Named queries, re-authored from `SQL formulas/` for SQLite. chart ∈ none|bar|line.
-ANALYSIS_LIBRARY: list[dict[str, str]] = [
+# "overlapping": one contract can count under several rows (several places), so a
+# chart lists the rows beyond the top 20 rather than adding them up.
+ANALYSIS_LIBRARY: list[dict[str, Any]] = [
     {
         "id": "corpus_totals",
         "group": "Overview",
@@ -6144,7 +6262,8 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "description": "How many contracts, sub-contracts, people, places and currencies the database holds.",
         "chart": "none",
         "sql": "SELECT 'contracts' AS item, COUNT(*) AS n FROM contract WHERE is_deleted = 0\n"
-        "UNION ALL SELECT 'sub-contracts', COUNT(*) FROM sub_contract WHERE is_deleted = 0\n"
+        "UNION ALL SELECT 'sub-contracts', COUNT(*) FROM sub_contract s\n"
+        "  JOIN contract c ON c.contract_id = s.main_contract_id AND c.is_deleted = 0 WHERE s.is_deleted = 0\n"
         "UNION ALL SELECT 'people', COUNT(*) FROM person WHERE is_deleted = 0\n"
         "UNION ALL SELECT 'places', COUNT(*) FROM place\n"
         "UNION ALL SELECT 'currencies', COUNT(*) FROM currency",
@@ -6187,6 +6306,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "title": "Most-frequent places of activity",
         "description": "How many contracts record each place as a place of activity. Partners' residences and places of origin are not counted here.",
         "chart": "bar",
+        "overlapping": True,
         "sql": "SELECT p.place_name, COUNT(*) AS contracts\n"
         "FROM contract_place cp JOIN place p ON p.place_id = cp.place_id\n"
         "JOIN contract c ON c.contract_id = cp.contract_id AND c.is_deleted = 0\n"
@@ -6200,6 +6320,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "chart": "none",
         "sql": "SELECT i.contract_id, COUNT(*) AS investors FROM investor i\n"
         "JOIN contract c ON c.contract_id = i.contract_id AND c.is_deleted = 0\n"
+        "JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0\n"
         "WHERE i.is_deleted = 0 GROUP BY i.contract_id ORDER BY investors DESC",
     },
     {
@@ -6218,8 +6339,9 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "title": "Stakes by role (general partner vs external investor)",
         "description": "A stake shared by several partners counts once.",
         "chart": "bar",
-        "sql": "SELECT type AS role, COUNT(*) AS investments FROM investment\n"
-        "WHERE is_deleted = 0 AND type IN ('gp', 'lp') GROUP BY type",
+        "sql": "SELECT v.type AS role, COUNT(*) AS investments FROM investment v\n"
+        "JOIN contract c ON c.contract_id = v.contract_id AND c.is_deleted = 0\n"
+        "WHERE v.is_deleted = 0 AND v.type IN ('gp', 'lp') GROUP BY v.type",
     },
     {
         "id": "women_investors",
@@ -6260,8 +6382,11 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "description": "",
         "chart": "none",
         "sql": "SELECT c.contract_id, c.registration_date, c.firm_name\n"
-        "FROM contract c LEFT JOIN investor i ON i.contract_id = c.contract_id AND i.is_deleted = 0\n"
-        "WHERE c.is_deleted = 0 AND i.investor_id IS NULL ORDER BY c.contract_id",
+        "FROM contract c\n"
+        "WHERE c.is_deleted = 0 AND c.contract_id NOT IN (SELECT i.contract_id FROM investor i\n"
+        "  JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0\n"
+        "  WHERE i.is_deleted = 0)\n"
+        "ORDER BY c.contract_id",
     },
     {
         "id": "no_economic_activity",
@@ -6278,28 +6403,23 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "group": "People & gender",
         "title": "Contracts where all partners are Jewish (recorded or attributed)",
         "description": "Every partner is Jewish, either as stated in the act or by the "
-        "data-entry team's editorial attribution.",
+        "data-entry team's editorial attribution. The last column says which, for each contract.",
+        "notes": _JEWISH_PROVENANCE_NOTE,
         "chart": "none",
-        "sql": "SELECT CAST(substr(c.registration_date,1,4) AS INTEGER) AS year, c.contract_id, c.firm_name\n"
-        "FROM contract c\n"
-        "WHERE c.is_deleted = 0\n"
-        "  AND c.contract_id IN (SELECT contract_id FROM investor WHERE is_deleted = 0 AND (is_jewish = 1 OR jewish_db = 1))\n"
-        "  AND c.contract_id NOT IN (SELECT contract_id FROM investor WHERE is_deleted = 0 AND is_jewish = 0 AND jewish_db = 0)\n"
-        "ORDER BY year",
+        "sql": _jewish_list_sql("j.neither = 0"),
     },
     {
         "id": "jewish_mixed",
         "group": "People & gender",
         "title": "Contracts with mixed Jewish & non-Jewish partners (recorded or attributed)",
         "description": "At least one Jewish partner (stated in the act or editorially attributed) "
-        "and at least one partner recorded as neither.",
+        "and at least one partner recorded as neither. The last column says how the Jewish side is known.",
+        "notes": _JEWISH_PROVENANCE_NOTE + " Contracts 4459 and 4817 are listed only because their other "
+        "partner is entered as MOLTEPLICI AZIONARI, the data-entry team's placeholder for shareholders the act "
+        "does not name "
+        "(checked 27 October 2026).",
         "chart": "none",
-        "sql": "SELECT CAST(substr(c.registration_date,1,4) AS INTEGER) AS year, c.contract_id, c.firm_name\n"
-        "FROM contract c\n"
-        "WHERE c.is_deleted = 0\n"
-        "  AND c.contract_id IN (SELECT contract_id FROM investor WHERE is_deleted = 0 AND (is_jewish = 1 OR jewish_db = 1))\n"
-        "  AND c.contract_id IN (SELECT contract_id FROM investor WHERE is_deleted = 0 AND is_jewish = 0 AND jewish_db = 0)\n"
-        "ORDER BY year",
+        "sql": _jewish_list_sql("j.neither > 0"),
     },
     {
         "id": "gp_lp_per_contract",
@@ -6316,6 +6436,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "      FROM investment v\n"
         "      JOIN investor_group ig ON ig.investment_id = v.investment_id AND ig.is_deleted = 0\n"
         "      JOIN investor i ON i.investor_id = ig.investor_id AND i.is_deleted = 0\n"
+        "      JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0\n"
         "      JOIN contract c ON c.contract_id = v.contract_id AND c.is_deleted = 0\n"
         "      WHERE v.is_deleted = 0 AND v.type = 'gp' GROUP BY v.contract_id)\n"
         "UNION ALL\n"
@@ -6324,6 +6445,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "      FROM investment v\n"
         "      JOIN investor_group ig ON ig.investment_id = v.investment_id AND ig.is_deleted = 0\n"
         "      JOIN investor i ON i.investor_id = ig.investor_id AND i.is_deleted = 0\n"
+        "      JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0\n"
         "      JOIN contract c ON c.contract_id = v.contract_id AND c.is_deleted = 0\n"
         "      WHERE v.is_deleted = 0 AND v.type = 'lp' GROUP BY v.contract_id)",
     },
@@ -6331,11 +6453,12 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "id": "relatives_in_contract",
         "group": "People & gender",
         "title": "Possible relatives in the same contract",
-        "description": "Partners in one contract who share a last name, father's name, or grandfather's name.",
+        "description": "Partners in one contract who share a last name, father's name, or grandfather's name. "
+        "Each pair is two different person entries.",
         "chart": "none",
         "sql": "SELECT DISTINCT i1.contract_id, p1.last_name, p1.father_mother, p1.grandfather, p1.first_name\n"
         "FROM investor i1 JOIN person p1 ON p1.person_id = i1.person_id\n"
-        "JOIN investor i2 ON i2.contract_id = i1.contract_id AND i2.investor_id <> i1.investor_id\n"
+        "JOIN investor i2 ON i2.contract_id = i1.contract_id AND i2.person_id <> i1.person_id\n"
         "JOIN person p2 ON p2.person_id = i2.person_id\n"
         "WHERE i1.is_deleted = 0 AND i2.is_deleted = 0 AND p1.is_deleted = 0 AND p2.is_deleted = 0\n"
         "  AND EXISTS (SELECT 1 FROM contract c WHERE c.contract_id = i1.contract_id AND c.is_deleted = 0)\n"
@@ -6353,6 +6476,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "sql": "SELECT ROUND(100.0 * SUM(CASE WHEN i.via_proxy = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_via_proxy,\n"
         "       COUNT(*) AS total_investors\n"
         "FROM investor i JOIN contract c ON c.contract_id = i.contract_id AND c.is_deleted = 0\n"
+        "JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0\n"
         "WHERE i.is_deleted = 0",
     },
     {
@@ -6366,6 +6490,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "       COUNT(*) AS investors,\n"
         "       ROUND(100.0 * SUM(CASE WHEN i.via_proxy = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_via_proxy\n"
         "FROM investor i JOIN contract c ON c.contract_id = i.contract_id\n"
+        "JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0\n"
         "WHERE i.is_deleted = 0 AND c.is_deleted = 0 AND c.registration_date NOT IN ('', '0000-00-00')\n"
         "GROUP BY decade HAVING COUNT(*) >= 30 ORDER BY decade",
     },
@@ -6380,6 +6505,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "       COUNT(*) AS investors,\n"
         "       ROUND(100.0 * SUM(CASE WHEN i.is_jewish = 1 OR i.jewish_db = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_jewish\n"
         "FROM investor i JOIN contract c ON c.contract_id = i.contract_id\n"
+        "JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0\n"
         "WHERE i.is_deleted = 0 AND c.is_deleted = 0 AND c.registration_date NOT IN ('', '0000-00-00')\n"
         "GROUP BY decade HAVING COUNT(*) >= 30 ORDER BY decade",
     },
@@ -6394,20 +6520,46 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "       ROUND(100.0 * SUM(CASE WHEN i.is_jewish = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_stated_in_act,\n"
         "       ROUND(100.0 * SUM(CASE WHEN i.jewish_db = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_editorial_attribution\n"
         "FROM investor i JOIN contract c ON c.contract_id = i.contract_id\n"
+        "JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0\n"
         "WHERE i.is_deleted = 0 AND c.is_deleted = 0 AND c.registration_date NOT IN ('', '0000-00-00')\n"
         "GROUP BY decade HAVING COUNT(*) >= 30 ORDER BY decade",
     },
     {
         "id": "joint_over_time",
         "group": "Trends over time",
-        "title": "Joint (co-held) stakes, by decade",
-        "description": "Share of partner appearances recorded as joint (co-held), by decade "
-        "(decades with ≥30 partner appearances).",
+        "title": "Partners holding a stake jointly, by decade",
+        "description": "Share of partner appearances on a jointly held stake: one shared with another person, "
+        "or marked as joint where each holder's share was entered separately (decades with ≥30 partner appearances).",
         "chart": "line",
-        "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
+        # Joint per docs/data_quality/is_joint.md: (live distinct-person share
+        # count > 1) OR the stored flag. The flag alone misses shared stakes
+        # whose siblings were never flagged; the structure alone misses joint
+        # stakes entered as parallel rows. Neither is trusted alone. A flag on
+        # an appearance with no live stake counts for nothing, as in the
+        # Partners table (is_joint.md: the orphan flag is wrong).
+        "sql": "WITH shared AS (\n"
+        "  SELECT ig.investment_id FROM investor_group ig\n"
+        "  JOIN investment v ON v.investment_id = ig.investment_id AND v.is_deleted = 0\n"
+        "  JOIN investor i2 ON i2.investor_id = ig.investor_id AND i2.is_deleted = 0\n"
+        "  JOIN person p2 ON p2.person_id = i2.person_id AND p2.is_deleted = 0\n"
+        "  WHERE ig.is_deleted = 0\n"
+        "  GROUP BY ig.investment_id HAVING COUNT(DISTINCT i2.person_id) > 1),\n"
+        "on_shared AS (\n"
+        "  SELECT DISTINCT ig.investor_id FROM investor_group ig\n"
+        "  JOIN shared s ON s.investment_id = ig.investment_id WHERE ig.is_deleted = 0),\n"
+        "on_stake AS (\n"
+        "  SELECT DISTINCT ig.investor_id FROM investor_group ig\n"
+        "  JOIN investment v ON v.investment_id = ig.investment_id AND v.is_deleted = 0\n"
+        "  WHERE ig.is_deleted = 0)\n"
+        "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
         "       COUNT(*) AS investors,\n"
-        "       ROUND(100.0 * SUM(CASE WHEN i.is_joint = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_joint\n"
+        "       ROUND(100.0 * SUM(CASE WHEN os.investor_id IS NOT NULL\n"
+        "                               OR (i.is_joint = 1 AND st.investor_id IS NOT NULL) THEN 1 ELSE 0 END)\n"
+        "             / COUNT(*), 1) AS pct_joint\n"
         "FROM investor i JOIN contract c ON c.contract_id = i.contract_id\n"
+        "JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0\n"
+        "LEFT JOIN on_shared os ON os.investor_id = i.investor_id\n"
+        "LEFT JOIN on_stake st ON st.investor_id = i.investor_id\n"
         "WHERE i.is_deleted = 0 AND c.is_deleted = 0 AND c.registration_date NOT IN ('', '0000-00-00')\n"
         "GROUP BY decade HAVING COUNT(*) >= 30 ORDER BY decade",
     },
@@ -6421,28 +6573,34 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "notes": "A non-cash contribution (goods, a shop, receivables) is sometimes valued inside the "
         "cash sum itself. A shortfall of cash can mean a contribution in goods, capital supplied as "
         "credit, the rounding of old fractional money, or a share the clerk never itemized; only the "
-        "act says which. Every comparison stays inside one contract, so currencies never mix.",
+        "act says which. Cash above the stated total is shown apart: there a recorded figure may be wrong "
+        "(contract 2441 records a total of 10 scudi beside 10,000 scudi in cash). Every comparison stays "
+        "inside one contract, so currencies never mix.",
         "chart": "bar",
         # The buckets are ARITHMETIC (cash vs stated total) crossed with whether the
         # source records a non-cash component (investment_non_cash text; '' and the
         # literal '0' are no-value sentinels). A shortfall is never, by itself,
         # labeled as goods/labour — that was code-review finding B3.
+        # Cash above the stated total is its own bucket (review 2026-10-27,
+        # 4.2): it was filed under "covers", though some are entry errors.
         "sql": "SELECT CASE bucket\n"
-        "         WHEN 1 THEN 'cash covers the stated total'\n"
-        "         WHEN 2 THEN 'cash covers the total — non-cash component noted'\n"
-        "         WHEN 3 THEN 'cash short of the total — non-cash recorded'\n"
-        "         WHEN 4 THEN 'cash short of the total — remainder unitemized'\n"
-        "         WHEN 5 THEN 'no cash recorded — non-cash recorded'\n"
+        "         WHEN 1 THEN 'cash equals the stated total'\n"
+        "         WHEN 2 THEN 'cash equals the total — non-cash component noted'\n"
+        "         WHEN 3 THEN 'cash exceeds the stated total'\n"
+        "         WHEN 4 THEN 'cash short of the total — non-cash recorded'\n"
+        "         WHEN 5 THEN 'cash short of the total — remainder unitemized'\n"
+        "         WHEN 6 THEN 'no cash recorded — non-cash recorded'\n"
         "         ELSE 'no cash recorded — nothing itemized'\n"
         "       END AS itemization,\n"
         "       COUNT(*) AS contracts\n"
         "FROM (SELECT CASE\n"
-        "               WHEN cash >= total AND nc = 0 THEN 1\n"
-        "               WHEN cash >= total THEN 2\n"
-        "               WHEN cash > 0 AND nc > 0 THEN 3\n"
-        "               WHEN cash > 0 THEN 4\n"
-        "               WHEN nc > 0 THEN 5\n"
-        "               ELSE 6 END AS bucket\n"
+        "               WHEN cash = total AND nc = 0 THEN 1\n"
+        "               WHEN cash = total THEN 2\n"
+        "               WHEN cash > total THEN 3\n"
+        "               WHEN cash > 0 AND nc > 0 THEN 4\n"
+        "               WHEN cash > 0 THEN 5\n"
+        "               WHEN nc > 0 THEN 6\n"
+        "               ELSE 7 END AS bucket\n"
         "      FROM (SELECT c.total, COALESCE(SUM(iv.investment_cash), 0) AS cash,\n"
         "                   SUM(CASE WHEN TRIM(COALESCE(iv.investment_non_cash, '')) NOT IN ('', '0') THEN 1 ELSE 0 END) AS nc\n"
         "            FROM contract c JOIN investment iv ON iv.contract_id = c.contract_id AND iv.is_deleted = 0\n"
@@ -6458,7 +6616,7 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "chart": "bar",
         "sql": "SELECT duration_months AS initial_term_months, COUNT(*) AS contracts\n"
         "FROM contract WHERE is_deleted = 0 AND duration_months > 0\n"
-        "GROUP BY duration_months ORDER BY contracts DESC LIMIT 15",
+        "GROUP BY duration_months ORDER BY contracts DESC, initial_term_months",
     },
     {
         "id": "later_acts_by_type",
@@ -6466,9 +6624,10 @@ ANALYSIS_LIBRARY: list[dict[str, str]] = [
         "title": "Sub-contracts by type",
         "description": "Registered sub-contracts by type; a contract may have several or none.",
         "chart": "bar",
-        "sql": "SELECT sub_type, COUNT(*) AS sub_contracts\n"
-        "FROM sub_contract WHERE is_deleted = 0 AND sub_type NOT IN ('', '0') AND sub_type IS NOT NULL\n"
-        "GROUP BY sub_type ORDER BY sub_contracts DESC",
+        "sql": "SELECT s.sub_type, COUNT(*) AS sub_contracts\n"
+        "FROM sub_contract s JOIN contract c ON c.contract_id = s.main_contract_id AND c.is_deleted = 0\n"
+        "WHERE s.is_deleted = 0 AND s.sub_type NOT IN ('', '0') AND s.sub_type IS NOT NULL\n"
+        "GROUP BY s.sub_type ORDER BY sub_contracts DESC",
     },
 ]
 
@@ -6485,6 +6644,19 @@ class AnalysisRun(BaseModel):
 @app.post("/api/analysis/run")
 def analysis_run(payload: AnalysisRun) -> dict[str, Any]:
     return run_readonly_sql(payload.sql)
+
+
+class AnalysisExport(BaseModel):
+    sql: str = ""
+    spec: dict[str, Any] | None = None  # a builder question, in place of SQL
+
+
+@app.post("/api/analysis/export")
+def analysis_export(payload: AnalysisExport) -> StreamingResponse:
+    if payload.spec is not None:
+        sql, params, _chart = analysis_builder_sql(payload.spec)
+        return export_readonly_csv(sql, tuple(params))
+    return export_readonly_csv(payload.sql)
 
 
 # ---- Guided builder: a structured spec → whitelisted, parameterised SQL ----
@@ -6509,10 +6681,25 @@ ANALYSIS_SUBJECTS: dict[str, dict[str, Any]] = {
     },
 }
 
+# A contract with a usable registration date. Undated contracts (stored
+# 0000-00-00) are left out of the year filters exactly as they are left out of
+# the year and decade groupings, so one question never has two totals.
+_DATED_CONTRACT = "c.registration_date NOT IN ('', '0000-00-00', 'NULL') AND c.registration_date IS NOT NULL"
+
 # key -> (subjects, where-fragment, takes_value, value_kind)
 ANALYSIS_FILTERS: dict[str, tuple[set[str], str, bool, str | None]] = {
-    "reg_year_from": ({"contracts", "investors"}, "substr(c.registration_date,1,4) >= ?", True, None),
-    "reg_year_to": ({"contracts", "investors"}, "substr(c.registration_date,1,4) <= ?", True, None),
+    "reg_year_from": (
+        {"contracts", "investors"},
+        f"{_DATED_CONTRACT} AND CAST(substr(c.registration_date,1,4) AS INTEGER) >= ?",
+        True,
+        "year",
+    ),
+    "reg_year_to": (
+        {"contracts", "investors"},
+        f"{_DATED_CONTRACT} AND CAST(substr(c.registration_date,1,4) AS INTEGER) <= ?",
+        True,
+        "year",
+    ),
     "place_is": (
         {"contracts"},
         "EXISTS (SELECT 1 FROM contract_place cp JOIN place p ON p.place_id=cp.place_id "
@@ -6542,7 +6729,8 @@ ANALYSIS_FILTERS: dict[str, tuple[set[str], str, bool, str | None]] = {
     ),
     "no_investors": (
         {"contracts"},
-        "NOT EXISTS (SELECT 1 FROM investor iv WHERE iv.contract_id=c.contract_id AND iv.is_deleted=0)",
+        "c.contract_id NOT IN (SELECT iv.contract_id FROM investor iv "
+        "JOIN person pv ON pv.person_id=iv.person_id AND pv.is_deleted=0 WHERE iv.is_deleted=0)",
         False,
         None,
     ),
@@ -6564,9 +6752,18 @@ ANALYSIS_FILTERS: dict[str, tuple[set[str], str, bool, str | None]] = {
     ),
     "via_proxy": ({"investors"}, "i.via_proxy = 1", False, None),
     "jewish": ({"investors"}, "(i.is_jewish = 1 OR i.jewish_db = 1)", False, None),
+    # The partner's own title and profession only. The husband's, father's and
+    # grandfather's title fields describe someone else and are never searched.
     "title_contains": (
         {"investors"},
         "EXISTS (SELECT 1 FROM title t WHERE t.title_id=i.title AND t.title_name LIKE ?)",
+        True,
+        "like",
+    ),
+    "profession_contains": ({"investors"}, "i.profession LIKE ?", True, "like"),
+    "title_or_profession_contains": (
+        {"investors"},
+        "(i.profession LIKE ? OR EXISTS (SELECT 1 FROM title t WHERE t.title_id=i.title AND t.title_name LIKE ?))",
         True,
         "like",
     ),
@@ -6630,8 +6827,16 @@ def build_analysis_sql(
                     )
                     params.extend(family)
                     continue
+            bound: Any = value
+            if kind == "like":
+                bound = f"%{value}%"
+            elif kind == "year":
+                try:
+                    bound = int(value)
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Enter a year as a number, such as 1600.")
             where.append(fragment)
-            params.append(f"%{value}%" if kind == "like" else value)
+            params.extend([bound] * fragment.count("?"))
         else:
             where.append(fragment)
 
@@ -6665,7 +6870,7 @@ def build_analysis_sql(
         if g_join:
             from_parts.append(g_join)
         if group in ("reg_year", "decade"):
-            where.append("c.registration_date NOT IN ('', '0000-00-00', 'NULL') AND c.registration_date IS NOT NULL")
+            where.append(_DATED_CONTRACT)
         if group == "currency" and canon_of:
             # Fold confirmed spelling variants into their canonical phrase. The
             # phrases are trusted DB/link values but still bound as parameters;
@@ -6686,12 +6891,13 @@ def build_analysis_sql(
         sensitive = {
             entry.get("field")
             for entry in spec.get("filters") or []
-        } & {"gender_women", "gender_men", "jewish", "title_contains"}
+        } & {"gender_women", "gender_men", "jewish", "title_contains", "profession_contains",
+             "title_or_profession_contains"}
         if measure == "distinct_people_reviewed" and (group == "gender" or sensitive):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Reviewed identity families cannot yet be combined with gender, title, or "
+                    "Reviewed identity families cannot yet be combined with gender, title, profession, or "
                     "Jewish-attribution groupings: linked entries may disagree on those attributes. "
                     "Use “Count person entries, as entered” for this question."
                 ),
@@ -6706,7 +6912,9 @@ def build_analysis_sql(
     where_clause = " AND ".join(f"({w})" for w in where)
 
     if measure == "list":
-        sql = f"SELECT {sub['list_select']} FROM {from_clause} WHERE {where_clause} ORDER BY {sub['list_order']} LIMIT 5000"
+        # No LIMIT here: the executor's own cap applies, so the screen can say
+        # "5,000 of 17,495" and a download can carry every row.
+        sql = f"SELECT {sub['list_select']} FROM {from_clause} WHERE {where_clause} ORDER BY {sub['list_order']}"
         return sql, params, "none"
 
     if measure in ("sum_total", "avg_total"):
@@ -6859,8 +7067,8 @@ def non_person_ids(connection: sqlite3.Connection) -> list[int]:
     return result
 
 
-@app.post("/api/analysis/build")
-def analysis_build(payload: dict[str, Any]) -> dict[str, Any]:
+def analysis_builder_sql(payload: dict[str, Any]) -> tuple[str, list[Any], str]:
+    """The builder's SQL for a question, with today's confirmed links applied."""
     if (
         payload.get("measure") == "distinct_people_reviewed"
         and not person_linkage_enabled()
@@ -6876,12 +7084,17 @@ def analysis_build(payload: dict[str, Any]) -> dict[str, Any]:
         excluded_people = non_person_ids(connection)
     finally:
         connection.close()
-    sql, params, chart = build_analysis_sql(
+    return build_analysis_sql(
         payload,
         currency_links=currency_links,
         person_links=person_links,
         excluded_person_ids=excluded_people,
     )
+
+
+@app.post("/api/analysis/build")
+def analysis_build(payload: dict[str, Any]) -> dict[str, Any]:
+    sql, params, chart = analysis_builder_sql(payload)
     result = run_readonly_sql(sql, tuple(params))
     return {**result, "sql": sql, "chart": chart}
 

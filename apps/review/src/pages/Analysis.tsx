@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import CopyLinkButton from "../components/CopyLinkButton";
-import { loadAnalysisLibrary, runAnalysisBuild, runAnalysisLibrary } from "../api";
+import { downloadAnalysisCsv, loadAnalysisLibrary, runAnalysisBuild, runAnalysisLibrary } from "../api";
+import type { AnalysisBuildSpec } from "../api";
 import { useLatest } from "../utils/latest";
 import { roleLabel } from "../utils/roles";
+import { planBars } from "../utils/barData";
 import type { AnalysisChart, AnalysisQuery, AnalysisResult } from "../types";
 import { isToolHidden } from "../features";
 
@@ -14,6 +16,7 @@ import { isToolHidden } from "../features";
  */
 
 const TABLE_CAP = 500;
+const EXPORT_CAP = 100_000; // the server's download ceiling (ANALYSIS_EXPORT_CAP)
 
 /** Screen headers for result columns. The SQL aliases stay unchanged in the CSV
  * export and in "Show SQL", so exports keep stable column names for scripts. */
@@ -59,6 +62,7 @@ const COLUMN_LABELS: Record<string, string> = {
   register: "Register",
   gender: "Gender",
   people: "People",
+  provenance: "How the Jewish partners are known",
 };
 
 function columnLabel(alias: string): string {
@@ -115,7 +119,10 @@ const FILTER_DEFS: Record<Subject, FilterDef[]> = {
     { key: "role_lp", label: "External investor (accomandante)", value: null },
     { key: "via_proxy", label: "Via proxy", value: null },
     { key: "jewish", label: "Jewish (recorded or attributed)", value: null },
+    // The partner's own title and profession only (never a husband's, father's or grandfather's title).
     { key: "title_contains", label: "Title contains", value: "text" },
+    { key: "profession_contains", label: "Profession contains", value: "text" },
+    { key: "title_or_profession_contains", label: "Title or profession contains", value: "text" },
     { key: "reg_year_from", label: "Registration year ≥", value: "number" },
     { key: "reg_year_to", label: "Registration year ≤", value: "number" },
   ],
@@ -139,28 +146,52 @@ function num(v: string | number | null): number {
   return typeof v === "number" ? v : Number(v);
 }
 
-function BarChart({ result }: { result: AnalysisResult }) {
-  const valIdx = result.columns.length - 1;
-  const data = result.rows
-    .map((r) => ({ label: r[0] == null ? "" : cellText(result.columns[0], r[0]), value: num(r[valIdx]) }))
-    .filter((d) => Number.isFinite(d.value))
-    .slice(0, 20);
-  if (data.length === 0) return null;
-  const max = Math.max(1, ...data.map((d) => d.value));
+/** Every period of a time grouping, gaps included; for ranked categories the top
+ * 20, said so, with the rest as one bar where they can be added. Scaled to all
+ * rows (planBars). */
+function BarChart({ result, overlapping }: { result: AnalysisResult; overlapping: boolean }) {
+  const plan = planBars(result.columns, result.rows, {
+    truncated: result.truncated,
+    totalRows: result.total_rows,
+    overlapping,
+    label: (alias, cell) => (cell == null ? "" : cellText(alias, cell)),
+  });
+  if (plan.bars.length === 0) return null;
   return (
-    <div className="an-bars">
-      {data.map((d) => (
-        <div className="an-bar-row" key={d.label}>
-          <span className="an-bar-label" title={d.label}>
-            {d.label}
-          </span>
-          <span className="an-bar-track">
-            <span className="an-bar-fill" style={{ width: `${Math.round((d.value / max) * 100)}%` }} />
-          </span>
-          <span className="an-bar-value">{d.value.toLocaleString()}</span>
-        </div>
-      ))}
-    </div>
+    <>
+      {plan.note && (
+        <p className="muted an-table-note" style={{ margin: "0 0 8px" }}>
+          {plan.note}
+        </p>
+      )}
+      <div className="an-bars">
+        {plan.bars.map((d, i) => (
+          <div className="an-bar-row" key={i}>
+            <span className="an-bar-label" title={d.label}>
+              {d.label}
+            </span>
+            {d.text ? (
+              // A period with no contracts: a marker in place of an amount.
+              <span className="an-bar-track muted" style={{ background: "none", fontSize: "0.74rem", lineHeight: "14px" }}>
+                {d.text}
+              </span>
+            ) : (
+              <span className="an-bar-track">
+                <span
+                  className="an-bar-fill"
+                  style={{
+                    width: `${Math.round((d.value / plan.max) * 100)}%`,
+                    ...(d.value === 0 ? { minWidth: 0 } : {}),
+                    ...(d.others ? { background: "#d2b18f" } : {}),
+                  }}
+                />
+              </span>
+            )}
+            <span className="an-bar-value">{d.text ? "" : d.value.toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -269,16 +300,11 @@ function LineChart({ result, allSeries = false }: { result: AnalysisResult; allS
   );
 }
 
-function csvEscape(v: string | number | null): string {
-  const s = v == null ? "" : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-// The CSV keeps the SQL aliases and stored values (0000-00-00, gp/lp): column
-// names stay stable for scripts and match "Show SQL".
-function downloadCsv(name: string, result: AnalysisResult) {
-  const lines = [result.columns.map(csvEscape).join(",")];
-  for (const row of result.rows) lines.push(row.map(csvEscape).join(","));
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+// The CSV is written by the server (/api/analysis/export) for every download, so
+// the file always holds every row, however many reached the screen. It keeps the
+// SQL aliases and stored values (0000-00-00, gp/lp): column names stay stable for
+// scripts and match "Show SQL".
+function saveFile(name: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -287,45 +313,72 @@ function downloadCsv(name: string, result: AnalysisResult) {
   URL.revokeObjectURL(url);
 }
 
-/** Shared result display: toolbar (CSV · SQL · rowcount) + chart + table. */
+/** Shared result display: toolbar (CSV · SQL · row total) + chart + table.
+ * The screen holds at most the first 5,000 rows and the table the first 500;
+ * the toolbar gives the true total, and the note under the table says once what
+ * the table shows and what the download holds. */
 function ResultView({
   result,
   chart,
   sql,
   csvName,
+  exportBody,
+  overlapping = false,
 }: {
   result: AnalysisResult;
   chart: AnalysisChart;
   sql: string;
   csvName: string;
+  exportBody: Parameters<typeof downloadAnalysisCsv>[0];
+  overlapping?: boolean;
 }) {
   const navigate = useNavigate();
   const [showSql, setShowSql] = useState(false);
-  const idCol = result.columns.findIndex((c) => c === "contract_id");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  useEffect(() => setExportError(""), [result]); // an old refusal never sits under a new question
+  // A contract number links only when the column is the one contract_id: with
+  // two (a sub-contract beside its parent), which is which cannot be told.
+  const idCols = result.columns.flatMap((c, i) => (c === "contract_id" ? [i] : []));
+  const idCol = idCols.length === 1 ? idCols[0] : -1;
+  const total = result.truncated ? result.total_rows : result.row_count;
+  const totalText =
+    total != null
+      ? total.toLocaleString()
+      : `more than ${(result.total_more_than ?? result.row_count).toLocaleString()}`;
+  const downloadable = total != null && total <= EXPORT_CAP;
+  const exportCsv = () => {
+    setExportError("");
+    setExporting(true);
+    downloadAnalysisCsv(exportBody)
+      .then((blob) => saveFile(csvName, blob))
+      .catch((e: Error) => setExportError(e.message))
+      .finally(() => setExporting(false));
+  };
   return (
     <>
       <div className="an-toolbar">
-        <button type="button" className="pill-button" onClick={() => downloadCsv(csvName, result)} disabled={result.rows.length === 0}>
-          ⤓ Export CSV
+        <button type="button" className="pill-button" onClick={exportCsv} disabled={result.rows.length === 0 || exporting}>
+          {exporting ? "Preparing CSV…" : "⤓ Export CSV"}
         </button>
         <button type="button" className="pill-button" onClick={() => setShowSql((s) => !s)}>
           {showSql ? "Hide SQL" : "Show SQL"}
         </button>
         <span className="muted an-rowcount">
-          {result.row_count.toLocaleString()} row{result.row_count === 1 ? "" : "s"}
-          {result.truncated ? " (capped)" : ""}
+          {totalText} row{total === 1 ? "" : "s"}
         </span>
       </div>
+      {exportError && <p className="error-text">{exportError}</p>}
       {showSql && <pre className="an-sql">{sql}</pre>}
-      {chart === "bar" && <BarChart result={result} />}
+      {chart === "bar" && <BarChart result={result} overlapping={overlapping} />}
       {chart === "line" && <LineChart result={result} />}
       {chart === "multiline" && <LineChart result={result} allSeries />}
       <div className="an-table-wrap">
         <table className="an-table">
           <thead>
             <tr>
-              {result.columns.map((c) => (
-                <th key={c}>{columnLabel(c)}</th>
+              {result.columns.map((c, ci) => (
+                <th key={ci}>{columnLabel(c)}</th>
               ))}
             </tr>
           </thead>
@@ -351,7 +404,12 @@ function ResultView({
         </table>
         {result.rows.length > TABLE_CAP && (
           <p className="muted an-table-note">
-            Showing the first {TABLE_CAP.toLocaleString()} of {result.row_count.toLocaleString()} rows — export CSV for all.
+            The table shows the first {TABLE_CAP.toLocaleString()} of {totalText} rows
+            {downloadable
+              ? `; the CSV export holds all ${totalText} (a download takes up to ${EXPORT_CAP.toLocaleString()} rows).`
+              : result.total_more_than != null
+                ? `; a download takes up to ${EXPORT_CAP.toLocaleString()} rows, so narrow the question to download it.`
+                : "."}
           </p>
         )}
       </div>
@@ -434,7 +492,12 @@ export default function Analysis() {
   const [measure, setMeasure] = useState("count");
   const [filters, setFilters] = useState<SpecFilter[]>([]);
   const [group, setGroup] = useState("");
-  const [buildResult, setBuildResult] = useState<{ result: AnalysisResult; chart: AnalysisChart; sql: string } | null>(null);
+  const [buildResult, setBuildResult] = useState<{
+    result: AnalysisResult;
+    chart: AnalysisChart;
+    sql: string;
+    spec: AnalysisBuildSpec; // the question behind this result, for its download
+  } | null>(null);
   const [buildError, setBuildError] = useState("");
 
   const [dropped, setDropped] = useState<string[]>([]);
@@ -558,8 +621,25 @@ export default function Analysis() {
     const handle = window.setTimeout(() => {
       setBuildError("");
       const fresh = beginBuild();
-      runAnalysisBuild({ subject, measure, filters, group_by: measure === "list" ? "" : group })
-        .then((r) => fresh() && setBuildResult({ result: { columns: r.columns, rows: r.rows, row_count: r.row_count, truncated: r.truncated }, chart: r.chart, sql: r.sql }))
+      const spec = { subject, measure, filters, group_by: measure === "list" ? "" : group };
+      runAnalysisBuild(spec)
+        .then(
+          (r) =>
+            fresh() &&
+            setBuildResult({
+              result: {
+                columns: r.columns,
+                rows: r.rows,
+                row_count: r.row_count,
+                truncated: r.truncated,
+                total_rows: r.total_rows,
+                total_more_than: r.total_more_than,
+              },
+              chart: r.chart,
+              sql: r.sql,
+              spec,
+            }),
+        )
         .catch((e: Error) => {
           if (!fresh()) return;
           setBuildError(e.message);
@@ -718,7 +798,14 @@ export default function Analysis() {
               {error && <p className="error-text">{error}</p>}
               {libRunning && <p className="muted">Running…</p>}
               {libResult && !libRunning && (
-                <ResultView result={libResult} chart={selected.chart} sql={selected.sql} csvName={`${selected.id}.csv`} />
+                <ResultView
+                  result={libResult}
+                  chart={selected.chart}
+                  sql={selected.sql}
+                  csvName={`${selected.id}.csv`}
+                  exportBody={{ sql: selected.sql }}
+                  overlapping={selected.overlapping}
+                />
               )}
             </div>
           )
@@ -807,7 +894,13 @@ export default function Analysis() {
             {incomplete && <p className="muted an-note">Fill in the filter value(s) to run.</p>}
             {buildError && <p className="error-text">{buildError}</p>}
             {buildResult && !incomplete && (
-              <ResultView result={buildResult.result} chart={buildResult.chart} sql={buildResult.sql} csvName="query.csv" />
+              <ResultView
+                result={buildResult.result}
+                chart={buildResult.chart}
+                sql={buildResult.sql}
+                csvName="query.csv"
+                exportBody={{ spec: buildResult.spec }}
+              />
             )}
           </div>
         ) : (
@@ -828,7 +921,7 @@ export default function Analysis() {
             <p className="muted an-note">
               <strong>SELECT</strong> or <strong>WITH</strong> only, one statement at a time. A query containing a
               write word (insert, update, delete, replace and the like) is refused, even inside quoted text or as the
-              replace() function. Results are capped at 5,000 rows. Press <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> to run.
+              replace() function. Press <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> to run.
             </p>
             <textarea
               className="an-console"
@@ -849,7 +942,13 @@ export default function Analysis() {
             </div>
             {consoleError && <p className="error-text">{consoleError}</p>}
             {consoleResult && !consoleRunning && (
-              <ResultView result={consoleResult} chart="none" sql={ranSql} csvName="query.csv" />
+              <ResultView
+                result={consoleResult}
+                chart="none"
+                sql={ranSql}
+                csvName="query.csv"
+                exportBody={{ sql: ranSql }}
+              />
             )}
           </div>
         )}

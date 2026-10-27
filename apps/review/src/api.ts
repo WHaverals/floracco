@@ -24,7 +24,7 @@ function apiError(message: string, status: number): Error & { status?: number } 
  * maintenance notice, a "changed while you were editing" guard) passes through
  * unchanged; network failures, unreadable replies and bare server errors do not.
  * The technical detail goes to the browser console for diagnosis. */
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function send(path: string, options?: RequestInit): Promise<Response> {
   // Every write is a POST. A write that got no proper answer may or may not have
   // landed, so its message says so instead of promising that nothing was saved.
   // The Analysis queries are POSTs too but only read.
@@ -67,6 +67,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     console.warn("API request failed:", path, response.status, text.slice(0, 300));
     throw apiError(message, response.status);
   }
+  return response;
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await send(path, options);
   try {
     return (await response.json()) as T;
   } catch (cause) {
@@ -141,13 +146,33 @@ export function runAnalysisLibrary(sql: string): Promise<import("./types").Analy
   return request("/api/analysis/run", { method: "POST", body: JSON.stringify({ sql }) });
 }
 
-export function runAnalysisBuild(spec: {
+export type AnalysisBuildSpec = {
   subject: string;
   measure: string;
   filters: { field: string; value?: string }[];
   group_by: string;
-}): Promise<import("./types").AnalysisResult & { sql: string; chart: import("./types").AnalysisChart }> {
+};
+
+export function runAnalysisBuild(
+  spec: AnalysisBuildSpec,
+): Promise<import("./types").AnalysisResult & { sql: string; chart: import("./types").AnalysisChart }> {
   return request("/api/analysis/build", { method: "POST", body: JSON.stringify(spec) });
+}
+
+/** The CSV download of a library or console query (`sql`) or a builder question
+ * (`spec`): every row, written and streamed by the server. A refusal (too many
+ * rows, too slow) arrives as a sentence; a download that breaks off saves nothing. */
+export async function downloadAnalysisCsv(body: { sql: string } | { spec: AnalysisBuildSpec }): Promise<Blob> {
+  const response = await send("/api/analysis/export", { method: "POST", body: JSON.stringify(body) });
+  if (!(response.headers.get("Content-Type") ?? "").startsWith("text/csv")) {
+    throw apiError("The server sent a reply this page could not read. Reload the page; you may need to sign in again.", response.status);
+  }
+  try {
+    return await response.blob();
+  } catch (cause) {
+    console.warn("CSV download broke off:", cause);
+    throw apiError("The download stopped before it was complete, so no file was saved. Narrow the question and try again.", 0);
+  }
 }
 
 export function loadReference(
