@@ -2173,31 +2173,58 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
         record_field("Recorded as woman", "person", "is_woman", data.get("is_woman"), yes_no(data.get("is_woman")), corrections),
     ]
 
+    # One line per appearance (investor row), not per contract: an entry that
+    # is on one act twice — Gherardi 7849 as the senator and as his bank's
+    # stake — gets two lines that the role, title and heirs flag tell apart.
     contracts = connection.execute(
         """
-        SELECT i.contract_id AS contract_id, i.profession AS profession,
+        SELECT i.investor_id AS investor_id, i.contract_id AS contract_id,
+               i.profession AS profession, i.heirs_of AS heirs_of,
+               t.title_name AS title,
+               GROUP_CONCAT(DISTINCT inv.type) AS roles,
                c.firm_name AS firm_name, c.registration_date AS registration_date
         FROM investor i
         LEFT JOIN contract c ON c.contract_id = i.contract_id
+        LEFT JOIN title t ON t.title_id = i.title
+        LEFT JOIN investor_group ig ON ig.investor_id = i.investor_id AND ig.is_deleted = 0
+        LEFT JOIN investment inv ON inv.investment_id = ig.investment_id AND inv.is_deleted = 0
         WHERE i.person_id = ? AND i.is_deleted = 0
           AND (c.contract_id IS NULL OR c.is_deleted = 0)
-        ORDER BY c.registration_date
+        GROUP BY i.investor_id
+        ORDER BY c.registration_date, i.contract_id, i.investor_id
         """,
         (raw_id,),
     ).fetchall()
+
+    def recorded_as(c: sqlite3.Row) -> str:
+        roles = sorted({part.strip().lower() for part in str(c["roles"] or "").split(",") if part.strip()})
+        words = [
+            {"gp": "general partner", "lp": "external investor"}.get(role, role) for role in roles
+        ]
+        if c["heirs_of"]:
+            words.append("through heirs")
+        role_text = ", ".join(words)
+        title = str(c["title"] or "").strip()
+        return " · ".join(part for part in (title, role_text) if part) or "—"
+
     sections: list[dict[str, Any]] = []
     if contracts:
         sections.append(
             {
                 "title": f"Appears in contracts ({len(contracts)})",
-                "columns": ["Firm", "Date", "Profession"],
+                "columns": ["Firm", "Date", "Recorded as", "Profession"],
                 "link_table": "contract",
                 "rows": [
                     {
+                        # `id` opens the contract; `key` tells two appearances
+                        # on one contract apart.
                         "id": str(c["contract_id"]),
+                        "key": f"{c['contract_id']}:{c['investor_id']}",
+                        "investor_id": int(c["investor_id"]),
                         "cells": [
                             display_text(c["firm_name"]),
                             display_date(c["registration_date"]),
+                            recorded_as(c),
                             display_text(c["profession"]),
                         ],
                     }

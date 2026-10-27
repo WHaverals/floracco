@@ -2752,7 +2752,7 @@ function RecordDetail({
                 const clickable = Boolean(section.link_table && row.id);
                 return (
                   <tr
-                    key={`${section.title}-${row.id || rowIndex}`}
+                    key={`${section.title}-${row.key ?? row.id ?? rowIndex}`}
                     className={clickable ? "db-row-link" : undefined}
                     onClick={
                       clickable && section.link_table

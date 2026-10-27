@@ -713,7 +713,11 @@ export type DbField = {
 };
 
 export type DbSectionRow = {
+  /** The linked record's id (a contract on "Appears in contracts"). */
   id: string;
+  /** Tells rows apart when two point at one record (one entry twice on an act). */
+  key?: string;
+  investor_id?: number;
   cells: string[];
 };
 
