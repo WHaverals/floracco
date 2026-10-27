@@ -157,6 +157,15 @@ function SplitFlagBlock({
         {flag.created_at ? ` on ${formatIdentityWhen(flag.created_at)}` : ""}
         {note ? <>: &ldquo;{note}&rdquo;</> : "."}
       </p>
+      {flag.marks ? (
+        <p>
+          {flag.marks.other} of {flag.marks.total} appearance{flag.marks.total === 1 ? "" : "s"} below{" "}
+          {flag.marks.other === 1 ? "is" : "are"} marked as another person&rsquo;s
+          {flag.marks.unsure ? `, ${flag.marks.unsure} as unsure` : ""}
+          {flag.changed_by ? ` (marks last changed by ${flag.changed_by}${flag.changed_at ? ` on ${formatIdentityWhen(flag.changed_at)}` : ""})` : ""}
+          . A reader&rsquo;s marking, not a change to the record: the entry keeps every act.
+        </p>
+      ) : null}
       <div className="pl-identity-split-actions">
         <button type="button" className="pill-button" onClick={() => onOpenIdentity(flag.case_id)}>
           Open in People →

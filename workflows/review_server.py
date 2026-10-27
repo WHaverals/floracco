@@ -2207,12 +2207,18 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
         title = str(c["title"] or "").strip()
         return " · ".join(part for part in (title, role_text) if part) or "—"
 
+    # A reader's marking of which acts are whose, as a quiet last column:
+    # "someone else" / "unsure", blank for this entry; absent when no marks
+    # stand. The record itself is unchanged by it.
+    marks = _person_card_marks(int(raw_id)) if contracts else None
+    mark_word = {"other": "someone else", "unsure": "unsure", "this": ""}
     sections: list[dict[str, Any]] = []
     if contracts:
         sections.append(
             {
                 "title": f"Appears in contracts ({len(contracts)})",
-                "columns": ["Firm", "Date", "Recorded as", "Profession"],
+                "columns": ["Firm", "Date", "Recorded as", "Profession"]
+                + (["Marked as"] if marks is not None else []),
                 "link_table": "contract",
                 "rows": [
                     {
@@ -2226,7 +2232,12 @@ def person_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, Any]
                             display_date(c["registration_date"]),
                             recorded_as(c),
                             display_text(c["profession"]),
-                        ],
+                        ]
+                        + (
+                            [mark_word.get(marks.get(int(c["investor_id"]), "this"), "not marked")]
+                            if marks is not None
+                            else []
+                        ),
                     }
                     for c in contracts
                 ],
@@ -3847,6 +3858,31 @@ def _person_seam_view(
         "hidden": hidden,
         "band": band,
         "other_entry_id": seam.get("other_entry_id"),
+    }
+
+
+def _person_card_marks(person_id: int) -> dict[int, str] | None:
+    """The standing marks of one entry by appearance, for its Database card.
+
+    Read from the flag event's snapshot alone (no cache, no model): the card
+    shows a reader's marking as a note, never as a change to the record.
+    Shown on WH's interim decision of 2026-10-27 (register §5 (e)).
+    """
+    if not person_linkage_enabled():
+        return None
+    clog = open_corrections()
+    try:
+        latest = _latest_person_events(clog)
+    finally:
+        clog.close()
+    flag = _person_split_flag(latest, person_id)
+    if not flag or not flag.get("marks"):
+        return None
+    seam = _event_seam(latest.get(flag["case_id"])) or {}
+    return {
+        int(mark["investor_id"]): str(mark.get("side") or "unsure")
+        for mark in seam.get("assignments") or []
+        if mark.get("investor_id") is not None
     }
 
 
