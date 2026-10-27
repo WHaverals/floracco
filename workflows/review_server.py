@@ -80,6 +80,8 @@ CANDIDATE_DISMISSALS_PATH = CORRECTIONS_DIR / "correction_candidate_dismissals.j
 # DB-intrinsic "Needs review" flags (workflows/data_quality.py, computed live) +
 # their append-only dismissal log ("reviewed, not an error").
 FLAG_DISMISSALS_PATH = CORRECTIONS_DIR / "flag_dismissals.jsonl"
+# Saved Find questions, per signed-in person: append-only (saved / renamed / removed).
+FIND_QUESTIONS_PATH = CORRECTIONS_DIR / "find_questions.jsonl"
 DEFAULT_DB_PATH = DATA_ROOT / "sqlite/main.db"
 PERSON_CACHE_PATH = Path(
     os.getenv("FLORACCO_PERSON_CACHE_PATH") or (DATA_ROOT / "sqlite/person_cache.db")
@@ -7405,6 +7407,13 @@ _FIND_SAME_OR_ANOTHER = "and at least one partner, the same or another, who"
 # The answers to "about which partner?" when a condition about a partner is
 # added beside a partner line: never guessed (12.2).
 FIND_PLACEMENTS = {"same": "The same partner", "another": "Another partner, or the same one"}
+# Two sets combined (the set history, 12.8 step 4): op -> (opening, the word between them).
+FIND_COMBINE: dict[str, tuple[str, str]] = {
+    "and": ("that are both", "and"),
+    "or": ("that are either", "or"),
+    "not": ("that are", "but not"),
+}
+FIND_MAX_DEPTH = 3  # sets combined within combined sets
 _FIND_STATED = FIND_PARTNER_CONDITIONS["jewish"]["choices"]["stated"].sql
 _FIND_ATTRIBUTED = FIND_PARTNER_CONDITIONS["jewish"]["choices"]["attributed"].sql
 _FIND_NON_PEOPLE = "institutions, estates, shareholder groups and placeholders"
@@ -7434,6 +7443,7 @@ def find_registry() -> dict[str, Any]:
         "quantifiers": [{"key": k, "reading": first, "later": later} for k, (first, later) in FIND_QUANTIFIERS.items()],
         "same_or_another": _FIND_SAME_OR_ANOTHER,
         "placements": FIND_PLACEMENTS,
+        "combine": [{"key": k, "opening": first, "between": between} for k, (first, between) in FIND_COMBINE.items()],
         "partner_conditions": [_find_kind_words(k, v) for k, v in FIND_PARTNER_CONDITIONS.items()],
     }
 
@@ -7503,8 +7513,9 @@ def _find_condition(entry: dict[str, Any], condition: dict[str, Any]) -> dict[st
     return {"kind": condition["kind"], "not": _find_not(condition), "choice": choice}
 
 
-def find_normalize(spec: Any) -> dict[str, Any]:
-    """A Find question read against the registry; anything unknown is refused in words."""
+def find_normalize(spec: Any, depth: int = 0) -> dict[str, Any]:
+    """A Find question read against the registry; anything unknown is refused in words.
+    A question may combine two earlier sets (``combine`` and ``sets``)."""
     if not isinstance(spec, dict):
         raise HTTPException(status_code=400, detail="A question must be a set of conditions.")
     contract_in, partners_in = spec.get("contract") or [], spec.get("partners") or []
@@ -7546,7 +7557,28 @@ def find_normalize(spec: Any) -> dict[str, Any]:
                 raise HTTPException(status_code=400, detail=f"Unknown partner condition '{kind}'.")
             conditions.append(_find_condition(FIND_PARTNER_CONDITIONS[kind], condition))
         partners.append({"quantifier": quantifier, "conditions": conditions})
-    return {"contract": contract, "partners": partners}
+    out: dict[str, Any] = {"contract": contract, "partners": partners}
+    if spec.get("combine") is not None or spec.get("sets") is not None:
+        combine, sets_in = spec.get("combine"), spec.get("sets")
+        if not isinstance(combine, str) or combine not in FIND_COMBINE:
+            raise HTTPException(status_code=400, detail="Combine two sets with “and”, “or” or “but not”.")
+        if not isinstance(sets_in, list) or len(sets_in) != 2:
+            raise HTTPException(status_code=400, detail="Combine exactly two sets.")
+        if depth >= FIND_MAX_DEPTH:
+            raise HTTPException(status_code=400, detail=f"Sets can be combined up to {FIND_MAX_DEPTH} deep.")
+        out["combine"] = combine
+        out["sets"] = [find_normalize(s, depth + 1) for s in sets_in]
+    return out
+
+
+def _find_flat(spec: dict[str, Any]) -> list[tuple[dict[str, Any], dict[str, Any], str | None]]:
+    """Every condition of a normalized question, combined sets included: (registry,
+    condition, the quantifier of its partner line or None)."""
+    out = [(FIND_CONTRACT_CONDITIONS, c, None) for c in spec["contract"]]
+    out += [(FIND_PARTNER_CONDITIONS, c, line["quantifier"]) for line in spec["partners"] for c in line["conditions"]]
+    for sub in spec.get("sets", []):
+        out += _find_flat(sub)
+    return out
 
 
 def _marks(values: list[Any]) -> str:
@@ -7644,6 +7676,24 @@ def build_find_sql(
         where.extend(fragments)
 
     marks: list[dict[str, Any]] = []  # what carries the data-entry team's mark "inferred"
+    sets: list[dict[str, Any]] = []  # combined sets, for How this was found
+    list_select_params: list[Any] = []  # parameters of the List's own columns
+    membership: list[str] = []
+    if spec.get("combine"):
+        built = [build_find_sql(sub, place_names, non_person_ids, lookups) for sub in spec["sets"]]
+        opening, between = FIND_COMBINE[spec["combine"]]
+        words = [b["sentence"][len(FIND_UNIT):].strip() or "all contracts" for b in built]
+        member = [f"c.contract_id IN (SELECT c.contract_id FROM contract c WHERE {b['where_sql']})" for b in built]
+        joined = {"and": f"{member[0]} AND {member[1]}", "or": f"({member[0]} OR {member[1]})",
+                  "not": f"{member[0]} AND NOT {member[1]}"}[spec["combine"]]
+        part("combined", f"{opening} “{words[0]}” {between} “{words[1]}”",
+             [(joined, built[0]["total_params"] + built[1]["total_params"], False)])
+        sets = [{"sentence": b["sentence"], "total_sql": b["total_sql"], "total_params": b["total_params"]} for b in built]
+        if spec["combine"] == "or":
+            # which of the two sets each contract is in
+            for k, (b, test) in enumerate(zip(built, member), 1):
+                membership.append(f"CASE WHEN {test} THEN 'yes' ELSE '' END AS in_set_{k}")
+                list_select_params.extend(b["total_params"])
     for condition in spec["contract"]:
         entry = FIND_CONTRACT_CONDITIONS[condition["kind"]]
         if condition["kind"] == "years":
@@ -7725,8 +7775,9 @@ def build_find_sql(
     where_sql, where_params = conjoin(where)
 
     # ---- the List: every row, in date order with the undated last ----
-    columns = ["c.contract_id", "c.registration_date", "c.firm_name", "pl.places"]
-    labels = ["Contract", "Registration date", "Firm name", "Places of activity"]
+    columns = ["c.contract_id", "c.registration_date", "c.firm_name", "pl.places"] + membership
+    labels = ["Contract", "Registration date", "Firm name", "Places of activity"] + [
+        f"In set {k}" for k in range(1, len(membership) + 1)]
     joins = [
         f"LEFT JOIN (SELECT contract_id, group_concat(place, {_FIND_SEP}) AS places FROM ("
         "SELECT cp.contract_id, p.place_name || CASE WHEN cp.place_db = 1 THEN ' (marked as inferred)' ELSE '' END AS place "
@@ -7841,7 +7892,7 @@ def build_find_sql(
         "spec": spec,
         "sentence": sentence,
         "list_sql": list_sql,
-        "list_params": join_params + where_params,
+        "list_params": list_select_params + join_params + where_params,
         "labels": labels,
         "counts_sql": counts_sql,
         "counts_params": select_params + where_params,
@@ -7849,6 +7900,7 @@ def build_find_sql(
         "total_params": where_params,
         "where_sql": where_sql,
         "lines": why,
+        "sets": sets,
         "undated_sql": undated_sql,
         "undated_params": undated_params,
         "splits": splits,
@@ -7863,10 +7915,7 @@ def build_find_sql(
 def _find_names_used(spec: dict[str, Any], names: dict[str, Any]) -> dict[str, dict[str, str]]:
     """The stored name of every value the question uses, for the page's chips."""
     used: dict[str, dict[str, str]] = {}
-    conditions = [(FIND_CONTRACT_CONDITIONS, c) for c in spec["contract"]] + [
-        (FIND_PARTNER_CONDITIONS, c) for line in spec["partners"] for c in line["conditions"]
-    ]
-    for registry, condition in conditions:
+    for registry, condition, _quantifier in _find_flat(spec):
         kind = registry[condition["kind"]].get("values")
         if kind in (None, "word"):
             continue
@@ -7907,11 +7956,8 @@ def find_lookups(connection: sqlite3.Connection, normals: list[dict[str, Any]]) 
     wanted: dict[str, set[Any]] = {"place": set(), "activity": set(), "currency": set(), "register": set(), "word": set()}
     needs_people = False
     for spec in normals:
-        conditions = [(FIND_CONTRACT_CONDITIONS, c) for c in spec["contract"]]
-        for line in spec["partners"]:
-            needs_people = needs_people or line["quantifier"] != "any"
-            conditions += [(FIND_PARTNER_CONDITIONS, c) for c in line["conditions"]]
-        for registry, condition in conditions:
+        for registry, condition, quantifier in _find_flat(spec):
+            needs_people = needs_people or quantifier not in (None, "any")
             kind = registry[condition["kind"]].get("values")
             if kind:
                 wanted[kind].update(v for v in condition["values"] if v is not None)
@@ -8334,6 +8380,69 @@ def find_time(
     return {"period": period, "width": width, "periods": periods, "partial": partial, "series": series, "notes": notes}
 
 
+# ---- Find, step 4: See their partners ----
+# The set turned into partner appearances (12.3, from IPUMS's choice of returning
+# the matching person or everyone in the household): every partner on the
+# contracts, or only those who met a partner line. An appearance is one entered
+# person on one contract; person entries are counted as entered, not yet reviewed
+# as people (12.2).
+
+FIND_PARTNER_CHOICES = {
+    "every": "every partner on these contracts",
+    "matched": "only the partners who matched",
+}
+FIND_PARTNER_LABELS = [
+    "Partner", "Contract", "Registration date", "Firm name", "Role on the stake", "Jewish, stated in the act",
+    "Jewish, editorial attribution", "Woman", "Through a proxy", "Lives in", "Comes from", "Title", "Profession",
+    "Person entry",
+]
+
+
+def find_partners_sql(query: dict[str, Any], which: str) -> dict[str, Any]:
+    """The partner appearances of a set, as SQL: the List and its two counts
+    (appearances, and person entries as entered)."""
+    if which not in FIND_PARTNER_CHOICES:
+        raise HTTPException(status_code=400, detail="Choose every partner, or only the partners who matched.")
+    members = f"SELECT c.contract_id FROM contract c WHERE {query['where_sql']}"
+    params = list(query["total_params"])
+    match = ""
+    if which == "matched":
+        if not query["lines"]:
+            raise HTTPException(status_code=400, detail="No partner line in this question, so no partner matched.")
+        match = " AND (" + " OR ".join(f"({line['test']}{line['people']})" for line in query["lines"]) + ")"
+        params += [p for line in query["lines"] for p in line["test_params"] + line["params"]]
+    source = (
+        "FROM investor i JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0 "
+        f"JOIN contract c ON c.contract_id = i.contract_id WHERE i.is_deleted = 0 AND i.contract_id IN ({members}){match}"
+    )
+    role = (
+        "(SELECT group_concat(CASE inv.type WHEN 'gp' THEN 'general partner' WHEN 'lp' THEN "
+        f"'external investor (accomandante)' ELSE inv.type END, {_FIND_SEP}) FROM investor_group ig "
+        "JOIN investment inv ON inv.investment_id = ig.investment_id AND inv.is_deleted = 0 "
+        "WHERE ig.investor_id = i.investor_id AND ig.is_deleted = 0)"
+    )
+    columns = [
+        f"{_FIND_NAME} AS partner", "c.contract_id", "c.registration_date", "c.firm_name", f"{role} AS role",
+        "CASE WHEN COALESCE(i.is_jewish, 0) = 1 THEN 'yes' ELSE '' END AS jewish_stated",
+        "CASE WHEN COALESCE(i.jewish_db, 0) = 1 THEN 'yes' ELSE '' END AS jewish_attributed",
+        "CASE WHEN COALESCE(pe.is_woman, 0) = 1 THEN 'yes' ELSE '' END AS woman",
+        "CASE WHEN COALESCE(i.via_proxy, 0) = 1 THEN 'yes' ELSE '' END AS proxy",
+        "(SELECT p.place_name FROM place p WHERE p.place_id = i.place_of_residence) AS lives_in",
+        "(SELECT p.place_name FROM place p WHERE p.place_id = i.place_of_origin) AS comes_from",
+        "(SELECT t.title_name FROM title t WHERE t.title_id = i.title) AS title",
+        "i.profession", "i.person_id",
+    ]
+    return {
+        "list_sql": (
+            f"SELECT {', '.join(columns)}\n{source}\n"
+            f"ORDER BY CASE WHEN {_DATED_CONTRACT} THEN 0 ELSE 1 END, c.registration_date, c.contract_id, partner"
+        ),
+        "counts_sql": f"SELECT COUNT(*), COUNT(DISTINCT i.person_id) {source}",
+        "params": params,
+        "labels": FIND_PARTNER_LABELS,
+    }
+
+
 def _count_words(n: int, one: str, many: str) -> str:
     return f"{n:,} {one if n == 1 else many}"
 
@@ -8580,6 +8689,15 @@ def find_how(spec: Any) -> dict[str, Any]:
     ]
     inference = _find_inference(query, [next(results) for _ in query["inference"]], total)
 
+    combined = [
+        {"sentence": entry["sentence"], "count": int(rows[0][0] or 0)}
+        for entry, rows in zip(query["sets"], _find_rows([(e["total_sql"], e["total_params"]) for e in query["sets"]]))
+    ] if query["sets"] else []
+    edits, last = find_edits(normal)
+    as_of = (
+        f"The last edit logged to the records and fields this question selects by was on {_find_day(last)} "
+        f"({edits:,} in all)." if edits else "No edit has been logged to the records and fields this question selects by."
+    )
     counted = ["Contracts, each counted once however many of its partners match."]
     if normal["partners"]:
         counted.append("A partner is one person's appearance on one contract, as entered.")
@@ -8592,9 +8710,162 @@ def find_how(spec: Any) -> dict[str, Any]:
         "near_misses": near_misses,
         "inference": inference,
         "searched": query["searched"],
+        "sets": combined,
+        "as_of": as_of,
         "sql": query["list_sql"],
         "params": query["list_params"],
     }
+
+
+# ---- Find, step 4: saved questions, what changed, and See their partners ----
+
+# The records and fields each condition selects by, for "edits logged since"
+# (12.4): table -> fields; "*" is every field, None the record itself (created,
+# hidden, restored). The change log does not record which figures moved, so a
+# saved question says how many edits touched what it reads, never which figure.
+_FIND_READS: dict[str, dict[str, set[str | None]]] = {
+    "place": {"contract_place": {"*"}},
+    "years": {"contract": {"registration_date"}},
+    "activity": {"contract": {"economic_sector"}},
+    "currency": {"contract": {"currency_id"}},
+    "register": {"contract": {"folder"}},
+    "discretion": {"contract": {"pl_discretion", "ec_discretion"}},
+    "jewish": {"investor": {"is_jewish", "jewish_db"}},
+    "woman": {"person": {"is_woman"}},
+    "role": {"investment": {"*"}, "investor_group": {"*"}},
+    "proxy": {"investor": {"via_proxy"}},
+    "residence": {"investor": {"place_of_residence"}},
+    "origin": {"investor": {"place_of_origin"}},
+    "word": {"investor": {"title", "profession"}},
+}
+FIND_QUESTION_NAME = 120  # characters in a saved question's name
+FIND_SEARCH_LIMIT = 8000  # characters in a saved question's address
+
+
+def _find_reads(spec: dict[str, Any]) -> dict[str, set[str | None]]:
+    reads: dict[str, set[str | None]] = {"contract": {None}}
+    for _registry, condition, quantifier in _find_flat(spec):
+        if quantifier is not None:
+            reads.setdefault("investor", set()).add(None)
+            reads.setdefault("person", set()).add(None)
+        for table, fields in _FIND_READS[condition["kind"]].items():
+            reads.setdefault(table, set()).update(fields)
+    return reads
+
+
+def _find_corrections_path() -> Path:
+    return corrections_db.default_path()
+
+
+def find_edits(spec: dict[str, Any], since: str = "") -> tuple[int, str | None]:
+    """How many applied (or reverted) edits the change log holds, after ``since``,
+    on the records and fields this question selects by, and when the last was.
+    The log is opened read-only."""
+    path = _find_corrections_path()
+    if not path.exists():
+        return 0, None
+    clauses: list[str] = []
+    params: list[Any] = [since]
+    for table, fields in sorted(_find_reads(spec).items()):
+        if "*" in fields:
+            clauses.append("r.db_table = ?")
+            params.append(table)
+        else:
+            named = sorted(f for f in fields if f)
+            field = f" OR r.field IN ({_marks(named)})" if named else ""
+            clauses.append(f"(r.db_table = ? AND (r.field IS NULL{field}))")
+            params += [table, *named]
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        count, last = connection.execute(
+            "SELECT COUNT(*), MAX(e.at) FROM change_event e JOIN change_request r ON r.request_id = e.request_id "
+            f"WHERE e.event IN ('applied', 'reverted') AND e.at > ? AND ({' OR '.join(clauses)})",
+            params,
+        ).fetchone()
+    except sqlite3.Error:
+        return 0, None
+    finally:
+        connection.close()
+    return int(count or 0), last
+
+
+def _find_day(stamp: str | None) -> str:
+    if not stamp:
+        return ""
+    moment = datetime.fromisoformat(stamp)
+    return f"{moment.day} {moment:%B %Y}"
+
+
+def _find_ids_text(ids: list[int]) -> str:
+    shown = ", ".join(str(i) for i in ids[:10])
+    return shown + (f" and {len(ids) - 10:,} more" if len(ids) > 10 else "")
+
+
+def find_owner(request: Request) -> str:
+    """Whose saved questions these are: the Cloudflare Access email, or "" locally."""
+    return request.headers.get("cf-access-authenticated-user-email", "").strip().lower()
+
+
+def _find_saved(owner: str) -> dict[str, dict[str, Any]]:
+    """The owner's saved questions, folded from the append-only log, oldest first."""
+    saved: dict[str, dict[str, Any]] = {}
+    for event in load_jsonl(FIND_QUESTIONS_PATH):
+        if event.get("owner", "") != owner:
+            continue
+        qid = str(event.get("id"))
+        if event.get("event") == "saved":
+            saved[qid] = {k: event.get(k) for k in ("id", "name", "search", "spec", "sentence", "count", "ids", "at")}
+        elif qid in saved and event.get("event") == "renamed":
+            saved[qid]["name"] = event.get("name")
+        elif qid in saved and event.get("event") == "removed":
+            del saved[qid]
+    return saved
+
+
+def _find_append(event: dict[str, Any]) -> None:
+    FIND_QUESTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with FIND_QUESTIONS_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({**event, "at": datetime.now(timezone.utc).isoformat()}, ensure_ascii=False) + "\n")
+
+
+def _find_members(query: dict[str, Any]) -> list[int]:
+    rows = _find_rows([(f"SELECT c.contract_id FROM contract c WHERE {query['where_sql']} ORDER BY c.contract_id",
+                        query["total_params"])])[0]
+    return [int(r[0]) for r in rows]
+
+
+def find_question_today(question: dict[str, Any]) -> dict[str, Any]:
+    """A saved question asked again: today's count, which contracts entered or
+    left, whether its words now read differently, and the edits logged since to
+    what it selects by (12.4). Every sentence is generated here."""
+    saved_line = f"Saved {_find_day(question['at'])}: {_count_words(int(question['count']), 'contract', 'contracts')}."
+    try:
+        query = find_prepare(question["spec"])
+    except HTTPException as refused:
+        return {"changed": True, "today": None, "lines": [saved_line, f"It no longer fits the conditions: {refused.detail}"]}
+    ids = _find_members(query)
+    before, now = set(question.get("ids") or []), set(ids)
+    entered, left = sorted(now - before), sorted(before - now)
+    if not entered and not left:
+        today = f"Today: {len(ids):,}, no change."
+    else:
+        moves = []
+        if entered:
+            moves.append(f"{_find_ids_text(entered)} entered")
+        if left:
+            moves.append(f"{_find_ids_text(left)} left")
+        today = f"Today: {len(ids):,} ({'; '.join(moves)})."
+    lines = [saved_line, today]
+    reworded = query["sentence"] != question["sentence"]
+    if reworded:
+        lines.append(f"Its words now read: {query['sentence']}.")
+    edits, last = find_edits(find_normalize(question["spec"]), question["at"])
+    lines.append(
+        "No edits have been logged since to the records and fields it selects by." if not edits
+        else f"{edits:,} {'edit has' if edits == 1 else 'edits have'} been logged since to the records and fields "
+        f"it selects by, the last on {_find_day(last)}."
+    )
+    return {"changed": bool(entered or left or reworded), "today": len(ids), "lines": lines}
 
 
 class FindRequest(BaseModel):
@@ -8650,7 +8921,8 @@ def analysis_find_counts(payload: FindCounts) -> dict[str, Any]:
     return {
         "counts": [
             None if isinstance(q, HTTPException)
-            else {"total": int(next(totals)[0][0] or 0), "parts": [s["reading"] for s in q["steps"][1:]]}
+            else {"total": int(next(totals)[0][0] or 0), "parts": [s["reading"] for s in q["steps"][1:]],
+                  "sentence": q["sentence"]}
             for q in built
         ]
     }
@@ -8723,6 +8995,128 @@ def analysis_find_time(payload: FindTimeRequest) -> dict[str, Any]:
         for kind, named in query["names"].items():
             names.setdefault(kind, {}).update(named)
     return {**_find_view(lambda connection: find_time(connection, queries, payload.period, payload.split or None)), "names": names}
+
+
+@app.get("/api/analysis/find/questions")
+def analysis_find_questions(request: Request) -> dict[str, Any]:
+    """The signed-in person's saved questions, each asked again today (12.1, 12.4)."""
+    owner = find_owner(request)
+    out = []
+    for question in _find_saved(owner).values():
+        today = find_question_today(question)
+        out.append({k: question[k] for k in ("id", "name", "search", "sentence", "count", "at")} | today)
+    return {"owner": owner, "questions": out}
+
+
+class FindSave(BaseModel):
+    name: str = ""
+    search: str = ""
+    spec: dict[str, Any] = Field(default_factory=dict)
+
+
+def _find_name(text: str) -> str:
+    name = " ".join(text.split())
+    if not name or len(name) > FIND_QUESTION_NAME:
+        raise HTTPException(status_code=400, detail=f"Give the question a name of up to {FIND_QUESTION_NAME} characters.")
+    return name
+
+
+@app.post("/api/analysis/find/questions")
+@serialized_write
+def analysis_find_save(payload: FindSave, request: Request) -> dict[str, Any]:
+    """Save a question under a name: its address (question and view), its
+    sentence, today's count and which contracts it holds, so it can say later
+    what changed. The criteria are what reruns; the contracts are the receipt."""
+    name = _find_name(payload.name)
+    search = payload.search.strip().lstrip("?")
+    if len(search) > FIND_SEARCH_LIMIT or any(ch in search for ch in "\n\r#"):
+        raise HTTPException(status_code=400, detail="This question's address is too long to save.")
+    query = find_prepare(payload.spec)
+    ids = _find_members(query)
+    qid = uuid.uuid4().hex[:12]
+    _find_append({"event": "saved", "id": qid, "owner": find_owner(request), "name": name, "search": search,
+                  "spec": query["spec"], "sentence": query["sentence"], "count": len(ids), "ids": ids})
+    return {"id": qid, "name": name, "count": len(ids)}
+
+
+class FindRename(BaseModel):
+    name: str = ""
+
+
+def _find_own(qid: str, request: Request) -> str:
+    owner = find_owner(request)
+    if qid not in _find_saved(owner):
+        raise HTTPException(status_code=404, detail="There is no such saved question.")
+    return owner
+
+
+@app.post("/api/analysis/find/questions/{qid}/rename")
+@serialized_write
+def analysis_find_rename(qid: str, payload: FindRename, request: Request) -> dict[str, Any]:
+    owner = _find_own(qid, request)
+    name = _find_name(payload.name)
+    _find_append({"event": "renamed", "id": qid, "owner": owner, "name": name})
+    return {"id": qid, "name": name}
+
+
+@app.post("/api/analysis/find/questions/{qid}/remove")
+@serialized_write
+def analysis_find_remove(qid: str, request: Request) -> dict[str, Any]:
+    """Remove a saved question from the list (append-only: the log keeps it)."""
+    owner = _find_own(qid, request)
+    _find_append({"event": "removed", "id": qid, "owner": owner})
+    return {"id": qid, "removed": True}
+
+
+class FindPartnersRequest(BaseModel):
+    spec: dict[str, Any] = Field(default_factory=dict)
+    which: str = "every"
+    link: str = ""
+
+
+def _find_partner_counts(query: dict[str, Any]) -> dict[str, Any]:
+    choices = ["every"] + (["matched"] if query["lines"] else [])
+    built = [find_partners_sql(query, which) for which in choices]
+    counted = _find_rows([(b["counts_sql"], b["params"]) for b in built])
+    return {
+        which: {"reading": FIND_PARTNER_CHOICES[which], "appearances": int(rows[0][0] or 0), "people": int(rows[0][1] or 0)}
+        for which, rows in zip(choices, counted)
+    }
+
+
+def _find_partner_line(counts: dict[str, Any], which: str) -> str:
+    chosen = counts[which]
+    return (
+        f"Partners: {chosen['reading']}. {_count_words(chosen['appearances'], 'appearance', 'appearances')} of "
+        f"{_count_words(chosen['people'], 'person entry', 'person entries')}, as entered, not yet reviewed as people."
+    )
+
+
+@app.post("/api/analysis/find/partners")
+def analysis_find_partners(payload: FindPartnersRequest) -> dict[str, Any]:
+    """See their partners (12.3): both choices counted, and the chosen one listed."""
+    query = find_prepare(payload.spec)
+    counts = _find_partner_counts(query)
+    built = find_partners_sql(query, payload.which)
+    listing = run_readonly_sql(built["list_sql"], tuple(built["params"]))
+    return {**listing, "labels": built["labels"], "counts": counts, "which": payload.which,
+            "line": _find_partner_line(counts, payload.which), "sentence": query["sentence"], "sql": built["list_sql"]}
+
+
+@app.post("/api/analysis/find/partners/export")
+def analysis_find_partners_export(payload: FindPartnersRequest) -> StreamingResponse:
+    """Every partner appearance of the set as a CSV, opening with the question,
+    which partners and how many, the date and the link."""
+    query = find_prepare(payload.spec)
+    counts = _find_partner_counts(query)
+    built = find_partners_sql(query, payload.which)
+    link = payload.link.strip()
+    if not re.fullmatch(r"https?://[^\s]{1,4000}", link):
+        link = ""
+    today = datetime.now(timezone.utc)
+    downloaded = f"Downloaded on {today.day} {today:%B %Y}" + (f" from {link}" if link else "")
+    preamble = [[query["sentence"]], [_find_partner_line(counts, payload.which)], [downloaded]]
+    return export_readonly_csv(built["list_sql"], tuple(built["params"]), preamble=preamble, labels=built["labels"])
 
 
 @app.get("/api/analysis/find/values")

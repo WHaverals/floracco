@@ -672,7 +672,34 @@ export type FindRegistry = {
   quantifiers: { key: "any" | "no" | "every"; reading: string; later: string }[];
   same_or_another: string;
   placements: { same: string; another: string };
+  /** two sets combined: "that are both … and …" */
+  combine: { key: "and" | "or" | "not"; opening: string; between: string }[];
   partner_conditions: FindKind[];
+};
+
+/** A saved question, asked again today (GET /api/analysis/find/questions). */
+export type FindQuestion = {
+  id: string;
+  name: string;
+  /** its address: the question and its view */
+  search: string;
+  sentence: string;
+  count: number;
+  at: string;
+  changed: boolean;
+  today: number | null;
+  /** "Saved …: 107 contracts.", "Today: 107, no change.", the edits logged since */
+  lines: string[];
+};
+
+/** See their partners (POST /api/analysis/find/partners). */
+export type FindPartnersResult = AnalysisResult & {
+  labels: string[];
+  counts: Partial<Record<"every" | "matched", { reading: string; appearances: number; people: number }>>;
+  which: "every" | "matched";
+  line: string;
+  sentence: string;
+  sql: string;
 };
 
 /** A Find question's answer and List (POST /api/analysis/find). */
@@ -739,7 +766,7 @@ export type FindValue = {
 
 /** How many contracts a question finds, with its sentence in parts; null when
  * the question does not fit (POST /api/analysis/find/counts). */
-export type FindCount = { total: number; parts: string[] } | null;
+export type FindCount = { total: number; parts: string[]; sentence: string } | null;
 
 /** How this was found (POST /api/analysis/find/how, review 12.4). */
 export type FindHow = {
@@ -749,6 +776,10 @@ export type FindHow = {
   near_misses: { sentence: string; count: number; spec: import("./utils/findSpec").FindSpec }[];
   inference: string[];
   searched: { word: string; titles: string[]; professions: string[] }[];
+  /** the two sets a combined question is made of */
+  sets: { sentence: string; count: number }[];
+  /** the last edit logged to what the question selects by */
+  as_of: string;
   sql: string;
   params: (string | number)[];
 };

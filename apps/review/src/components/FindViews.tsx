@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { AddMenu, ConditionChip, contractsWord } from "./FindChips";
-import { findCount, findTime } from "../api";
+import { downloadFindPartnersCsv, findCount, findPartners, findTime } from "../api";
 import { useLatest } from "../utils/latest";
-import type { FindCountResult, FindGroup, FindKind, FindRegistry, FindTimeResult } from "../types";
+import type { FindCountResult, FindGroup, FindKind, FindPartnersResult, FindRegistry, FindTimeResult } from "../types";
 import {
   complete,
   conditionOf,
@@ -948,6 +949,121 @@ export function TimeView({
           </table>
         </div>
       </details>
+    </div>
+  );
+}
+
+// ---- See their partners -------------------------------------------------------------
+
+const UNDATED_DATE = "0000-00-00";
+
+/** See their partners (12.3): the set as partner appearances, every partner on
+ * its contracts or only those who matched, both counted before she chooses. */
+export function PartnersView({
+  specKey,
+  view,
+  setView,
+  link,
+}: {
+  specKey: string;
+  view: FindView;
+  setView: (next: Partial<FindView>) => void;
+  link: string;
+}) {
+  const { data, error, stale } = useViewData<FindPartnersResult>(JSON.stringify([specKey, view.partners]), (key) => {
+    const [spec, which] = JSON.parse(key);
+    return findPartners(JSON.parse(spec), which);
+  });
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const begin = useLatest();
+  useEffect(() => {
+    begin();
+    setExporting(false);
+    setExportError("");
+  }, [specKey, view.partners, begin]);
+  if (error && !data) return <p className="error-text">{error}</p>;
+  if (!data) return <p className="muted">Loading…</p>;
+  const which = data.counts[view.partners] ? view.partners : "every";
+  const exportCsv = () => {
+    const fresh = begin();
+    setExporting(true);
+    setExportError("");
+    downloadFindPartnersCsv(JSON.parse(specKey), which, `${window.location.origin}${link}`)
+      .then((blob) => fresh() && saveFile("find-partners.csv", blob))
+      .catch((e: Error) => fresh() && setExportError(e.message))
+      .finally(() => fresh() && setExporting(false));
+  };
+  return (
+    <div className={stale ? "find-view is-updating" : "find-view"}>
+      <div className="find-partner-choices" role="radiogroup" aria-label="Which partners">
+        {(["every", "matched"] as const).map((key) => {
+          const count = data.counts[key];
+          if (!count) return null;
+          return (
+            <button
+              key={key}
+              type="button"
+              role="radio"
+              aria-checked={which === key}
+              className={which === key ? "find-placement is-chosen" : "find-placement"}
+              onClick={() => setView({ partners: key })}
+            >
+              <strong>{count.reading}</strong>
+              <span className="find-count">
+                {count.appearances.toLocaleString()} appearances of {count.people.toLocaleString()} person entries
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="muted an-note">{data.line}</p>
+      <div className="an-toolbar">
+        <button type="button" className="pill-button" onClick={exportCsv} disabled={exporting || data.row_count === 0}>
+          {exporting ? "Preparing CSV…" : "Download these partners as CSV"}
+        </button>
+      </div>
+      {exportError && <p className="error-text">{exportError}</p>}
+      <div className="an-table-wrap">
+        <table className="an-table find-table">
+          <thead>
+            <tr>
+              {data.labels.map((label) => (
+                <th key={label}>{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data.rows.map((row, r) => (
+              <tr key={r}>
+                {row.map((cell, ci) => {
+                  const column = data.columns[ci];
+                  if (column === "contract_id")
+                    return (
+                      <td key={ci}>
+                        <Link to={`/database/contract/${cell}`}>{String(cell)}</Link>
+                      </td>
+                    );
+                  if (column === "person_id")
+                    return (
+                      <td key={ci}>
+                        <Link to={`/database/person/${cell}`}>{String(cell)}</Link>
+                      </td>
+                    );
+                  if (column === "registration_date" && cell === UNDATED_DATE) return <td key={ci}>not recorded</td>;
+                  return <td key={ci}>{cell == null ? "" : String(cell)}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {data.truncated && (
+          <p className="muted an-table-note">
+            The list shows the first {data.row_count.toLocaleString()} of {(data.total_rows ?? data.row_count).toLocaleString()}{" "}
+            appearances; the download holds all of them.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

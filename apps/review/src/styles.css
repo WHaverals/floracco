@@ -11298,3 +11298,178 @@ a.db-history-subject:hover {
   max-width: 160px;
   white-space: normal;
 }
+
+/* Find, step 4: the rail (My questions, This session), the saved-question bar,
+ * two sets combined, and See their partners. The rail sits on the dark sidebar. */
+.find-rail section {
+  margin-bottom: 14px;
+}
+
+.find-rail-title {
+  color: #9d7355;
+  font-size: 0.7rem;
+  letter-spacing: 0.07em;
+  margin: 14px 0 4px;
+  padding: 0 8px;
+  text-transform: uppercase;
+}
+
+.find-rail-note {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  margin: 2px 0 6px;
+  padding: 0 8px;
+}
+
+.find-rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.find-rail-item {
+  align-items: baseline;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 6px 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.find-rail-item:hover {
+  background: #221b15;
+}
+
+.find-rail-item.is-active {
+  background: #d6aa7d;
+  color: #1c150f;
+}
+
+.find-rail-name {
+  display: -webkit-box;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.find-rail-count {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.find-changed {
+  background: #b5652f;
+  border-radius: 999px;
+  color: #fffaf3;
+  font-size: 0.68rem;
+  font-weight: 600;
+  margin-left: 6px;
+  padding: 1px 7px;
+}
+
+.find-history {
+  align-items: flex-start;
+  display: flex;
+  gap: 2px;
+}
+
+.find-history input {
+  margin: 9px 0 0 6px;
+}
+
+.find-combine {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+.find-combine-option {
+  background: #2a211a;
+  border: 1px solid #4a3c30;
+  border-radius: 8px;
+  color: #f3ead9;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.find-combine-option:hover {
+  background: #3a2e24;
+}
+
+.find-saved {
+  margin: 4px 0 12px;
+}
+
+.find-saved-banner {
+  align-items: baseline;
+  background: #f5ece0;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+  gap: 6px 10px;
+  padding: 8px 12px;
+}
+
+.find-saved-banner.is-changed {
+  background: #f8e6d6;
+}
+
+.find-saved-lines {
+  color: #4a3f33;
+}
+
+.find-saved-actions {
+  align-items: center;
+  display: inline-flex;
+  gap: 12px;
+}
+
+.find-save-form {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.find-save-form input {
+  border: 1px solid #d8c7ac;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  padding: 5px 8px;
+  width: 280px;
+}
+
+.find-combined {
+  border-bottom: 1px dashed #e3d3ba;
+  padding-bottom: 8px;
+}
+
+.find-set-link {
+  color: #6d4a2c;
+}
+
+.find-partner-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.find-placement.is-chosen {
+  background: #efe3d1;
+  border-color: #b08a5c;
+}

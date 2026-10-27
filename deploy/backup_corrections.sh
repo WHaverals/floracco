@@ -46,7 +46,7 @@ decisions="$DATA_DIR/derived/word-pipeline/08_review_decisions/review_decisions.
 # the sole record of proposal statuses/rationales and dismissed-flag judgments.
 corrdir="$DATA_DIR/derived/word-pipeline/10_corrections"
 for f in corrections_proposals.jsonl corrections_events.jsonl \
-         flag_dismissals.jsonl correction_candidate_dismissals.jsonl; do
+         flag_dismissals.jsonl correction_candidate_dismissals.jsonl find_questions.jsonl; do
   [ -f "$corrdir/$f" ] && cp -f "$corrdir/$f" "$dest/" || true
 done
 

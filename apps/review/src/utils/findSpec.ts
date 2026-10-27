@@ -13,7 +13,9 @@
  * ".": kind-choice ("role-gp"), a condition with one choice by its kind alone
  * ("woman"), one with values as kind-values joined by "_" ("residence-25_387",
  * "word-mercant"), each with "not-" before it for "is not". Repeated keys are
- * further conditions, in order.
+ * further conditions, in order. Two earlier sets combined (the set history) are
+ * `combine` (and | or | not) with two `set` keys, each holding that set's own
+ * address: "combine=and&set=place%3D25&set=years%3D1750-1799".
  *
  * Kept free of React and of other imports so tests/test_find.py can run it
  * under Node. The server checks every key and value again (find_normalize). */
@@ -26,13 +28,24 @@ export type YearsCondition = { kind: "years"; from: string; to: string };
 export type Condition = { kind: string; not: boolean; choice?: string; values?: Value[] };
 export type ContractCondition = YearsCondition | Condition;
 export type PartnerLine = { quantifier: Quantifier; conditions: Condition[] };
-export type FindState = { contract: ContractCondition[]; partners: PartnerLine[] };
+export type Combine = "and" | "or" | "not";
+export type FindState = {
+  contract: ContractCondition[];
+  partners: PartnerLine[];
+  /** two earlier sets, combined; the conditions above apply on top */
+  combine?: { op: Combine; sets: [FindState, FindState] };
+};
 
 /** What the server receives: years as whole numbers or null. */
 export type FindSpec = {
   contract: ({ kind: "years"; from: number | null; to: number | null } | Condition)[];
   partners: PartnerLine[];
+  combine?: Combine;
+  sets?: [FindSpec, FindSpec];
 };
+
+const COMBINES: Combine[] = ["and", "or", "not"];
+const MAX_DEPTH = 3;
 
 /** Each condition kind as the registry describes it: its choices, or the kind
  * of values its picker offers ("place", "activity", "currency", "register",
@@ -81,6 +94,10 @@ function yearOf(text: string): number | null | undefined {
 
 /** Why the question cannot run yet, in words, or "" when it can. */
 export function incompleteReason(state: FindState, kinds: Kinds): string {
+  for (const set of state.combine?.sets ?? []) {
+    const reason = incompleteReason(set, kinds);
+    if (reason) return reason;
+  }
   for (const c of state.contract) {
     if (isYears(c)) {
       const from = yearOf(c.from);
@@ -108,17 +125,22 @@ function copyCondition(c: Condition): Condition {
 }
 
 export function toSpec(state: FindState): FindSpec {
-  return {
+  const spec: FindSpec = {
     contract: state.contract.map((c) =>
       isYears(c) ? { kind: "years" as const, from: yearOf(c.from) ?? null, to: yearOf(c.to) ?? null } : copyCondition(c),
     ),
     partners: state.partners.map((line) => ({ quantifier: line.quantifier, conditions: line.conditions.map(copyCondition) })),
   };
+  if (state.combine) {
+    spec.combine = state.combine.op;
+    spec.sets = [toSpec(state.combine.sets[0]), toSpec(state.combine.sets[1])];
+  }
+  return spec;
 }
 
 /** A question the server wrote (a near miss) as the page holds it. */
 export function fromSpec(spec: FindSpec): FindState {
-  return {
+  const state: FindState = {
     contract: spec.contract.map((c) =>
       c.kind === "years"
         ? { kind: "years", from: (c as { from: number | null }).from?.toString() ?? "", to: (c as { to: number | null }).to?.toString() ?? "" }
@@ -126,6 +148,8 @@ export function fromSpec(spec: FindSpec): FindState {
     ),
     partners: spec.partners.map((line) => ({ quantifier: line.quantifier, conditions: line.conditions.map(copyCondition) })),
   };
+  if (spec.combine && spec.sets) state.combine = { op: spec.combine, sets: [fromSpec(spec.sets[0]), fromSpec(spec.sets[1])] };
+  return state;
 }
 
 /** The question without the conditions still being filled in (no value chosen,
@@ -137,7 +161,7 @@ export function complete(state: FindState): FindState {
   const partners = state.partners
     .map((line) => ({ ...line, conditions: line.conditions.filter((c) => !c.values || c.values.length > 0) }))
     .filter((line) => line.conditions.length > 0);
-  return { contract, partners };
+  return state.combine ? { contract, partners, combine: state.combine } : { contract, partners };
 }
 
 function valueToken(v: Value): string {
@@ -163,6 +187,10 @@ export function conditionToken(c: Condition, table: KindTable): string {
  * (no value chosen yet, both years empty) is left out until it has a value. */
 export function findSearch(state: FindState, kinds: Kinds): string {
   const query = new URLSearchParams();
+  if (state.combine) {
+    query.append("combine", state.combine.op);
+    for (const set of state.combine.sets) query.append("set", findSearch(set, kinds));
+  }
   for (const c of complete(state).contract) {
     if (isYears(c)) query.append("years", `${c.from.trim()}-${c.to.trim()}`);
     else query.append(`${c.not ? "not-" : ""}${c.kind}`, c.values ? c.values.map(valueToken).join(".") : (c.choice ?? ""));
@@ -199,13 +227,25 @@ export function conditionOf(token: string, table: KindTable): Condition | null {
 /** A Find link read back against today's registry; whatever no longer fits is
  * left out and named, as the builder does with its links. Keys in `ignore` (the
  * view's, findView.ts) belong to someone else and are passed over. */
-export function parseFind(search: string, kinds: Kinds, ignore: string[] = []): { state: FindState; dropped: string[] } {
+export function parseFind(search: string, kinds: Kinds, ignore: string[] = [], depth = 0): { state: FindState; dropped: string[] } {
   const query = new URLSearchParams(search);
   const state: FindState = { contract: [], partners: [] };
   const dropped: string[] = [];
+  let combine: Combine | null = null;
+  const sets: FindState[] = [];
   for (const [key, raw] of query.entries()) {
     if (ignore.includes(key)) continue;
-    if (key === "years") {
+    if (key === "combine") {
+      if (COMBINES.includes(raw as Combine)) combine = raw as Combine;
+      else dropped.push(`combine “${raw}”`);
+    } else if (key === "set") {
+      if (depth + 1 >= MAX_DEPTH + 1 || sets.length >= 2) dropped.push("a combined set");
+      else {
+        const inner = parseFind(raw, kinds, ignore, depth + 1);
+        sets.push(inner.state);
+        dropped.push(...inner.dropped);
+      }
+    } else if (key === "years") {
       const match = /^(\d{0,4})-(\d{0,4})$/.exec(raw);
       if (match && (match[1] || match[2])) state.contract.push({ kind: "years", from: match[1], to: match[2] });
       else dropped.push(`years “${raw}”`);
@@ -228,6 +268,8 @@ export function parseFind(search: string, kinds: Kinds, ignore: string[] = []): 
       else dropped.push(kinds.contract[kind] ? `${kind} “${raw}”` : `“${key}”`);
     }
   }
+  if (combine && sets.length === 2) state.combine = { op: combine, sets: [sets[0], sets[1]] };
+  else if (combine || sets.length) dropped.push("the combined sets");
   return { state, dropped };
 }
 

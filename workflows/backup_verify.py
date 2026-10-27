@@ -61,6 +61,7 @@ HUMAN_WORK = (
     "corrections_events.jsonl",
     "flag_dismissals.jsonl",
     "correction_candidate_dismissals.jsonl",
+    "find_questions.jsonl",
     "review_decisions.csv",
 )
 
@@ -79,6 +80,8 @@ FILE_ROLES = {
                              "error, with reasons.",
     "correction_candidate_dismissals.jsonl": "Review-UI store: dismissed Word-vs-DB correction "
                                              "candidates.",
+    "find_questions.jsonl": "Analysis store: the questions each reader saved in Find (append-only: "
+                            "saved, renamed, removed), with the contracts each held when saved.",
     "review_decisions.csv": "Reconcile decisions (Word entry to database row links).",
     "place_cache.db": "Machine output: LLM place resolutions, coordinates, duplicate suggestions. "
                       "Regenerable, but it cost ~733 LLM calls, so it travels along.",

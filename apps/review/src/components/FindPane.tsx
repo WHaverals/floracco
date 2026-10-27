@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import CopyLinkButton from "./CopyLinkButton";
 import { AddMenu, ConditionChip, contractsWord, freshCondition, useCounts } from "./FindChips";
-import { CountView, TimeView } from "./FindViews";
+import { CountView, PartnersView, TimeView } from "./FindViews";
+import { SavedQuestionBar, recordFindHistory } from "./FindQuestions";
 import { downloadFindCsv, findHow, loadFindRegistry, runFind } from "../api";
 import { useLatest } from "../utils/latest";
 import type { FindHow, FindKind, FindRegistry, FindResult } from "../types";
@@ -30,6 +31,7 @@ const VIEWS: { key: ViewKind; label: string }[] = [
   { key: "count", label: "Count" },
   { key: "time", label: "Over time" },
   { key: "compare", label: "Compare" },
+  { key: "partners", label: "See their partners" },
 ];
 
 /* Find, steps 1 and 2 (review 2026-10-27, sections 11-12, build path 12.8): the
@@ -164,6 +166,42 @@ function FindList({ result }: { result: FindResult }) {
   );
 }
 
+/** Two earlier sets combined (the set history): each with its sentence and
+ * count, and a link that opens it on its own. The words are the registry's. */
+function CombinedRow({
+  registry,
+  kinds,
+  combine,
+  onRemove,
+}: {
+  registry: FindRegistry;
+  kinds: Kinds;
+  combine: NonNullable<FindState["combine"]>;
+  onRemove: () => void;
+}) {
+  const specs = useMemo(() => combine.sets.map((set) => toSpec(set)), [combine]);
+  const counts = useCounts(specs);
+  const words = registry.combine.find((c) => c.key === combine.op);
+  return (
+    <div className="find-row find-combined">
+      <span className="find-unit">{registry.unit}</span>
+      <span>{words?.opening}</span>
+      {combine.sets.map((set, k) => (
+        <span key={k} className="find-token-group">
+          {k > 0 && <span>{words?.between}</span>}
+          <Link to={`/analysis/find?${findSearch(set, kinds)}`} className="find-set-link">
+            “{counts?.[k]?.sentence ?? "…"}”
+          </Link>
+          {counts?.[k] && <span className="muted">({counts[k]!.total.toLocaleString()})</span>}
+        </span>
+      ))}
+      <button type="button" className="an-filter-x" aria-label="Remove the combination" onClick={onRemove}>
+        ✕
+      </button>
+    </div>
+  );
+}
+
 /** How this was found (12.4), beside the List: what is counted, the steps with
  * their counts, other spellings left out, near misses as questions of their
  * own, what rests on attribution or on a mark, the spellings a word matched,
@@ -206,6 +244,16 @@ function HowPanel({ specKey, kinds }: { specKey: string; kinds: Kinds }) {
           <p key={line}>{line}</p>
         ))}
       </section>
+      {how.sets.length > 0 && (
+        <section>
+          <h4>The two sets</h4>
+          {how.sets.map((set, k) => (
+            <p key={k}>
+              Set {k + 1}: {set.sentence}: <strong>{contractsWord(set.count)}</strong>.
+            </p>
+          ))}
+        </section>
+      )}
       <section>
         <h4>Steps</h4>
         <ol className="find-steps">
@@ -262,6 +310,10 @@ function HowPanel({ specKey, kinds }: { specKey: string; kinds: Kinds }) {
           ))}
         </section>
       )}
+      <section>
+        <h4>As of</h4>
+        <p>{how.as_of}</p>
+      </section>
       <details className="find-query">
         <summary>The database query</summary>
         <pre className="an-sql">
@@ -347,6 +399,7 @@ export default function FindPane({ onAddress }: { onAddress: (search: string) =>
   const incomplete = registry ? incompleteReason(state, kinds) : "";
   const spec = useMemo(() => toSpec(state), [state]);
   const specKey = JSON.stringify(spec);
+  const questionSearch = registry ? findSearch(state, kinds) : "";
   useEffect(() => {
     if (!registry || incomplete) return;
     setRunning(true);
@@ -357,6 +410,7 @@ export default function FindPane({ onAddress }: { onAddress: (search: string) =>
         .then((r) => {
           if (!fresh()) return;
           setResult(r);
+          recordFindHistory(questionSearch, r.sentence, r.total);
           setNames((n) => ({
             ...n,
             ...Object.fromEntries(
@@ -372,7 +426,7 @@ export default function FindPane({ onAddress }: { onAddress: (search: string) =>
         .finally(() => fresh() && setRunning(false));
     }, 350);
     return () => window.clearTimeout(handle);
-  }, [registry, specKey, incomplete, beginRun]);
+  }, [registry, specKey, incomplete, beginRun, questionSearch]);
 
   // A new question closes an opened cell.
   useEffect(() => setOpened(null), [specKey]);
@@ -478,8 +532,16 @@ export default function FindPane({ onAddress }: { onAddress: (search: string) =>
       )}
 
       <div className="an-builder find-sentence">
+        {state.combine && (
+          <CombinedRow
+            registry={registry}
+            kinds={kinds}
+            combine={state.combine}
+            onRemove={() => setState((s) => ({ contract: s.contract, partners: s.partners }))}
+          />
+        )}
         <div className="find-row">
-          <span className="find-unit">{registry.unit}</span>
+          {!state.combine && <span className="find-unit">{registry.unit}</span>}
           {state.contract.map((c, i) => {
             if (isYears(c)) {
               return (
@@ -645,6 +707,13 @@ export default function FindPane({ onAddress }: { onAddress: (search: string) =>
             </button>
           </div>
           {exportError && <p className="error-text">{exportError}</p>}
+          <SavedQuestionBar
+            questionSearch={questionSearch}
+            saveSearch={joinSearch(questionSearch, viewSearch({ ...view, saved: "" }))}
+            spec={spec}
+            savedId={view.saved}
+            onSaved={(id) => setView({ saved: id })}
+          />
           <div className="find-body">
             <div className="find-body-list">
               {result.total === 0 ? null : view.view === "count" ? (
@@ -674,6 +743,8 @@ export default function FindPane({ onAddress }: { onAddress: (search: string) =>
                   link={link}
                   onName={onName}
                 />
+              ) : view.view === "partners" ? (
+                <PartnersView specKey={specKey} view={view} setView={setView} link={link} />
               ) : opened ? (
                 <>
                   <p className="find-opened">

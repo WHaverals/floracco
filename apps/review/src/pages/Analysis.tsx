@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import CopyLinkButton from "../components/CopyLinkButton";
+import FindRail from "../components/FindQuestions";
 import FindPane from "../components/FindPane";
 import { downloadAnalysisCsv, loadAnalysisLibrary, runAnalysisBuild, runAnalysisLibrary } from "../api";
 import type { AnalysisBuildSpec } from "../api";
@@ -770,11 +771,7 @@ export default function Analysis() {
               ))}
           </div>
         ) : mode === "find" ? (
-          <div className="an-library">
-            <p className="db-empty muted" style={{ padding: "8px 10px" }}>
-              Find contracts by place, years and partners, then read the list or download it.
-            </p>
-          </div>
+          <FindRail current={location.search} />
         ) : mode === "builder" ? (
           <div className="an-library">
             <p className="db-empty muted" style={{ padding: "8px 10px" }}>

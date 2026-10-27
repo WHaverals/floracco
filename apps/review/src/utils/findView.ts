@@ -8,12 +8,14 @@
  * time and Compare: `period` decade | half, `show` count | share, `base` (the
  * question's earlier step the share is of: 0 is all contracts); Compare: `split`
  * (a grouping), or `beside` (repeated): the same question with one condition
- * changed, written as where~condition ("c0~place-16", "p0.1~role-lp").
+ * changed, written as where~condition ("c0~place-16", "p0.1~role-lp"); See
+ * their partners: `view=partners` with `partners` every | matched; and `saved`,
+ * the saved question this address was opened from.
  *
  * Kept free of React and of other imports so tests/test_find.py can run it
  * under Node. */
 
-export type ViewKind = "list" | "count" | "time" | "compare";
+export type ViewKind = "list" | "count" | "time" | "compare" | "partners";
 export type Beside = { target: string; token: string };
 export type FindView = {
   view: ViewKind;
@@ -24,9 +26,11 @@ export type FindView = {
   base: number;
   split: string;
   beside: Beside[];
+  partners: "every" | "matched";
+  saved: string;
 };
 
-export const VIEW_KEYS = ["view", "by", "by2", "period", "show", "base", "split", "beside"];
+export const VIEW_KEYS = ["view", "by", "by2", "period", "show", "base", "split", "beside", "partners", "saved"];
 export const DEFAULT_VIEW: FindView = {
   view: "list",
   by: "decade",
@@ -36,8 +40,11 @@ export const DEFAULT_VIEW: FindView = {
   base: 0,
   split: "",
   beside: [],
+  partners: "every",
+  saved: "",
 };
 export const MAX_BESIDE = 3;
+const SAVED = /^[0-9a-f]{12}$/;
 const KEY = /^[a-z]{1,20}$/;
 const TARGET = /^(c\d{1,2}|p\d{1,2}\.\d{1,2})$/;
 const TOKEN = /^[^~&=]{1,300}$/;
@@ -53,6 +60,8 @@ export function viewSearch(view: FindView): string {
   if (view.base) query.append("base", String(view.base));
   if (view.split) query.append("split", view.split);
   for (const b of view.beside) query.append("beside", `${b.target}~${b.token}`);
+  if (view.partners !== DEFAULT_VIEW.partners) query.append("partners", view.partners);
+  if (view.saved) query.append("saved", view.saved);
   return query.toString();
 }
 
@@ -61,7 +70,10 @@ export function parseView(search: string): FindView {
   const query = new URLSearchParams(search);
   const view: FindView = { ...DEFAULT_VIEW, beside: [] };
   const kind = query.get("view");
-  if (kind === "count" || kind === "time" || kind === "compare") view.view = kind;
+  if (kind === "count" || kind === "time" || kind === "compare" || kind === "partners") view.view = kind;
+  if (query.get("partners") === "matched") view.partners = "matched";
+  const saved = query.get("saved");
+  if (saved && SAVED.test(saved)) view.saved = saved;
   const by = query.get("by");
   if (by && KEY.test(by)) view.by = by;
   const by2 = query.get("by2");
@@ -79,6 +91,13 @@ export function parseView(search: string): FindView {
     if (at > 0 && TARGET.test(target) && TOKEN.test(token)) view.beside.push({ target, token });
   }
   return view;
+}
+
+/** An address without the view's keys: the question alone. */
+export function questionPart(search: string): string {
+  const query = new URLSearchParams(search);
+  for (const key of VIEW_KEYS) query.delete(key);
+  return query.toString();
 }
 
 /** The question's address and the view's, as one. */

@@ -207,6 +207,35 @@ export function findTime(
   return request("/api/analysis/find/time", { method: "POST", body: JSON.stringify({ spec, period, split: split || null, beside }) });
 }
 
+export function listFindQuestions(): Promise<{ owner: string; questions: import("./types").FindQuestion[] }> {
+  return request("/api/analysis/find/questions");
+}
+
+export function saveFindQuestion(name: string, search: string, spec: import("./utils/findSpec").FindSpec): Promise<{ id: string; name: string; count: number }> {
+  return request("/api/analysis/find/questions", { method: "POST", body: JSON.stringify({ name, search, spec }) });
+}
+
+export function renameFindQuestion(id: string, name: string): Promise<{ id: string; name: string }> {
+  return request(`/api/analysis/find/questions/${encodeURIComponent(id)}/rename`, { method: "POST", body: JSON.stringify({ name }) });
+}
+
+export function removeFindQuestion(id: string): Promise<{ id: string; removed: boolean }> {
+  return request(`/api/analysis/find/questions/${encodeURIComponent(id)}/remove`, { method: "POST" });
+}
+
+export function findPartners(spec: import("./utils/findSpec").FindSpec, which: string): Promise<import("./types").FindPartnersResult> {
+  return request("/api/analysis/find/partners", { method: "POST", body: JSON.stringify({ spec, which }) });
+}
+
+/** The partner appearances as a CSV, opening with the question and which partners. */
+export async function downloadFindPartnersCsv(spec: import("./utils/findSpec").FindSpec, which: string, link: string): Promise<Blob> {
+  const response = await send("/api/analysis/find/partners/export", { method: "POST", body: JSON.stringify({ spec, which, link }) });
+  if (!(response.headers.get("Content-Type") ?? "").startsWith("text/csv")) {
+    throw apiError("The server sent a reply this page could not read. Reload the page; you may need to sign in again.", response.status);
+  }
+  return response.blob();
+}
+
 export function findHow(spec: import("./utils/findSpec").FindSpec): Promise<import("./types").FindHow> {
   return request("/api/analysis/find/how", { method: "POST", body: JSON.stringify({ spec }) });
 }

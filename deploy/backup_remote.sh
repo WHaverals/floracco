@@ -59,6 +59,7 @@ try:
         "derived/word-pipeline/10_corrections/corrections_events.jsonl",
         "derived/word-pipeline/10_corrections/flag_dismissals.jsonl",
         "derived/word-pipeline/10_corrections/correction_candidate_dismissals.jsonl",
+        "derived/word-pipeline/10_corrections/find_questions.jsonl",
     ):
         path = os.path.join(W, rel)
         if os.path.exists(path):
