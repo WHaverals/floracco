@@ -11741,6 +11741,20 @@ a.find-rail-item {
   color: #3d2f22;
 }
 
+/* a starting question whose count differs from its library query, with the reason below */
+.find-rail-differs {
+  flex-wrap: wrap;
+}
+
+.find-rail-differs > .find-rail-name {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.find-rail-differs > .find-rail-sub {
+  flex-basis: 100%;
+}
+
 .find-rail-tag {
   border: 1px solid #5a4a3c;
   border-radius: 999px;

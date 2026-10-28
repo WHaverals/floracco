@@ -79,6 +79,14 @@ const REGISTER = /^[0-9A-Za-z]{1,20}$/;
 export const WORD = /^[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*$/u;
 const NONE = "none";
 
+/** What a picker says under its values: how many of the matching values it
+ * shows when the list is cut; "Nothing matches." only when nothing does (and
+ * "" while a list cut by her own choices reloads). */
+export function pickerNote(shown: number, matched: number, typed: string): string {
+  if (matched > shown) return `${shown.toLocaleString("en-US")} of ${matched.toLocaleString("en-US")} shown; type ${typed.trim() ? "more " : ""}to narrow.`;
+  return matched === 0 && shown === 0 ? "Nothing matches." : "";
+}
+
 export const EMPTY_FIND: FindState = { contract: [], partners: [] };
 
 export function isYears(c: ContractCondition): c is YearsCondition {

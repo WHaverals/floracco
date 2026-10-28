@@ -185,8 +185,16 @@ export function runFind(spec: import("./utils/findSpec").FindSpec): Promise<impo
   return request("/api/analysis/find", { method: "POST", body: JSON.stringify({ spec }) });
 }
 
-export function findValues(kind: string, q: string): Promise<{ values: import("./types").FindValue[] }> {
-  return request(`/api/analysis/find/values?${new URLSearchParams({ kind, q }).toString()}`);
+/** A picker's first values, how many match in all, and how many it shows; the
+ * values already chosen (`skip`) are left out so the next ones come up. */
+export function findValues(
+  kind: string,
+  q: string,
+  skip: (string | number)[] = [],
+): Promise<{ values: import("./types").FindValue[]; matched: number; limit: number }> {
+  const params = new URLSearchParams({ kind, q });
+  for (const value of skip) params.append("skip", String(value));
+  return request(`/api/analysis/find/values?${params.toString()}`);
 }
 
 /** How many contracts each question finds (up to 40 at once). */

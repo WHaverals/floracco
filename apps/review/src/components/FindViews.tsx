@@ -20,7 +20,10 @@ import {
 import {
   LOW_BASE,
   MAX_BESIDE,
+  columnNote,
   niceTicks,
+  seriesBases,
+  shareChoice,
   percentText,
   periodLabel,
   readTarget,
@@ -604,12 +607,6 @@ export function TimeChart({
 
 // ---- Over time and Compare --------------------------------------------------------
 
-/** The base a share is of, in words: step 0 is all contracts, step k the contracts
- * that meet the question's first k conditions. */
-function baseWords(labels: string[], k: number): string {
-  return k === 0 ? "all contracts" : `contracts ${labels.slice(1, k + 1).join(", ")}`;
-}
-
 /** A chip's words, from the registry and the stored names, for the Compare menu. */
 function chipWords(entry: FindKind, condition: Condition, names: Record<string, string>): string {
   if (entry.choices) {
@@ -722,7 +719,7 @@ export function TimeView({
           <option value="count">the number of contracts</option>
           {baseLabels.map((_l, k) => (
             <option key={k} value={`share-${k}`}>
-              the share of {baseWords(baseLabels, k)}
+              the share of {shareChoice(data?.series ?? [], k)}
             </option>
           ))}
         </select>
@@ -815,16 +812,21 @@ export function TimeView({
     shareOn ? counts.map((n, i) => share(n, bases[base]?.counts[i] ?? 0)) : counts;
   const lowOf = (bases: { counts: number[] }[]) =>
     data.periods.map((_p, i) => shareOn && (bases[base]?.counts[i] ?? 0) > 0 && (bases[base]?.counts[i] ?? 0) < LOW_BASE);
+  // When the questions set beside differ at the chosen step, each line names its own base.
+  const named = shareOn ? seriesBases(data.series, base) : { each: [], shared: "" };
+  const ownBases = shareOn && named.shared === null;
   const series: ChartSeries[] = data.series.map((s, k) => ({
-    label: s.label,
+    label: ownBases ? `${s.label}, as % of ${named.each[k]}` : s.label,
     color: s.label.startsWith("all others") ? OTHERS : SERIES[k % SERIES.length],
     values: valuesOf(s.counts, s.bases),
     low: lowOf(s.bases),
     parts: s.parts?.map((part, j) => ({ label: part.label, color: SERIES[j], values: valuesOf(part.counts, s.bases) })),
   }));
-  const baseText = shareOn ? baseWords(baseLabels, base) : "";
+  const baseText = shareOn ? (named.shared ?? "") : "";
   const subtitle = [
-    shareOn
+    ownBases
+      ? `Each line as a share of its own base, per ${unitWord} of registration, in percent.`
+      : shareOn
       ? `Share of ${baseText}, per ${unitWord} of registration, in percent.`
       : `Contracts per ${unitWord} of registration.`,
     split ? `Split by ${groupings.find((g) => g.key === split)?.label}.` : "",
@@ -879,7 +881,7 @@ export function TimeView({
       <TimeChart
         title={!split && data.series.length > 1 ? `${sentence}; beside it: ${data.series.slice(1).map((x) => x.label).join("; ")}` : sentence}
         subtitle={subtitle}
-        yTitle={shareOn ? `% of ${baseText}` : "contracts"}
+        yTitle={ownBases ? "% of each line's own base" : shareOn ? `% of ${baseText}` : "contracts"}
         periods={data.periods}
         width={data.width}
         partial={data.partial}
@@ -906,7 +908,7 @@ export function TimeView({
                   ...(shareOn
                     ? [
                         <th key={`${s.label}-base`} className="num">
-                          Base: {data.series.length > 1 ? `${s.bases[base]?.label}` : baseText}
+                          Base: {named.each[data.series.indexOf(s)] ?? baseText}
                         </th>,
                         <th key={`${s.label}-share`} className="num">
                           Share
@@ -1015,9 +1017,7 @@ export function PartnersView({
               onClick={() => setView({ partners: key })}
             >
               <strong>{count.reading}</strong>
-              <span className="find-count">
-                {count.appearances.toLocaleString()} appearances of {count.people.toLocaleString()} person entries
-              </span>
+              <span className="find-count">{count.summary}</span>
             </button>
           );
         })}
@@ -1034,7 +1034,9 @@ export function PartnersView({
           <thead>
             <tr>
               {data.labels.map((label) => (
-                <th key={label}>{label}</th>
+                <th key={label} title={columnNote(label)}>
+                  {label}
+                </th>
               ))}
             </tr>
           </thead>

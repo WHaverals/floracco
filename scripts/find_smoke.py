@@ -39,8 +39,12 @@ Step 4 adds:
 
   - two sets combined: "both" is the question asking for both, "either" is the
     two less "both", "but not" is the first less "both";
+  - each combined set keeps its set's caveats: "both" of Livorno and the Jewish
+    partner line splits the layers as the plain question does;
   - See their partners: those who matched are among every partner, and person
-    entries never outnumber appearances;
+    entries never outnumber appearances; person entries and the entries for
+    institutions, estates, shareholder groups and placeholders add up to every
+    entry, and a line with "not" never matches one of the latter;
   - a question saved now, asked again at once, reports no change (nothing is
     written: the saved question is held in memory).
 
@@ -48,6 +52,8 @@ Step 5 (the landing and the starting questions) adds:
 
   - each starting question that opens as a Find counts what its library query
     counts: the same contracts, or each place and currency with the same count;
+    one that states why it differs (mixed Jewish and unmarked partners) finds the
+    library's contracts less those found only through a non-person entry;
   - every number on the landing that opens a question is what that question
     finds (contracts, or the matching partner appearances);
   - the later acts by type add up to the acts; a termination's contracts are
@@ -251,7 +257,7 @@ def step_three(livorno: dict) -> None:
     sizes = {r["name"]: len(r["ids"]) for r in split["rows"]}
     print(f"  {sizes}")
     stated = ask({"contract": [livorno], "partners": [partner("any", ("jewish", "stated"))]})["total"]
-    check(sizes.get("a matching partner stated Jewish in the act") == stated and sum(sizes.values()) == total,
+    check(sizes.get("stated in the act") == stated and sum(sizes.values()) == total,
           f"provenance gives the answer's split ({stated} stated)")
     check(all(sum(len(c["ids"]) for c in r["cells"]) == len(r["ids"]) for r in split["rows"]), "the cells add up to their rows")
     timed = view(lambda: review_server.analysis_find_time(review_server.FindTimeRequest(spec=request, period="half")), "Over time")
@@ -290,12 +296,32 @@ def step_four(livorno: dict) -> None:
     check(combined["or"] == a + b - both, f"either ({combined['or']}) = {a} + {b} - {both}")
     check(combined["not"] == a - both, f"but not ({combined['not']}) = {a} - {both}")
     request = {"contract": [livorno], "partners": [partner("any", ("jewish", "either"))]}
+    plain = ask(request)
+    carried = ask({"combine": "and", "sets": [first, {"partners": request["partners"]}]})
+    check(carried["total"] == plain["total"] and carried["counts"].get("split_2_1") == plain["counts"].get("split_1"),
+          f"both of Livorno and the Jewish line splits the layers as the plain question ({plain['counts'].get('split_1')} stated)")
     out = view(lambda: review_server.analysis_find_partners(review_server.FindPartnersRequest(spec=request, which="matched")),
                "See their partners")
     every, matched = out["counts"]["every"], out["counts"]["matched"]
     print(f"  every {every['appearances']} ({every['people']} person entries), matched {matched['appearances']} ({matched['people']})")
     check(matched["appearances"] <= every["appearances"] and every["people"] <= every["appearances"],
           "the matching partners are among every partner; person entries never outnumber appearances")
+    corpus = view(lambda: review_server.analysis_find_partners(review_server.FindPartnersRequest(spec={})), "every partner")
+    print(f"  {corpus['line']}")
+    entries = review_server.run_readonly_sql(
+        "SELECT COUNT(DISTINCT i.person_id) FROM investor i JOIN person pe ON pe.person_id = i.person_id AND pe.is_deleted = 0 "
+        "JOIN contract c ON c.contract_id = i.contract_id AND c.is_deleted = 0 WHERE i.is_deleted = 0")["rows"][0][0]
+    every = corpus["counts"]["every"]
+    check(every["people"] + every["non_people"] == entries and every["non_people"] > 0,
+          f"{every['people']:,} person entries and {every['non_people']:,} non-person entries are the {entries:,} entries")
+    listed = review_server.find_partners_sql(review_server.find_prepare({}, people=True), "every")
+    marked = review_server.run_readonly_sql(
+        f"SELECT COUNT(*) FROM ({listed['list_sql']}) WHERE non_person = 'yes'", tuple(listed["params"]))["rows"][0][0]
+    check(marked == every["non_people_appearances"], f"the List marks the {marked} non-person appearances")
+    not_woman = {"partners": [{"quantifier": "any", "conditions": [{"kind": "woman", "not": True}]}]}
+    out = view(lambda: review_server.analysis_find_partners(review_server.FindPartnersRequest(spec=not_woman, which="matched")),
+               "a partner who is not a woman")
+    check(out["counts"]["matched"]["non_people"] == 0, "a line with “not” matches no institution, estate or placeholder")
     query = review_server.find_prepare(request)
     ids = review_server._find_members(query)
     now = datetime.now(timezone.utc).isoformat()
@@ -316,6 +342,16 @@ def step_five() -> None:
     try:
         for group in review_server.FIND_STARTING:
             for item in group["items"]:
+                if "differs" in item:
+                    library, found = review_server.find_starting_check(connection, item)
+                    lookups = review_server.find_lookups(connection, [review_server.find_normalize(item["spec"])])
+                    counted = review_server.build_find_sql(item["spec"], lookups["place"], [], lookups)
+                    with_them = sorted(int(r[0]) for r in connection.execute(
+                        f"SELECT c.contract_id FROM contract c WHERE {counted['where_sql']}", counted["total_params"]))
+                    check(set(found) <= set(library) and with_them == library,
+                          f"{item['library']}: {len(found):,} found, {len(library):,} in the library query; it also counts "
+                          f"{sorted(set(library) - set(found))}, found only through a non-person entry")
+                    continue
                 if "same" not in item:
                     continue
                 library, found = review_server.find_starting_check(connection, item)

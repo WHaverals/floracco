@@ -27,7 +27,7 @@ import {
   type Kinds,
   type Quantifier,
 } from "../utils/findSpec";
-import { DEFAULT_VIEW, VIEW_KEYS, joinSearch, parseView, viewSearch, type FindView, type ViewKind } from "../utils/findView";
+import { DEFAULT_VIEW, VIEW_KEYS, columnNote, joinSearch, parseView, viewSearch, type FindView, type ViewKind } from "../utils/findView";
 
 const VIEWS: { key: ViewKind; label: string }[] = [
   { key: "list", label: "List" },
@@ -142,7 +142,9 @@ function FindList({ result }: { result: FindResult }) {
                   type="button"
                   className="find-sort"
                   onClick={() => setSort((s) => (s?.col === ci ? (s.desc ? null : { col: ci, desc: true }) : { col: ci, desc: false }))}
-                  title="Sort by this column; click again to reverse, a third time for date order"
+                  title={[columnNote(label), "Sort by this column; click again to reverse, a third time for date order"]
+                    .filter(Boolean)
+                    .join("\n\n")}
                 >
                   {label}
                   {sort?.col === ci ? (sort.desc ? " ▾" : " ▴") : ""}

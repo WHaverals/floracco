@@ -174,9 +174,14 @@ function StartingQuestions({ registry, current }: { registry: FindRegistry | nul
               const active = `/analysis/find${current}` === address;
               return (
                 <li key={item.title}>
-                  <Link to={address} className={active ? "find-rail-item is-active" : "find-rail-item"} title={item.says}>
+                  <Link
+                    to={address}
+                    className={`find-rail-item${active ? " is-active" : ""}${item.differs ? " find-rail-differs" : ""}`}
+                    title={item.says}
+                  >
                     <span className="find-rail-name">{item.title}</span>
                     <span className="find-rail-count">{item.count.toLocaleString()}</span>
+                    {item.differs && <span className="find-rail-sub">{item.differs}</span>}
                   </Link>
                 </li>
               );

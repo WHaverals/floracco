@@ -695,7 +695,15 @@ export type FindQuestion = {
 /** See their partners (POST /api/analysis/find/partners). */
 export type FindPartnersResult = AnalysisResult & {
   labels: string[];
-  counts: Partial<Record<"every" | "matched", { reading: string; appearances: number; people: number }>>;
+  /** appearances; person entries; the entries for institutions, estates,
+   * shareholder groups and placeholders, counted apart, and their appearances;
+   * and those counts in words */
+  counts: Partial<
+    Record<
+      "every" | "matched",
+      { reading: string; appearances: number; people: number; non_people: number; non_people_appearances: number; summary: string }
+    >
+  >;
   which: "every" | "matched";
   line: string;
   sentence: string;
@@ -819,6 +827,8 @@ export type FindStartingItem =
       view: Partial<import("./utils/findView").FindView>;
       count: number;
       library: string | null;
+      /** why its count differs from the library query it stands for */
+      differs?: string;
     }
   | { kind: "library"; title: string; says: string; library: string }
   | { kind: "open"; title: string; waits: string };

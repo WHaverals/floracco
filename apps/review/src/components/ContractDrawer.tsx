@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { loadDbRecord } from "../api";
 import type { DbField, DbRecord } from "../types";
 import { useEscapeLayer } from "../utils/escapeLayers";
+import { ATTRIBUTION_NOTE } from "../utils/findView";
 import { useLatest } from "../utils/latest";
 import { prettyFolio } from "../utils/reviewLabels";
 import { roleLabel } from "../utils/roles";
@@ -105,7 +106,7 @@ function Partners({ record }: { record: DbRecord }) {
               <th>Partner</th>
               <th>Role on the stake</th>
               <th>Jewish, stated in the act</th>
-              <th>Jewish, editorial attribution</th>
+              <th title={ATTRIBUTION_NOTE}>Jewish, editorial attribution</th>
             </tr>
           </thead>
           <tbody>

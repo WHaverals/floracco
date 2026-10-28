@@ -143,6 +143,37 @@ export function percentText(value: number | null): string {
 /** Shares under this base are hatched and named as resting on few contracts. */
 export const LOW_BASE = 10;
 
+/** The base a share is of, in words: step 0 is all contracts, step k the contracts
+ * that meet the question's first k conditions. */
+export function baseWords(labels: string[], k: number): string {
+  return k === 0 ? "all contracts" : `contracts ${labels.slice(1, k + 1).join(", ")}`;
+}
+
+/** Each series' base at step k, in words, and the base they share; `shared` is
+ * null when a question set beside changes a condition at or before that step,
+ * so each line names its own base. */
+export function seriesBases(series: { bases: { label: string }[] }[], k: number): { each: string[]; shared: string | null } {
+  const each = series.map((s) => baseWords(s.bases.map((b) => b.label), k));
+  return { each, shared: each.every((words) => words === each[0]) ? (each[0] ?? null) : null };
+}
+
+/** A share's base as the Show menu names it: the shared base, or each line's own. */
+export function shareChoice(series: { bases: { label: string }[] }[], k: number): string {
+  const { each, shared } = seriesBases(series, k);
+  return shared ?? `each line's own base (${[...new Set(each)].join("; ")})`;
+}
+
+/** The hover text of every "editorial attribution" column: the Database
+ * page's sentence (JEWISH_ATTRIBUTION_NOTE in review_server.py, register 1a),
+ * held equal to it by tests/test_find.py. */
+export const ATTRIBUTION_NOTE =
+  "Marked as Jewish by the project's data-entry team during the original database entry (2010s), on the basis of name and context.";
+
+/** That hover text for a column label, or undefined for any other column. */
+export function columnNote(label: string): string | undefined {
+  return label.includes("editorial attribution") ? ATTRIBUTION_NOTE : undefined;
+}
+
 /** Round ticks from 0 to at least `max`: 0, 50, 100 … (four to six of them). */
 export function niceTicks(max: number): number[] {
   if (!(max > 0)) return [0, 1];

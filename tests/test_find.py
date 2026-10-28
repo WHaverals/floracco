@@ -316,6 +316,34 @@ def test_every_partner_leaves_out_non_people_and_needs_one_person(corpus):
     assert 108 not in _find({"partners": [_partner("every", ("woman", "yes"))]})["ids"]
 
 
+PISA = {"kind": "place", "values": [3]}
+_NOT_LP = {"quantifier": "any", "conditions": [{"kind": "role", "choice": "lp", "not": True}]}
+
+
+def test_a_negated_at_least_one_line_leaves_out_non_people_and_says_so(corpus):
+    # 301: the shareholders' row is the general partner, so it "is not an external investor";
+    # Niccolò, its other partner, is one. Left out, the row no longer finds 301.
+    spec = {"contract": [PISA], "partners": [_NOT_LP]}
+    out = _find(spec)
+    assert out["ids"] == [302]
+    assert ("For “at least one partner who is not an external investor (accomandante)”, institutions, estates, "
+            "shareholder groups and placeholders are left out; with them, 1 more contract would be found.") in out["answer"]
+    counted = _find(spec, non_people=[])
+    assert counted["ids"] == [301, 302] and "institutions" not in counted["answer"]
+    assert 31 in review_server.find_prepare(spec)["counts_params"]  # read from the database, as for "no"
+    # the matching partners of that line never name the row
+    assert not any("MOLTEPLICI" in str(row[-1]) for row in _find({"partners": [_NOT_LP]})["listing"]["rows"])
+    not_woman = {"contract": [PISA], "partners": [
+        {"quantifier": "any", "conditions": [{"kind": "woman", "choice": "yes", "not": True}]}]}
+    assert _find(not_woman)["ids"] == [301, 302]
+    assert "placeholders are left out; with them, the answer is the same." in _find(not_woman)["answer"]
+    both = _find({"contract": [PISA], "partners": [_partner("no", ("woman", "yes")), _NOT_LP]})
+    assert both["ids"] == [302]
+    assert ("For “at least one partner who is not an external investor (accomandante)”, they are left out too; "
+            "with them, 1 more contract would be found.") in both["answer"]
+    assert "For “no partner”, institutions, estates, shareholder groups and placeholders are left out" in both["answer"]
+
+
 def test_the_endpoint_finds_the_shareholders_row_itself(corpus):
     query = review_server.find_prepare(
         {"contract": [{"kind": "place", "values": [3]}], "partners": [_partner("no", ("role", "gp"))]})
@@ -682,6 +710,24 @@ def test_the_pickers_offer_the_stored_spellings_and_marks(corpus):
         connection.close()
 
 
+def test_a_picker_says_how_many_match_and_skips_the_values_chosen(corpus):
+    connection = _connection()
+    try:
+        page = review_server.find_value_page(connection, "place", "", limit=2)
+        # the most used first; "not recorded" (the women's contracts) beside them, apart from the count
+        assert ([v["name"] for v in page["values"]], page["matched"]) == (["Livorno", "Firenze", "not recorded"], 4)
+        later = review_server.find_value_page(connection, "place", "", limit=2, skip=[25, 1])
+        assert ([v["name"] for v in later["values"]], later["matched"]) == (["Pisa", "terra di Livorno", "not recorded"], 2)
+        registers = review_server.find_value_page(connection, "register", "", limit=1)
+        assert [v["name"] for v in registers["values"]] == ["10831", "not recorded"] and registers["matched"] == 2
+    finally:
+        connection.close()
+    out = review_server.analysis_find_values("place", "liv", skip=["25"])
+    assert ([v["name"] for v in out["values"]], out["matched"], out["limit"]) == (["terra di Livorno"], 1, 12)
+    assert review_server.analysis_find_values("place", "")["matched"] == 4
+    with pytest.raises(HTTPException):
+        review_server.analysis_find_values("place", "", skip=[str(k) for k in range(51)])
+
 def test_a_word_picker_counts_the_word_and_lists_its_spellings(corpus):
     out = review_server.analysis_find_values("word", "Cavalier")["values"]
     assert out == [{"value": "Cavalier", "name": "Cavalier", "contracts": 1, "inferred": 0,
@@ -827,9 +873,9 @@ def test_count_by_two_groupings_gives_each_cell_its_contracts(corpus):
     assert [c["name"] for c in out["columns"]] == ["1700–1749", "1750–1799", "no registration date"]
     assert [(row["name"], [cell["ids"] for cell in row["cells"]]) for row in out["rows"]] == [
         ("editorial attribution alone", [[102], [107], [104]]),
-        ("a matching partner stated Jewish in the act", [[101, 103], [], []]),
+        ("stated in the act", [[101, 103], [], []]),
     ]
-    assert out["by"]["label"] == "how the matching partner is known to be Jewish"
+    assert out["by"]["label"] == "how the matching partner is marked Jewish"
 
 
 def test_count_by_the_matching_partners_role(corpus):
@@ -872,7 +918,7 @@ def test_over_time_draws_every_period_and_names_the_partial_last_one(corpus):
     (series,) = out["series"]
     assert series["counts"][10:16] == [1, 1, 1, 0, 0, 1] and sum(series["counts"]) == 4 and series["undated"] == 1
     # stated and attributed as split bars
-    assert [p["label"] for p in series["parts"]] == ["a matching partner stated Jewish in the act", "editorial attribution alone"]
+    assert [p["label"] for p in series["parts"]] == ["stated in the act", "editorial attribution alone"]
     assert series["parts"][0]["counts"][10:13] == [1, 0, 1] and series["parts"][1]["counts"][10:16] == [0, 1, 0, 0, 0, 1]
 
 
@@ -984,6 +1030,90 @@ def test_a_combined_question_names_the_values_of_both_sets(corpus):
     assert out["groupings"][-1]["key"] == "register"  # a combination has no partner line of its own
 
 
+
+# What each set's own answer says beyond its count, and the words that say it.
+_CAVEATS = {
+    "layers": r"stated Jewish in the act; [\d,]+ on editorial attribution alone|also ha(?:s|ve) a (?:matching )?partner",
+    "years": r"left out by the years",
+    "no partners": r"no partners recorded",
+    "non-people": r"shareholder groups and placeholders are left out|they are left out too",
+}
+_SETS = {
+    "her": HER_REQUEST,
+    "stated": {"partners": [_partner("any", ("jewish", "stated"))]},
+    "years": {"contract": [{"kind": "years", "from": 1700, "to": 1799}]},
+    "none Jewish": {"contract": [LIVORNO], "partners": [_partner("no", ("jewish", "either"))]},
+    "Pisa no gp": {"contract": [{"kind": "place", "values": [3]}], "partners": [_partner("no", ("role", "gp"))]},
+    "not lp": {"partners": [{"quantifier": "any", "conditions": [{"kind": "role", "choice": "lp", "not": True}]}]},
+}
+
+
+def _caveats(answer):
+    return {kind for kind, words in _CAVEATS.items() if re.search(words, answer)}
+
+
+@pytest.mark.parametrize("first,op,second", [
+    ("her", "and", "years"), ("years", "and", "her"), ("her", "or", "Pisa no gp"), ("stated", "and", "her"),
+    ("none Jewish", "or", "years"), ("Pisa no gp", "or", "not lp"), ("her", "or", "none Jewish"),
+    ("years", "or", "stated"), ("her", "not", "years"),
+])
+def test_a_combined_answer_holds_every_caveat_its_sets_own_answers_hold(corpus, first, op, second):
+    # Each pair is chosen so that every caveat touches the combined set ("her request or
+    # 1700-1799" has none left out by the years: set 1 brings its one undated contract back).
+    sets = [_SETS[first], _SETS[second]]
+    combined = _find({"combine": op, "sets": sets})
+    assert combined["ids"]
+    own = set().union(*(_caveats(_find(spec)["answer"]) for spec in (sets if op != "not" else sets[:1])))
+    assert own and own <= _caveats(combined["answer"]), combined["answer"]
+
+
+def test_a_combined_set_carries_its_layers_partners_and_inference(corpus):
+    spec = {"combine": "and", "sets": [{"contract": [LIVORNO]}, {"partners": HER_REQUEST["partners"]}]}
+    plain, out = _find(HER_REQUEST), _find(spec)
+    assert out["ids"] == plain["ids"]
+    assert "In set 2: 2 with a partner stated Jewish in the act; 3 on editorial attribution alone." in out["answer"]
+    assert out["query"]["labels"][-2:] == ["Matching partners, stated in the act (set 2)",
+                                           "Matching partners, editorial attribution (set 2)"]
+    assert [row[-2:] for row in out["listing"]["rows"]] == [row[-2:] for row in plain["listing"]["rows"]]
+    assert {g["key"] for g in review_server.find_groupings(out["query"])} >= {"provenance", "role"}
+    how = review_server.find_how(spec)
+    assert how["inference"] == [
+        "In set 2: 3 of the 5 rest on editorial attribution alone; 1 of them was registered in 1700–1749.",
+        "In set 1: 1 of the 5 names Livorno with the data-entry team's mark “inferred”."]
+    assert [line.split(": ", 1)[-1] for line in how["inference"]] == review_server.find_how(HER_REQUEST)["inference"]
+    matched = _partners(spec, "matched")
+    assert matched["counts"]["matched"]["appearances"] == _partners(HER_REQUEST, "matched")["counts"]["matched"]["appearances"]
+
+
+def test_either_of_two_sets_gives_the_split_within_its_own_contracts(corpus):
+    out = _find({"combine": "or", "sets": [HER_REQUEST, {"contract": [FIRENZE]}]})
+    assert "In set 1 (5 of these): 2 with a partner stated Jewish in the act; 3 on editorial attribution alone." in out["answer"]
+    # the matching partners hold for set 1's contracts only: Count and Over time say so instead of grouping by them
+    assert not {"provenance", "role"} & {g["key"] for g in review_server.find_groupings(out["query"])}
+    note = ("The matching partners belong to the contracts of set 1 only; their roles and how they are marked Jewish "
+            "are counted when it is opened on its own.")
+    assert note in _by(out["query"]["spec"], "decade")["notes"] and note in _time(out["query"]["spec"])["notes"]
+    # Leone (106, Firenze only) is stated Jewish but not in set 1: never named as a matching partner
+    rows = {row[0]: row for row in out["listing"]["rows"]}
+    assert rows[106][-2:] == [None, None] and rows[101][-2] == "Abram Stated"
+
+
+def test_the_set_left_out_says_what_it_takes_away(corpus):
+    out = _find({"combine": "not", "sets": [{"contract": [LIVORNO]}, {"partners": HER_REQUEST["partners"]}]})
+    assert out["ids"] == [105, 108, 109, 111]
+    assert ("Of the 5 contracts set 2 leaves out: 2 with a partner stated Jewish in the act; "
+            "3 on editorial attribution alone.") in out["answer"]
+    how = review_server.find_how(out["query"]["spec"])
+    assert how["inference"][0].startswith("Of the 5 contracts set 2 leaves out: 3 of the 5 rest on editorial attribution alone")
+    with pytest.raises(HTTPException) as refused:
+        _partners(out["query"]["spec"], "matched")
+    assert refused.value.detail == "The partner lines here belong to the set left out, so no partner of these contracts matched."
+    # a set inside a set that leaves contracts out: said in one line, not carried
+    nested = _find({"combine": "and", "sets": [out["query"]["spec"], {}]})
+    assert ("What rests on editorial attribution or a mark among the contracts set 2 of set 1 leaves out "
+            "is in the answer of set 1 opened on its own.") in nested["answer"]
+
+
 # ---- step 4: See their partners --------------------------------------------------------
 
 WOMEN = {"partners": [_partner("any", ("woman", "yes"))]}
@@ -996,12 +1126,14 @@ def _partners(spec, which="every"):
 def test_their_partners_are_every_partner_or_only_those_who_matched(corpus):
     out = _partners(WOMEN, "matched")
     assert out["counts"] == {
-        "every": {"reading": "every partner on these contracts", "appearances": 6, "people": 6},
-        "matched": {"reading": "only the partners who matched", "appearances": 4, "people": 4},
+        "every": {"reading": "every partner on these contracts", "appearances": 6, "people": 6, "non_people": 0,
+                  "non_people_appearances": 0, "summary": "6 appearances of 6 person entries"},
+        "matched": {"reading": "only the partners who matched", "appearances": 4, "people": 4, "non_people": 0,
+                    "non_people_appearances": 0, "summary": "4 appearances of 4 person entries"},
     }
     assert out["line"] == ("Partners: only the partners who matched. 4 appearances of 4 person entries, "
                            "as entered, not yet reviewed as people.")
-    rows = [(r[0], r[1], r[4], r[7], r[13]) for r in out["rows"]]
+    rows = [(r[0], r[2], r[5], r[8], r[14]) for r in out["rows"]]
     # Bice's general-partner link is hidden, so no stake is shown for her
     assert rows == [("Maria Prima", 201, "general partner", "yes", 21),
                     ("Lisa Seconda", 202, "external investor (accomandante)", "yes", 22),
@@ -1012,11 +1144,14 @@ def test_their_partners_are_every_partner_or_only_those_who_matched(corpus):
 
 def test_every_partner_leaves_out_removed_appearances_and_hidden_people(corpus):
     out = _partners({"contract": [LIVORNO]})
-    assert out["counts"] == {"every": {"reading": "every partner on these contracts", "appearances": 8, "people": 8}}
+    assert {k: v for k, v in out["counts"]["every"].items() if k != "summary"} == {
+        "reading": "every partner on these contracts", "appearances": 8, "people": 8, "non_people": 0,
+        "non_people_appearances": 0}
     names = [r[0] for r in out["rows"]]
     assert "Samuel Removed" not in names and "Ruben Hidden" not in names and "Giovanni Removed" in names
     abram = next(r for r in out["rows"] if r[0] == "Abram Stated")
-    assert abram[5:10] == ["yes", "", "", "yes", "Livorno"]  # stated, not attributed, not a woman, proxy, lives in
+    assert abram[6:11] == ["yes", "", "", "yes", "Livorno"]  # stated, not attributed, not a woman, proxy, lives in
+    assert abram[1] == ""  # a person
 
 
 def test_only_those_who_matched_needs_a_partner_line(corpus):
@@ -1033,7 +1168,32 @@ def test_the_partners_download_opens_with_the_question_and_which_partners(corpus
     lines = raw.decode("utf-8-sig").splitlines()
     assert lines[0] == "Contracts with at least one partner who is a woman"
     assert lines[1].startswith('"Partners: only the partners who matched. 4 appearances of 4 person entries, as entered')
-    assert lines[4].startswith("Partner,Contract,Registration date,") and len(lines) == 6 + 4
+    assert lines[4].startswith('Partner,"Institution, estate, shareholder group or placeholder",Contract,Registration date,')
+    assert len(lines) == 6 + 4
+
+
+def test_their_partners_count_non_people_apart_and_mark_them(corpus):
+    # Pisa: 301 has the shareholders' row as general partner beside Niccolò; 302 has Carlo.
+    pisa = {"contract": [{"kind": "place", "values": [3]}]}
+    out = _partners(pisa)
+    every = out["counts"]["every"]
+    assert (every["appearances"], every["people"], every["non_people"], every["non_people_appearances"]) == (3, 2, 1, 1)
+    assert every["summary"] == ("3 appearances of 2 person entries and 1 entry for institutions, estates, "
+                                "shareholder groups and placeholders")
+    assert out["line"] == (
+        "Partners: every partner on these contracts. 3 appearances: 2 of 2 person entries, as entered, not yet "
+        "reviewed as people, and 1 of 1 entry for institutions, estates, shareholder groups and placeholders.")
+    assert out["labels"][1] == "Institution, estate, shareholder group or placeholder"
+    assert {r[0]: r[1] for r in out["rows"]} == {"MOLTEPLICI AZIONARI": "yes", "Niccolò Pisano": "", "Carlo Pisano": ""}
+    raw = _download(review_server.analysis_find_partners_export(review_server.FindPartnersRequest(spec=pisa)))
+    lines = raw.decode("utf-8-sig").splitlines()
+    assert "and 1 of 1 entry for institutions, estates, shareholder groups and placeholders." in lines[1]
+    assert any(line.startswith("MOLTEPLICI AZIONARI,yes,301,") for line in lines)
+    # a matched "is not" line leaves the row out of those who matched
+    not_lp = {**pisa, "partners": [_partner("any", ("role", "lp"))]}
+    not_lp["partners"][0]["conditions"][0]["not"] = True
+    matched = _partners(not_lp, "matched")
+    assert [r[0] for r in matched["rows"]] == ["Carlo Pisano"] and matched["counts"]["matched"]["non_people"] == 0
 
 
 # ---- step 4: saved questions, and what changed since ------------------------------------
@@ -1349,6 +1509,33 @@ def test_the_charts_scale_and_name_their_periods():
         100 * 17 / 107, None, "66.7%", "–", "100%"]
     labels = _ts("[1440, 1450, 1800].map((p) => v.periodLabel(p, 10, {first: '1445–1449', last: '1800–1808'}, [1440, 1450, 1800]))")
     assert labels == ["1445–1449", "1450–1459", "1800–1808"]
+
+
+@needs_node
+def test_a_cut_picker_says_how_many_it_shows_and_never_that_nothing_matches():
+    assert _ts("[f.pickerNote(12, 105, 'seta'), f.pickerNote(12, 399, ''), f.pickerNote(4, 4, 'liv'), f.pickerNote(0, 0, 'zz')]") == [
+        "12 of 105 shown; type more to narrow.", "12 of 399 shown; type to narrow.", "", "Nothing matches."]
+    # a list cut by the values she chose reloads instead of saying nothing matches
+    assert _ts("f.pickerNote(0, 93, 'seta')") != "Nothing matches."
+    source = (ROOT / "apps/review/src/components/FindChips.tsx").read_text()
+    assert '"Nothing matches."' not in source and "findValues(entry.kind, typed, JSON.parse(skipKey))" in source
+
+
+@needs_node
+def test_compare_names_each_lines_own_base_when_the_bases_differ(corpus):
+    beside = {"contract": [{"kind": "place", "not": False, "values": [1]}],
+              "partners": HER_REQUEST["partners"]}
+    out = _time(HER_REQUEST, beside=[beside])
+    series = json.dumps([{"bases": s["bases"]} for s in out["series"]])
+    # step 0 (all contracts) is shared; step 1 is each question's own place
+    assert _ts(f"[v.seriesBases({series}, 0), v.seriesBases({series}, 1)]") == [
+        {"each": ["all contracts", "all contracts"], "shared": "all contracts"},
+        {"each": ["contracts operating in Livorno", "contracts operating in Firenze"], "shared": None}]
+    assert _ts(f"[v.shareChoice({series}, 0), v.shareChoice({series}, 1)]") == [
+        "all contracts", "each line's own base (contracts operating in Livorno; contracts operating in Firenze)"]
+    source = (ROOT / "apps/review/src/components/FindViews.tsx").read_text()
+    for words in ("as % of ${named.each[k]}", "Each line as a share of its own base", "% of each line's own base"):
+        assert words in source
 
 
 @needs_node
@@ -1677,6 +1864,7 @@ def test_the_landing_says_when_what_each_figure_counts_was_last_edited(landing, 
 
 
 _STARTING_FINDS = [item for group in review_server.FIND_STARTING for item in group["items"] if "same" in item]
+_STARTING_DIFFERS = [item for group in review_server.FIND_STARTING for item in group["items"] if "differs" in item]
 
 
 @pytest.mark.parametrize("item", _STARTING_FINDS, ids=[item["library"] for item in _STARTING_FINDS])
@@ -1691,7 +1879,8 @@ def test_every_library_entry_is_a_starting_question_once():
     assert sorted(placed) == sorted(q["id"] for q in review_server.ANALYSIS_LIBRARY)  # all 25, each once
     for item in items:
         if "spec" in item:
-            assert "same" in item or "library" not in item  # a Find standing for a library entry is held to it
+            # a Find standing for a library entry is held to it, or states why it differs
+            assert ("same" in item) != ("differs" in item and bool(item["why"])) or "library" not in item
             review_server.find_normalize(item["spec"])
         elif "library" in item:
             assert item["why"]
@@ -1710,6 +1899,26 @@ def test_all_jewish_stays_a_library_query_because_every_partner_leaves_out_place
         library = sorted(r[1] for r in c.execute(_lib_sql("jewish_all")))
     every = _find({"partners": [_partner("every", ("jewish", "either"))]})["ids"]
     assert sorted(set(every) - set(library)) == [114] and set(library) <= set(every)
+
+
+_MIXED = {"partners": [_partner("any", ("jewish", "either")),
+                       {"quantifier": "any", "conditions": [{"kind": "jewish", "choice": "either", "not": True}]}]}
+
+
+@pytest.mark.parametrize("item", _STARTING_DIFFERS, ids=[item["library"] for item in _STARTING_DIFFERS])
+def test_a_starting_question_that_differs_from_its_library_query_says_why(landing, item):
+    # 114: a Jewish partner beside the shareholders' row, which the library query
+    # counts as a partner with no Jewish mark and Find leaves out (decision of 2026-10-28).
+    library, found = review_server.find_starting_check(_read_only(), item)
+    assert set(found) <= set(library) and sorted(set(library) - set(found)) == [114]
+    shown = {i.get("library"): i for g in review_server.analysis_find_starting()["groups"] for i in g["items"]}
+    assert shown[item["library"]]["differs"] == item["why"] and "institutions and placeholders" in item["why"]
+
+
+def test_mixed_and_every_partner_jewish_never_share_a_contract(landing):
+    mixed, every = _find(_MIXED), _find({"partners": [_partner("every", ("jewish", "either"))]})
+    assert 114 in every["ids"] and 114 not in mixed["ids"] and not set(mixed["ids"]) & set(every["ids"])
+    assert "are left out; with them, 1 more contract would be found." in mixed["answer"]
 
 
 def _lib_sql(query_id):
@@ -1761,3 +1970,45 @@ def test_the_landing_and_the_starting_questions_stay_fast_on_a_live_size_corpus(
         started = time.monotonic()
         ask()
         assert time.monotonic() - started < 1.0
+
+
+# ---- the two Jewish layers in words (register 1a; wording list A23-A30) -------
+# Interim wording applied 2026-10-28 and listed for Francesca under register 1a:
+# a partner with neither mark "has no Jewish mark"; nothing on the page says a
+# partner "is not Jewish" or is "known" to be Jewish.
+
+def test_a_partner_with_neither_mark_is_worded_as_having_no_mark():
+    choices = FIND_PARTNER_CONDITIONS["jewish"]["choices"]
+    assert choices["either"].reading_not == "has no Jewish mark (neither stated in the act nor by editorial attribution)"
+    assert choices["stated"].reading_not == "is not stated Jewish in the act"
+    assert choices["attributed"].reading_not == "has no editorial attribution as Jewish"
+    query = build_find_sql({"partners": [_partner("any", ("jewish", "either")),
+                                         {"quantifier": "any", "conditions": [
+                                             {"kind": "jewish", "choice": "either", "not": True}]}]}, PLACES)
+    assert "has no Jewish mark (neither stated in the act nor by editorial attribution)" in query["sentence"]
+
+
+def test_no_find_or_library_wording_says_is_not_jewish_or_known():
+    words = json.dumps([find_registry(), review_server.FIND_GROUPINGS, review_server._FIND_GROUP_WORDS,
+                        [q["title"] for q in review_server.ANALYSIS_LIBRARY]], ensure_ascii=False)
+    for stale in ("is not Jewish", "known to be Jewish", "non-Jewish", "recorded or attributed"):
+        assert stale not in words, stale
+    titles = {q["id"]: q["title"] for q in review_server.ANALYSIS_LIBRARY}
+    assert titles["jewish_mixed"] == ("Contracts with partners marked Jewish beside unmarked ones "
+                                      "(stated in the act or editorial attribution)")
+
+
+def test_the_attribution_columns_carry_the_database_pages_sentence():
+    # read as text, so this holds without Node 22 too
+    match = re.search(r'export const ATTRIBUTION_NOTE =\s*"([^"]+)";', _FIND_VIEW.read_text(encoding="utf-8"))
+    assert match and match.group(1) == review_server.JEWISH_ATTRIBUTION_NOTE
+    for name in ("FindPane.tsx", "FindViews.tsx"):
+        assert "columnNote(label)" in (ROOT / "apps/review/src/components" / name).read_text(encoding="utf-8"), name
+    assert "title={ATTRIBUTION_NOTE}" in (ROOT / "apps/review/src/components/ContractDrawer.tsx").read_text(encoding="utf-8")
+
+
+@needs_node
+def test_only_editorial_attribution_columns_get_the_note():
+    assert _ts("['Matching partners, editorial attribution', 'Jewish, editorial attribution (line 2)', "
+               "'Jewish, stated in the act', 'Firm name'].map((l) => v.columnNote(l) ?? null)") == [
+        review_server.JEWISH_ATTRIBUTION_NOTE, review_server.JEWISH_ATTRIBUTION_NOTE, None, None]

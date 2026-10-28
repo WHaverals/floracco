@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { countFind, findValues } from "../api";
 import { useLatest } from "../utils/latest";
 import type { FindCount, FindKind, FindValue } from "../types";
-import { WORD, optionSpecs, type Condition, type FindSpec, type FindState, type Target, type Value } from "../utils/findSpec";
+import { WORD, optionSpecs, pickerNote, type Condition, type FindSpec, type FindState, type Target, type Value } from "../utils/findSpec";
 
 /* The parts a Find question is built from, shared by the sentence (FindPane)
  * and by Compare (FindViews): a chip for one condition, its choice and verb
@@ -119,7 +119,9 @@ export function OptionMenu({
 
 /** Typeahead over a condition's values: the stored spelling, how many of its
  * contracts the data-entry team marked as inferred, and both counts. For a
- * word, the word as typed with the stored spellings it matches. */
+ * word, the word as typed with the stored spellings it matches. The server
+ * leaves out the values already chosen, so the next ones come up, and says how
+ * many match in all; a cut list says how many it shows. */
 function ValuePicker({
   entry,
   condition,
@@ -138,27 +140,34 @@ function ValuePicker({
   const [text, setText] = useState("");
   const [open, setOpen] = useState(Boolean(autoFocus));
   const [values, setValues] = useState<FindValue[] | null>(null);
+  const [matched, setMatched] = useState(0);
   const [failed, setFailed] = useState(false);
   const begin = useLatest();
   const isWord = entry.values === "word";
   const chosen = condition.values ?? [];
+  const skipKey = isWord ? "[]" : JSON.stringify(chosen.filter((v) => v !== null));
   useEffect(() => {
     if (!open) return;
     const typed = text.trim();
     if (isWord && !WORD.test(typed)) {
       begin();
       setValues([]);
+      setMatched(0);
       return;
     }
     const handle = window.setTimeout(() => {
       const fresh = begin();
       setFailed(false);
-      findValues(entry.kind, typed)
-        .then((r) => fresh() && setValues(r.values))
+      findValues(entry.kind, typed, JSON.parse(skipKey))
+        .then((r) => {
+          if (!fresh()) return;
+          setValues(r.values);
+          setMatched(r.matched);
+        })
         .catch(() => fresh() && setFailed(true));
     }, 200);
     return () => window.clearTimeout(handle);
-  }, [text, open, begin, entry.kind, isWord]);
+  }, [text, open, begin, entry.kind, isWord, skipKey]);
   const offered = useMemo(
     () => (values ?? []).filter((v) => !chosen.some((c) => c === v.value || (isWord && String(c).toLowerCase() === String(v.value).toLowerCase()))),
     [values, chosen, isWord],
@@ -175,6 +184,7 @@ function ValuePicker({
     [open, offered, state, target, condition.kind, condition.not],
   );
   const counts = useCounts(pairs ? pairs.flatMap((p) => [p.here, p.alone]) : null);
+  const note = isWord ? "" : pickerNote(offered.filter((v) => v.value !== null).length, matched, text);
   const pick = (value: FindValue) => {
     onPick(value);
     setText("");
@@ -206,7 +216,13 @@ function ValuePicker({
             <span className="find-suggest-note muted">Loading…</span>
           ) : offered.length === 0 ? (
             <span className="find-suggest-note muted">
-              {isWord ? (text.trim() ? "One word, in letters, such as mercante." : "Type a word, such as mercante.") : "Nothing matches."}
+              {isWord
+                ? text.trim()
+                  ? "One word, in letters, such as mercante."
+                  : "Type a word, such as mercante."
+                : matched === 0
+                  ? note
+                  : "Loading…"}
             </span>
           ) : (
             <>
@@ -235,6 +251,7 @@ function ValuePicker({
                   <CountCells here={counts?.[2 * i]} alone={counts?.[2 * i + 1]} loading={!counts} />
                 </button>
               ))}
+              {matched > 0 && note && <span className="find-suggest-note muted">{note}</span>}
             </>
           )}
         </span>
