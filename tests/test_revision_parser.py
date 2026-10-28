@@ -682,9 +682,20 @@ def test_double_dated_head_keeps_suffix_and_matches_modern_year() -> None:
 def test_modern_registration_iso_prefill_rules() -> None:
     from workflows.correction_candidates import modern_registration_iso
 
-    # Double-dated: the suffix is the modern year.
+    # Double-dated: the suffix can only mean year+1 (stile fiorentino).
     assert modern_registration_iso("19 febbraio 1694/95") == "1695-02-19"
     assert modern_registration_iso("4 gennaro 1691/1692") == "1692-01-04"
+    # Century crossers, in every suffix width the regex accepts (the old
+    # century-splice made "1699/00" a CENTURY early and "1599/600" the
+    # impossible year 15600 — which would have crashed the flags endpoint).
+    assert modern_registration_iso("10 gennaio 1699/00") == "1700-01-10"
+    assert modern_registration_iso("15 gennaio 1599/600") == "1600-01-15"
+    assert modern_registration_iso("22 febbraio 1499/1500") == "1500-02-22"
+    # A suffix that does NOT read as year+1 is a transcription slip — the
+    # machine offers no reading; the reviewer adjudicates from context.
+    # ("26 gennaio 1600/61" is the corpus's one live case: really 1660/61.)
+    assert modern_registration_iso("26 gennaio 1600/61") is None
+    assert modern_registration_iso("1 gennaio 1699/1770") is None
     # Single date in the Florentine window, pre-1750: ambiguous — no pre-fill.
     assert modern_registration_iso("22 febbraio 1499") is None
     assert modern_registration_iso("24 marzo 1700") is None
@@ -754,16 +765,17 @@ def test_search_index_build_query_and_staleness(tmp_path) -> None:
         CREATE TABLE person (person_id INTEGER PRIMARY KEY, first_name TEXT, father_mother TEXT,
           grandfather TEXT, last_name TEXT, nickname TEXT, is_deleted INTEGER DEFAULT 0);
         CREATE TABLE investor (investor_id INTEGER PRIMARY KEY, person_id INTEGER, contract_id INTEGER,
-          profession TEXT, husband_first_name TEXT, husband_last_name TEXT, place_of_residence INTEGER);
+          profession TEXT, husband_first_name TEXT, husband_last_name TEXT, place_of_residence INTEGER,
+          is_deleted INTEGER DEFAULT 0);
         CREATE TABLE investment (investment_id INTEGER PRIMARY KEY);
-        CREATE TABLE contract_place (place_id INTEGER, contract_id INTEGER);
+        CREATE TABLE contract_place (place_id INTEGER, contract_id INTEGER, is_deleted INTEGER DEFAULT 0);
         CREATE TABLE place (place_id INTEGER PRIMARY KEY, place_name TEXT);
         CREATE TABLE economic_activity (ec_activity_id INTEGER PRIMARY KEY, activity TEXT);
         INSERT INTO economic_activity VALUES (1, 'arte di seta');
         INSERT INTO contract VALUES (100, 'ASF', 'Mercanzia', '10831', '21r', '1451-03-05',
           'Niccolò Salviati e compagni', 1, 'Giovanni dichiara di aver ricevuto\\r\\nin accomandita fiorini 400.', 0);
         INSERT INTO person VALUES (7, 'Antonio', 'di Pagolo', NULL, 'Sangallo', NULL, 0);
-        INSERT INTO investor VALUES (1, 7, 100, 'battiloro', NULL, NULL, NULL);
+        INSERT INTO investor VALUES (1, 7, 100, 'battiloro', NULL, NULL, NULL, 0);
     """)
     con.commit(); con.close()
 
@@ -795,3 +807,77 @@ def test_search_index_build_query_and_staleness(tmp_path) -> None:
     con = sqlite3.connect(main); con.execute("UPDATE contract SET folio='22r'"); con.commit(); con.close()
     os.utime(main)
     assert search_index.is_stale(main, sp)
+
+
+def test_search_index_excludes_soft_deleted_rows(tmp_path) -> None:
+    """The class guarantee (code-review C1): NO text from a soft-deleted row of
+    ANY table the index reads may survive a rebuild. Each seeded row carries a
+    distinctive term; each soft-delete must make exactly its term stop matching
+    while the live controls keep matching. Guards the invariant for whoever adds
+    the next table read to build()."""
+    import sqlite3
+
+    from workflows import search_index
+
+    main = tmp_path / "main.db"
+    con = sqlite3.connect(main)
+    con.executescript("""
+        CREATE TABLE contract (contract_id INTEGER PRIMARY KEY, archive TEXT, series TEXT,
+          folder TEXT, folio TEXT, registration_date TEXT, firm_name TEXT, economic_sector INTEGER,
+          document TEXT, is_deleted INTEGER DEFAULT 0);
+        CREATE TABLE sub_contract (contract_id INTEGER PRIMARY KEY, main_contract_id INTEGER,
+          sub_type TEXT, folder TEXT, folio TEXT, registration_date TEXT, sub_firm_name TEXT,
+          document TEXT, is_deleted INTEGER DEFAULT 0);
+        CREATE TABLE person (person_id INTEGER PRIMARY KEY, first_name TEXT, father_mother TEXT,
+          grandfather TEXT, last_name TEXT, nickname TEXT, is_deleted INTEGER DEFAULT 0);
+        CREATE TABLE investor (investor_id INTEGER PRIMARY KEY, person_id INTEGER, contract_id INTEGER,
+          profession TEXT, husband_first_name TEXT, husband_last_name TEXT, place_of_residence INTEGER,
+          is_deleted INTEGER DEFAULT 0);
+        CREATE TABLE investment (investment_id INTEGER PRIMARY KEY);
+        CREATE TABLE contract_place (place_id INTEGER, contract_id INTEGER, is_deleted INTEGER DEFAULT 0);
+        CREATE TABLE place (place_id INTEGER PRIMARY KEY, place_name TEXT);
+        CREATE TABLE economic_activity (ec_activity_id INTEGER PRIMARY KEY, activity TEXT);
+        -- contract 1 (control, stays live) + its place link to Lisbona (deleted later)
+        INSERT INTO contract VALUES (1,'ASF','Mercanzia','10831','1r','1500-01-01',
+          'Compagnia del control', NULL, 'contratto di controllo', 0);
+        INSERT INTO place VALUES (5, 'Lisbona');
+        INSERT INTO contract_place VALUES (5, 1, 0);
+        -- contract 2: deleted later; distinctive term in its narrative
+        INSERT INTO contract VALUES (2,'ASF','Mercanzia','10831','2r','1500-01-01',
+          'Compagnia degli zibellini', NULL, 'commercio di zibellini', 0);
+        -- sub-act 90: deleted later
+        INSERT INTO sub_contract VALUES (90, 1, 'termination','10831','3r','1501-01-01',
+          NULL, 'disdetta per il marmo', 0);
+        -- person 7 (Vespucci, deleted later) and person 8 whose only profession
+        -- comes from investor 81 (the investor row is deleted later)
+        INSERT INTO person VALUES (7,'Amerigo',NULL,NULL,'Vespucci',NULL,0);
+        INSERT INTO person VALUES (8,'Piero',NULL,NULL,'Control',NULL,0);
+        INSERT INTO investor VALUES (81, 8, 1, 'tiraloro', NULL, NULL, NULL, 0);
+    """)
+    con.commit(); con.close()
+
+    def total(term):
+        return search_index.search(search_index.default_path(main), term)["total"]
+
+    search_index.build(main)
+    # every seeded term is findable while live
+    for term in ("lisbona", "zibellini", "marmo", "vespucci", "tiraloro", "controllo"):
+        assert total(term) >= 1, term
+
+    # soft-delete one row of EACH kind the index reads
+    con = sqlite3.connect(main)
+    con.executescript("""
+        UPDATE contract_place SET is_deleted=1 WHERE place_id=5;
+        UPDATE contract SET is_deleted=1 WHERE contract_id=2;
+        UPDATE sub_contract SET is_deleted=1 WHERE contract_id=90;
+        UPDATE person SET is_deleted=1 WHERE person_id=7;
+        UPDATE investor SET is_deleted=1 WHERE investor_id=81;
+    """)
+    con.commit(); con.close()
+    search_index.build(main)
+
+    # each deleted row's term is gone…
+    for term in ("lisbona", "zibellini", "marmo", "vespucci", "tiraloro"):
+        assert total(term) == 0, term
+    # …while the live control (whose place link was removed) still matches its own text
+    assert total("controllo") == 1
