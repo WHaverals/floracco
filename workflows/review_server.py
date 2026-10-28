@@ -1884,6 +1884,10 @@ def build_partners(
             # The expand panel's full attribute set — live rows only (removed rows
             # are greyed/read-only and don't carry the extra columns).
             "attributes": None if removed else partner_attributes(inv),
+            # The two Jewish layers, kept apart (read-only views such as Find's drawer).
+            "jewish": None
+            if removed
+            else {"stated": inv["is_jewish"] in (1, "1", True), "attributed": inv["jewish_db"] in (1, "1", True)},
         }
 
     rows: list[dict[str, Any]] = [make_partner_row(inv) for inv in investor_rows]
@@ -1968,18 +1972,20 @@ def build_partners(
 def build_places(connection: sqlite3.Connection, raw_id: str, include_hidden: bool = False) -> dict[str, Any]:
     """The contract's place(s) — where the firm operated — as an editable block.
     `address` is free text (editable); the place itself is re-pointed by remove +
-    add (its place_id is part of the composite PK). Live rows only by default."""
+    add (its place_id is part of the composite PK). Live rows only by default.
+    `inferred` is the data-entry team's mark (place_db), as Find's List writes it."""
     def make(pl: sqlite3.Row, *, removed: bool = False) -> dict[str, Any]:
         return {
             "key": f"place:{pl['place_id']}",
             "place_id": str(pl["place_id"]),
             "place": display_text(pl["place_name"]),
             "address": pl["address"] or "",
+            "inferred": pl["place_db"] in (1, "1", True),
             "removed": removed,
         }
 
     sql = (
-        "SELECT cp.place_id AS place_id, cp.address AS address, p.place_name AS place_name "
+        "SELECT cp.place_id AS place_id, cp.address AS address, p.place_name AS place_name, cp.place_db AS place_db "
         "FROM contract_place cp LEFT JOIN place p ON p.place_id = cp.place_id "
         "WHERE cp.contract_id = ? AND cp.is_deleted = ? ORDER BY cp.place_id"
     )
@@ -2070,6 +2076,7 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
             }
         )
     title, subtitle = record_heading("Contract", raw_id, data.get("firm_name"), record_locator(data))
+    register = register_label(data.get("series"), data.get("folder"))
     return {
         "table": "contract",
         "id": str(raw_id),
@@ -2085,6 +2092,10 @@ def contract_detail(connection: sqlite3.Connection, raw_id: str) -> dict[str, An
         "manuscript_images": manuscript_images_for(data.get("folder"), data.get("folio")),
         "word_sources": linked_word_sources(f"contract:{raw_id}"),
         "word_sources_note": None,
+        # For read-only views (Find's drawer): the register as the filters name it,
+        # "" when none is recorded, and the data-entry team's mark on the activity.
+        "register": "" if register == NO_REGISTER_LABEL else register,
+        "activity_inferred": data.get("economic_sector_db") in (1, "1", True),
     }
 
 
@@ -7126,22 +7137,15 @@ def non_person_ids(connection: sqlite3.Connection) -> list[int]:
     from workflows.person_features import classify_entity_kind
 
     result: list[int] = []
-    for row in connection.execute(
+    # read by position, so a plain read-only connection serves as well as open_db()
+    for person_id, first_name, father_mother, grandfather, last_name in connection.execute(
         """
         SELECT person_id,first_name,father_mother,grandfather,last_name
         FROM person WHERE is_deleted=0
         """
     ):
-        if (
-            classify_entity_kind(
-                row["first_name"],
-                row["father_mother"],
-                row["grandfather"],
-                row["last_name"],
-            )
-            != "person"
-        ):
-            result.append(int(row["person_id"]))
+        if classify_entity_kind(first_name, father_mother, grandfather, last_name) != "person":
+            result.append(int(person_id))
     return result
 
 
@@ -7247,6 +7251,32 @@ def _find_role(code: str) -> str:
     )
 
 
+# A partner holds a stake jointly (docs/data_quality/is_joint.md): a live stake
+# shared by more than one live person, or the partner's own mark "joint" on an
+# appearance that holds a live stake. Neither is trusted alone, and a mark with
+# no live stake counts for nothing, as in the library's joint_over_time.
+_FIND_JOINT = (
+    "(i.investor_id IN (SELECT ig.investor_id FROM investor_group ig WHERE ig.is_deleted = 0 AND ig.investment_id IN ("
+    "SELECT g.investment_id FROM investor_group g "
+    "JOIN investment inv ON inv.investment_id = g.investment_id AND inv.is_deleted = 0 "
+    "JOIN investor i2 ON i2.investor_id = g.investor_id AND i2.is_deleted = 0 "
+    "JOIN person p2 ON p2.person_id = i2.person_id AND p2.is_deleted = 0 "
+    "WHERE g.is_deleted = 0 GROUP BY g.investment_id HAVING COUNT(DISTINCT i2.person_id) > 1)) "
+    "OR (COALESCE(i.is_joint, 0) = 1 AND i.investor_id IN (SELECT ig.investor_id FROM investor_group ig "
+    "JOIN investment inv ON inv.investment_id = ig.investment_id AND inv.is_deleted = 0 WHERE ig.is_deleted = 0)))"
+)
+
+# Live later acts (sub-contracts); the outer contract's own hiding is tested on c.
+_FIND_ACTS = "FROM sub_contract s WHERE s.is_deleted = 0"
+# The act types as stored, in the order the figures list them.
+FIND_ACT_TYPES = ("termination", "variation", "balance", "renewal")
+
+
+def _find_act(code: str | None) -> str:
+    kind = f" AND s.sub_type = '{code}'" if code else ""
+    return f"c.contract_id IN (SELECT s.main_contract_id {_FIND_ACTS}{kind})"
+
+
 # Conditions on the contract. A kind with "values" is read as its label and the
 # names of the values chosen in its picker (ids, registers; None is "not
 # recorded", read as "none"); a kind with "choices" is read as the choice.
@@ -7321,6 +7351,28 @@ FIND_CONTRACT_CONDITIONS: dict[str, dict[str, Any]] = {
             ),
         },
     },
+    # Later acts as the database types them (glossary: "Balance / renewal /
+    # termination / variation"; their mapping onto the Italian terms is pending).
+    "act": {
+        "menu": "with a later act (termination, variation, balance or renewal)",
+        "choices": {
+            "any": FindChoice("with at least one later act (sub-contract)", _find_act(None), "with no later act (sub-contract)"),
+            "termination": FindChoice("with a recorded termination", _find_act("termination"), "with no recorded termination"),
+            "variation": FindChoice("with a recorded variation", _find_act("variation"), "with no recorded variation"),
+            "balance": FindChoice("with a recorded balance", _find_act("balance"), "with no recorded balance"),
+            "renewal": FindChoice("with a recorded renewal", _find_act("renewal"), "with no recorded renewal"),
+        },
+    },
+    "partnered": {
+        "menu": "with no partners recorded",
+        "choices": {
+            "no": FindChoice(
+                "with no partners recorded",
+                f"c.contract_id NOT IN (SELECT i.contract_id {_FIND_PARTNERS})",
+                "with at least one partner recorded",
+            ),
+        },
+    },
 }
 
 # Conditions on one partner, as the contract conditions.
@@ -7357,6 +7409,16 @@ FIND_PARTNER_CONDITIONS: dict[str, dict[str, Any]] = {
     "proxy": {
         "menu": "acts through a proxy",
         "choices": {"yes": FindChoice("acts through a proxy", "COALESCE(i.via_proxy, 0) = 1", "does not act through a proxy")},
+    },
+    "joint": {
+        "menu": "holds a stake jointly with someone else",
+        "choices": {
+            "yes": FindChoice(
+                "holds a stake jointly (shared with another person, or marked as held jointly)",
+                _FIND_JOINT,
+                "holds no stake jointly (none shared with another person, none marked as held jointly)",
+            )
+        },
     },
     "residence": {
         "menu": "lives in a place",
@@ -8730,6 +8792,9 @@ _FIND_READS: dict[str, dict[str, set[str | None]]] = {
     "currency": {"contract": {"currency_id"}},
     "register": {"contract": {"folder"}},
     "discretion": {"contract": {"pl_discretion", "ec_discretion"}},
+    "act": {"sub_contract": {"*"}},
+    "partnered": {"investor": {None}, "person": {None}},
+    "joint": {"investment": {"*"}, "investor_group": {"*"}, "investor": {"is_joint"}},
     "jewish": {"investor": {"is_jewish", "jewish_db"}},
     "woman": {"person": {"is_woman"}},
     "role": {"investment": {"*"}, "investor_group": {"*"}},
@@ -8757,16 +8822,18 @@ def _find_corrections_path() -> Path:
     return corrections_db.default_path()
 
 
-def find_edits(spec: dict[str, Any], since: str = "") -> tuple[int, str | None]:
+def find_edits(
+    spec: dict[str, Any], since: str = "", reads: dict[str, set[str | None]] | None = None
+) -> tuple[int, str | None]:
     """How many applied (or reverted) edits the change log holds, after ``since``,
-    on the records and fields this question selects by, and when the last was.
-    The log is opened read-only."""
+    on the records and fields this question selects by (or on ``reads``), and when
+    the last was. The log is opened read-only."""
     path = _find_corrections_path()
     if not path.exists():
         return 0, None
     clauses: list[str] = []
     params: list[Any] = [since]
-    for table, fields in sorted(_find_reads(spec).items()):
+    for table, fields in sorted((reads if reads is not None else _find_reads(spec)).items()):
         if "*" in fields:
             clauses.append("r.db_table = ?")
             params.append(table)
@@ -8866,6 +8933,350 @@ def find_question_today(question: dict[str, Any]) -> dict[str, Any]:
         f"it selects by, the last on {_find_day(last)}."
     )
     return {"changed": bool(entered or left or reworded), "today": len(ids), "lines": lines}
+
+
+# ---- Find, the landing: the corpus first, and the starting questions ----
+# Before the first condition the pane shows the corpus (review 2026-10-27, 7 and
+# 12.1): every decade of registration on the shared axis, and the standing
+# figures, each computed now from the database through the Find engine and each
+# opening a Find question. Their words are the review's proposal, still before
+# Francesca (register 12e), so they live here and change in one place. The
+# starting questions are the library's 25 entries grouped as she asks (12.1):
+# each opens as a Find whose count equals the library query's (tests/test_find.py
+# and scripts/find_smoke.py hold each to it), or stays a library query, said so,
+# while Find cannot ask it; the questions that wait for one of her decisions are
+# listed without a number.
+
+FIND_FIGURES: dict[str, dict[str, Any]] = {
+    "contracts": {
+        "label": "Contracts registered",
+        "value": "{total}",
+        "detail": "{dated} dated; {undated} not",
+        "definition": "Every contract, except any a reviewer has set aside.",
+    },
+    "decades": {
+        "label": "Registrations by decade",
+        "value": "{decades} decades",
+        "detail": "most in {decade} ({count})",
+        "definition": "By registration date.",
+    },
+    "acts": {
+        "label": "Sub-contracts (later acts)",
+        "value": "{acts}",
+        "detail": "on {contracts} contracts: {types}",
+        "orphans": "{orphans} more point to a missing contract",
+        "types": {"termination": ("termination", "terminations"), "variation": ("variation", "variations"),
+                  "balance": ("balance", "balances"), "renewal": ("renewal", "renewals")},
+        "other_type": "{n} of type “{type}”",
+        "definition": "Every sub-contract, except any set aside.",
+    },
+    "termination": {
+        "label": "Contracts with a recorded termination",
+        "value": "{n}",
+        "detail": "{share} of the {total} contracts",
+        "definition": "At least one termination act.",
+    },
+    "woman": {
+        "label": "Contracts with a woman partner",
+        "value": "{n}",
+        "detail": "of the {base} with partners recorded ({share}); as general partner on {gp}, as external investor on {lp}",
+        "definition": "A partner recorded as a woman; her role as recorded for the money she put in.",
+    },
+    "places": {
+        "label": "Place of activity",
+        "value": "{places}",
+        "detail": "of these {inferred} marked as inferred by the data-entry team (meaning to be confirmed)",
+        "definition": "The place as written in the record; a contract counts once under each place it names.",
+    },
+    "proxy": {
+        "label": "Partner appearances through a proxy",
+        "value": "{n}",
+        "detail": "of {all} ({share})",
+        "definition": "An appearance is one partner on one contract.",
+    },
+    "joint": {
+        "label": "Partner appearances on a shared stake",
+        "value": "{n}",
+        "detail": "of {all} ({share})",
+        "definition": "The stake is shared by more than one person, or the partner is marked as holding it jointly "
+        "and holds a stake.",
+    },
+}
+FIND_FIGURE_PLACES = 3  # places named in the figure
+FIND_FIGURE_AS_OF = ("Last edit logged to what it counts: {day}.", "No edit logged to what it counts.")
+
+FIND_STARTING_LABELS = {"library": "Library query"}
+# Each item: a Find question (``spec``, ``view``; ``library`` and ``same`` name
+# the library entry it answers and how the two are compared), a library entry
+# Find cannot ask yet (``library``, ``why``), or a question that waits for a
+# decision (``open``, ``waits``). A title left out is the library entry's own.
+_WOMAN = {"partners": [{"quantifier": "any", "conditions": [{"kind": "woman"}]}]}
+_PROXY = {"partners": [{"quantifier": "any", "conditions": [{"kind": "proxy"}]}]}
+_APPEARANCE_SHARE = "A share of partner appearances, by decade."
+FIND_STARTING: list[dict[str, Any]] = [
+    {"group": "When and for how long", "items": [
+        {"library": "contracts_per_year", "why": "Counts by single year; Find counts by decade and half-century."},
+        {"library": "later_acts_by_type", "why": "Counts later acts, not contracts."},
+        {"library": "acts_per_contract", "why": "Counts the later acts on each contract."},
+        {"library": "initial_term", "why": "Counts contracts by the term they state."},
+        {"open": "How long a partnership lasted, and when it ended",
+         "waits": "Waits for decision 12b: which act ends a partnership, and on which date."},
+    ]},
+    {"group": "Where", "items": [
+        {"spec": {}, "view": {"view": "count", "by": "place"}, "library": "location_frequency", "same": "place"},
+        {"open": "Florence and Livorno with their contado, terra and distretto",
+         "waits": "Waits for decision 12c: which spellings count as each city, and what the mark “inferred” means."},
+    ]},
+    {"group": "For what business", "items": [
+        {"spec": {"contract": [{"kind": "discretion", "choice": "activity"}]}, "library": "ec_discretion_yes",
+         "same": "contracts"},
+        {"open": "Activities compared across places and periods",
+         "waits": "Waits for decision 12a: how the recorded phrases are grouped."},
+    ]},
+    {"group": "With what money", "items": [
+        {"spec": {}, "view": {"view": "count", "by": "currency"}, "library": "currency_frequency", "same": "currency"},
+        {"library": "currency_totals", "why": "Adds up capital, which Find does not do yet."},
+        {"library": "funding_composition", "why": "Sets each contract's cash against its stated capital."},
+        {"open": "Capital over time, and general partners' capital against external investors'",
+         "waits": "Waits for the register's question on exchange rates between currencies (§6)."},
+    ]},
+    {"group": "Who invested", "items": [
+        {"spec": _WOMAN, "library": "women_investors", "same": "contracts"},
+        {"title": "Women partners, by role", "spec": _WOMAN, "view": {"view": "count", "by": "role"}},
+        {"spec": {"partners": [
+            {"quantifier": "any", "conditions": [{"kind": "jewish", "choice": "either"}]},
+            {"quantifier": "any", "conditions": [{"kind": "jewish", "choice": "either", "not": True}]},
+        ]}, "library": "jewish_mixed", "same": "contracts"},
+        {"library": "jewish_all",
+         "why": "Find's “every partner” leaves out institutions and placeholders; this list counts them."},
+        {"title": "Partners acting through a proxy, by role", "spec": _PROXY, "view": {"view": "count", "by": "role"}},
+        {"library": "pct_via_proxy", "why": "A share of partner appearances."},
+        {"library": "via_proxy_over_time", "why": _APPEARANCE_SHARE},
+        {"library": "investors_per_contract", "why": "Counts the partners on each contract."},
+        {"library": "gp_lp_per_contract", "why": "Fewest, average and most per contract."},
+        {"library": "investments_by_role", "why": "Counts stakes, not contracts."},
+        {"library": "jewish_over_time", "why": _APPEARANCE_SHARE},
+        {"library": "jewish_provenance_over_time", "why": _APPEARANCE_SHARE},
+        {"library": "joint_over_time", "why": _APPEARANCE_SHARE},
+    ]},
+    {"group": "Who came back and who was related", "items": [
+        {"library": "relatives_in_contract", "why": "Leads to read in the acts, not a count of family ties."},
+        {"open": "How many people invested, and who came back",
+         "waits": "Waits for the register's question on whether entries with the same name are one person (§5)."},
+        {"open": "Family ties between partners, counted",
+         "waits": "Waits for decision 12d: what counts as evidence of a family tie."},
+    ]},
+    {"group": "Checking the data", "items": [
+        {"spec": {"contract": [{"kind": "place", "values": [None]}]}, "library": "no_place", "same": "contracts"},
+        {"spec": {"contract": [{"kind": "partnered", "choice": "no"}]}, "library": "no_investors", "same": "contracts"},
+        {"spec": {"contract": [{"kind": "activity", "values": [None]}]}, "library": "no_economic_activity",
+         "same": "contracts"},
+        {"library": "corpus_totals", "why": "Counts the rows of each list."},
+    ]},
+]
+
+
+def _find_build_on(connection: sqlite3.Connection, specs: list[Any]) -> list[dict[str, Any]]:
+    """Several questions built against one read of this connection's names."""
+    normals = [find_normalize(spec) for spec in specs]
+    lookups = find_lookups(connection, normals)
+    return [build_find_sql(n, lookups["place"], lookups["non_people"], lookups) for n in normals]
+
+
+def _find_total(connection: sqlite3.Connection, query: dict[str, Any]) -> int:
+    return int(_find_exec(connection, query["total_sql"], query["total_params"])[0][0] or 0)
+
+
+def _find_share(n: int, base: int) -> str:
+    return f"{100 * n / base:.1f}%" if base else "–"
+
+
+def _find_link(text: str, query: dict[str, Any], view: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {"text": text, "spec": query["spec"], "view": view or {}}
+
+
+def _find_segments(template: str, values: dict[str, Any]) -> list[dict[str, Any]]:
+    """A figure's words as segments: plain text, and the numbers that open a Find
+    question (``spec`` and ``view``, which the page writes as its address)."""
+    out: list[dict[str, Any]] = []
+    for k, piece in enumerate(re.split(r"\{(\w+)\}", template)):
+        if k % 2 == 0:
+            if piece:
+                out.append({"text": piece})
+            continue
+        value = values[piece]
+        out.extend(value if isinstance(value, list) else [value] if isinstance(value, dict) else [{"text": str(value)}])
+    return out
+
+
+def find_figures(connection: sqlite3.Connection) -> dict[str, Any]:
+    """The corpus line, the decade chart's figure and the standing figures, each
+    computed through the Find engine on this connection. Each figure carries the
+    records and fields it reads (``reads``), for its as-of line."""
+    places = [v for v in find_values(connection, "place", "", limit=FIND_FIGURE_PLACES + 1) if v["value"] is not None]
+    places = places[:FIND_FIGURE_PLACES]
+    gp, lp = ({"kind": "role", "choice": code} for code in ("gp", "lp"))
+    specs = {
+        "all": {},
+        "partnered": {"contract": [{"kind": "partnered", "not": True, "choice": "no"}]},
+        "act": {"contract": [{"kind": "act", "choice": "any"}]},
+        "termination": {"contract": [{"kind": "act", "choice": "termination"}]},
+        "woman": _WOMAN,
+        "woman_gp": {"partners": [{"quantifier": "any", "conditions": [{"kind": "woman"}, gp]}]},
+        "woman_lp": {"partners": [{"quantifier": "any", "conditions": [{"kind": "woman"}, lp]}]},
+        "proxy": _PROXY,
+        "joint": {"partners": [{"quantifier": "any", "conditions": [{"kind": "joint"}]}]},
+        **{f"place_{v['value']}": {"contract": [{"kind": "place", "values": [v["value"]]}]} for v in places},
+    }
+    q = dict(zip(specs, _find_build_on(connection, list(specs.values()))))
+    n = {name: _find_total(connection, query) for name, query in q.items()}
+    words = FIND_FIGURES
+    total, undated = (int(x or 0) for x in _find_exec(connection, q["all"]["counts_sql"], q["all"]["counts_params"])[0][:2])
+
+    def fmt(x: int) -> str:
+        return f"{x:,}"
+
+    def figure(key: str, values: dict[str, Any], reads: dict[str, set[str | None]], detail: str | None = None) -> dict[str, Any]:
+        entry = words[key]
+        return {
+            "key": key, "label": entry["label"], "value": _find_segments(entry["value"], values),
+            "detail": _find_segments(detail if detail is not None else entry["detail"], values),
+            "definition": entry["definition"], "reads": reads,
+        }
+
+    def reads_of(*names: str) -> dict[str, set[str | None]]:
+        out: dict[str, set[str | None]] = {}
+        for name in names:
+            for table, fields in _find_reads(q[name]["spec"]).items():
+                out.setdefault(table, set()).update(fields)
+        return out
+
+    dated_reads = {"contract": {None, "registration_date"}}
+    # the decades on the shared axis, from the same view the Over time tab draws
+    time = find_time(connection, [q["all"]], "decade")
+    counts = time["series"][0]["counts"] if time["series"] else []
+    top = max(range(len(counts)), key=lambda k: (counts[k], -k)) if counts else None
+    decades = figure("decades", {
+        "decades": _find_link(fmt(len(time["periods"])), q["all"], {"view": "time"}),
+        "decade": f"{time['periods'][top]}–{time['periods'][top] + 9}" if top is not None else "–",
+        "count": fmt(counts[top]) if top is not None else "0",
+    }, dated_reads)
+
+    acts_rows = _find_exec(
+        connection,
+        f"SELECT s.sub_type, COUNT(*) {_FIND_ACTS} AND s.main_contract_id IN "
+        f"(SELECT c.contract_id FROM contract c WHERE {q['all']['where_sql']}) GROUP BY s.sub_type",
+        q["all"]["total_params"],
+    )
+    acts = {kind: int(count) for kind, count in acts_rows}
+    orphans = int(_find_exec(
+        connection, f"SELECT COUNT(*) {_FIND_ACTS} AND s.main_contract_id NOT IN (SELECT contract_id FROM contract)", []
+    )[0][0] or 0)
+    entry = words["acts"]
+    ordered = [t for t in FIND_ACT_TYPES if acts.get(t)] + sorted((t for t in acts if t not in FIND_ACT_TYPES), key=str)
+    types = ", ".join(
+        f"{fmt(acts[t])} {entry['types'][t][acts[t] != 1]}" if t in entry["types"]
+        else entry["other_type"].format(n=fmt(acts[t]), type=t if t not in (None, "") else "not recorded")
+        for t in ordered
+    )
+    acts_detail = entry["detail"] + (f"; {entry['orphans']}" if orphans else "")
+    acts_figure = figure("acts", {
+        "acts": fmt(sum(acts.values())), "contracts": _find_link(fmt(n["act"]), q["act"]), "types": types,
+        "orphans": fmt(orphans),
+    }, {"sub_contract": {"*"}}, acts_detail)
+
+    places_value: list[dict[str, Any]] = []
+    for k, v in enumerate(places):
+        if k:
+            places_value.append({"text": ", "})
+        places_value.append(_find_link(f"{v['name']} {fmt(v['contracts'])}", q[f"place_{v['value']}"]))
+    inferred = [fmt(v["inferred"]) for v in places]
+    places_figure = figure("places", {"places": places_value, "inferred": _join_and(inferred)},
+                           reads_of(*(f"place_{v['value']}" for v in places)) if places else {"contract_place": {"*"}},
+                           detail=words["places"]["detail"] if any(v["inferred"] for v in places) else "")
+
+    partners_every = find_partners_sql(q["all"], "every")
+    appearances = int(_find_exec(connection, partners_every["counts_sql"], partners_every["params"])[0][0] or 0)
+
+    def matched(name: str) -> int:
+        built = find_partners_sql(q[name], "matched")
+        return int(_find_exec(connection, built["counts_sql"], built["params"])[0][0] or 0)
+
+    partners_view = {"view": "partners", "partners": "matched"}
+    figures = [
+        figure("contracts", {"total": _find_link(fmt(total), q["all"], {"all": True}), "dated": fmt(total - undated),
+                             "undated": fmt(undated)}, dated_reads),
+        acts_figure,
+        figure("termination", {"n": _find_link(fmt(n["termination"]), q["termination"]),
+                               "share": _find_share(n["termination"], total), "total": fmt(total)},
+               reads_of("termination")),
+        figure("woman", {"n": _find_link(fmt(n["woman"]), q["woman"]), "base": fmt(n["partnered"]),
+                         "share": _find_share(n["woman"], n["partnered"]),
+                         "gp": _find_link(fmt(n["woman_gp"]), q["woman_gp"]),
+                         "lp": _find_link(fmt(n["woman_lp"]), q["woman_lp"])},
+               reads_of("woman", "woman_gp", "partnered")),
+        places_figure,
+        *(figure(name, {"n": _find_link(fmt(count), q[name], partners_view), "all": fmt(appearances),
+                        "share": _find_share(count, appearances)}, reads_of(name))
+          for name, count in (("proxy", matched("proxy")), ("joint", matched("joint")))),
+    ]
+    return {"answer": find_answer(q["all"], {"total": total, "undated": undated}, None), "chart": decades,
+            "figures": figures}
+
+
+def _join_and(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}" if words else ""
+
+
+def find_starting(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    """The starting questions, grouped as she asks: each Find question with its
+    sentence and today's count, each library entry with why it stays one, and
+    each question that waits for a decision, without a number."""
+    library = {q["id"]: q for q in ANALYSIS_LIBRARY}
+    asked = [item for group in FIND_STARTING for item in group["items"] if "spec" in item]
+    built = {id(item): query for item, query in zip(asked, _find_build_on(connection, [i["spec"] for i in asked]))}
+    out = []
+    for group in FIND_STARTING:
+        items = []
+        for item in group["items"]:
+            if "open" in item:
+                items.append({"kind": "open", "title": item["open"], "waits": item["waits"]})
+                continue
+            entry = library.get(item.get("library", ""), {})
+            title = item.get("title") or entry.get("title", "")
+            if "spec" in item:
+                query = built[id(item)]
+                by = item.get("view", {}).get("by")
+                says = f"{query['sentence']}, counted by {FIND_GROUPINGS[by]['label']}" if by else query["sentence"]
+                items.append({"kind": "find", "title": title, "says": says, "spec": query["spec"],
+                              "view": item.get("view", {}), "count": _find_total(connection, query),
+                              "library": item.get("library")})
+            else:
+                items.append({"kind": "library", "title": title, "says": item["why"], "library": item["library"]})
+        out.append({"group": group["group"], "items": items})
+    return out
+
+
+def find_starting_check(connection: sqlite3.Connection, item: dict[str, Any]) -> tuple[list[Any], list[Any]]:
+    """A starting question beside the library entry it stands for, in the form both
+    share: the contracts listed (``same`` "contracts"), or each recorded value with
+    its contracts (``same`` a grouping, "place" or "currency"). Equal when the Find
+    asks what the library query counts; values missing from their list (the lost
+    entries) are left out of both, as the library's join leaves them out."""
+    entry = next(q for q in ANALYSIS_LIBRARY if q["id"] == item["library"])
+    cursor = connection.execute(_readonly_statement(entry["sql"]))
+    columns = [d[0] for d in cursor.description]
+    rows = cursor.fetchall()
+    query = _find_build_on(connection, [item["spec"]])[0]
+    if item["same"] == "contracts":
+        at = columns.index("contract_id")
+        found = _find_exec(connection, f"SELECT c.contract_id FROM contract c WHERE {query['where_sql']}", query["total_params"])
+        return sorted({int(r[at]) for r in rows}), sorted(int(r[0]) for r in found)
+    _ids, values = _find_group_rows(connection, query, item["same"])
+    groups = _find_groups(values)
+    ids = sorted(v for v in groups if v is not None)
+    named = {int(r[0]): r[1] for r in connection.execute(_FIND_LISTS[item["same"]][0].format(marks=_marks(ids)), ids)} if ids else {}
+    return sorted((r[0], int(r[1])) for r in rows), sorted((named[v], len(groups[v])) for v in ids if v in named)
 
 
 class FindRequest(BaseModel):
@@ -9117,6 +9528,23 @@ def analysis_find_partners_export(payload: FindPartnersRequest) -> StreamingResp
     downloaded = f"Downloaded on {today.day} {today:%B %Y}" + (f" from {link}" if link else "")
     preamble = [[query["sentence"]], [_find_partner_line(counts, payload.which)], [downloaded]]
     return export_readonly_csv(built["list_sql"], tuple(built["params"]), preamble=preamble, labels=built["labels"])
+
+
+@app.get("/api/analysis/find/landing")
+def analysis_find_landing() -> dict[str, Any]:
+    """The corpus before the first condition (12.1): the corpus line, the decade
+    chart's figure and the standing figures, each with its as-of line."""
+    landing = _find_view(find_figures)
+    for figure in [landing["chart"], *landing["figures"]]:
+        edits, last = find_edits({}, reads=figure.pop("reads"))
+        figure["as_of"] = FIND_FIGURE_AS_OF[0].format(day=_find_day(last)) if edits else FIND_FIGURE_AS_OF[1]
+    return landing
+
+
+@app.get("/api/analysis/find/starting")
+def analysis_find_starting() -> dict[str, Any]:
+    """The starting questions in the rail, grouped as she asks (12.1)."""
+    return {"labels": FIND_STARTING_LABELS, "groups": _find_view(find_starting)}
 
 
 @app.get("/api/analysis/find/values")

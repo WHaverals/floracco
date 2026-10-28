@@ -341,3 +341,9 @@ export function placementSpecs(state: FindState, condition: Condition): { line: 
   const lines: (number | null)[] = [...state.partners.map((_l, i) => i), null];
   return lines.map((line) => ({ line, spec: toSpec(complete(placeCondition(state, condition, line))) }));
 }
+
+/** A question with no condition and no combined sets: the whole corpus, which
+ * the pane shows as its landing (review 12.1) until a condition is added. */
+export function isEmpty(state: FindState): boolean {
+  return !state.combine && state.contract.length === 0 && state.partners.length === 0;
+}

@@ -11473,3 +11473,296 @@ a.db-history-subject:hover {
   background: #efe3d1;
   border-color: #b08a5c;
 }
+
+/* Find: a contract in a side drawer (review 2026-10-27, 12.1; ContractDrawer.tsx).
+ * No scrim, so the list stays readable beside it; the row open in the drawer is
+ * marked in the list. */
+.contract-drawer {
+  background: #f6f1ea;
+  border-left: 1px solid #e3d3ba;
+  bottom: 0;
+  box-shadow: -18px 0 40px rgba(20, 14, 9, 0.18);
+  display: flex;
+  flex-direction: column;
+  max-width: 100vw;
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 560px;
+  z-index: 40;
+}
+
+.contract-drawer-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 18px 22px 10px;
+}
+
+.contract-drawer-head h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.2rem;
+  font-weight: 500;
+  margin: 2px 0 0;
+}
+
+.contract-drawer-head .db-hidden-badge {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.contract-drawer-position {
+  color: #8d7764;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.contract-drawer-nav {
+  align-items: center;
+  border-bottom: 1px solid #eadfcc;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 22px 12px;
+}
+
+.contract-drawer-nav .pill-button {
+  font-size: 0.84rem;
+  padding: 6px 12px;
+}
+
+.contract-drawer-nav .pill-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.contract-drawer-open {
+  color: #6d4a2c;
+  font-size: 0.86rem;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.contract-drawer-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 18px;
+  overflow: auto;
+  padding: 16px 22px 28px;
+}
+
+.contract-drawer-body.is-updating {
+  opacity: 0.55;
+}
+
+.contract-drawer-body h4 {
+  font-size: 0.9rem;
+  margin: 0 0 8px;
+}
+
+.contract-drawer-body .notice {
+  margin: 0;
+}
+
+.contract-drawer-facts {
+  display: grid;
+  font-size: 0.88rem;
+  gap: 6px;
+  margin: 0;
+}
+
+.contract-drawer-facts > div {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 150px minmax(0, 1fr);
+}
+
+.contract-drawer-facts dt {
+  color: #6b5840;
+}
+
+.contract-drawer-facts dd {
+  margin: 0;
+}
+
+.contract-drawer-partners {
+  border-collapse: collapse;
+  font-size: 0.84rem;
+  width: 100%;
+}
+
+.contract-drawer-partners th {
+  color: #6b5840;
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-align: left;
+  vertical-align: bottom;
+}
+
+.contract-drawer-partners th,
+.contract-drawer-partners td {
+  border-bottom: 1px solid #eadfcc;
+  padding: 5px 8px 5px 0;
+}
+
+.contract-drawer-word {
+  margin-top: 0;
+}
+
+.contract-drawer .ws-inline-folio {
+  white-space: nowrap;
+}
+
+.contract-drawer-narrative {
+  font-size: 0.88rem;
+  margin-top: 10px;
+}
+
+.contract-drawer-narrative summary {
+  color: #6d4a2c;
+  cursor: pointer;
+}
+
+.find-table tr.is-in-drawer td {
+  background: #efe3d1;
+}
+
+/* Find, the landing (review 2026-10-27, 7 and 12.1): before the first condition,
+ * the corpus line, the standing figures, each of whose numbers opens its Find
+ * question, and the decades on the shared axis. In the rail: New question, the
+ * starting questions grouped as she asks, and the SQL console set apart. */
+.find-landing {
+  margin-top: 6px;
+  max-width: 1080px;
+}
+
+.find-standings {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  list-style: none;
+  margin: 4px 0 18px;
+  padding: 0;
+}
+
+.find-standing {
+  background: #fbf6ee;
+  border: 1px solid #eadfcc;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px 11px;
+}
+
+.find-standing-label {
+  color: #7e5c44;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.find-standing-value {
+  color: #241d18;
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+/* several numbers in one figure (the places) read a size smaller */
+.find-standing-value:has(a ~ a) {
+  font-size: 1.02rem;
+}
+
+.find-standing-value a,
+.find-standing-detail a {
+  color: inherit;
+  text-decoration-color: #c9a27c;
+  text-underline-offset: 3px;
+}
+
+.find-standing-value a:hover,
+.find-standing-detail a:hover {
+  color: #9a5a2a;
+}
+
+.find-standing-detail {
+  color: #3d332b;
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.find-standing-note {
+  color: #7d7064;
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.find-landing > .find-standing-note {
+  margin: 4px 0 0;
+}
+
+.find-new {
+  font-weight: 600;
+}
+
+.find-start-group + .find-start-group {
+  margin-top: 6px;
+}
+
+.find-start-head {
+  color: #d9c6ae;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin: 8px 0 2px;
+  padding: 0 8px;
+}
+
+a.find-rail-item {
+  text-decoration: none;
+}
+
+.find-start-item {
+  flex-direction: column;
+  gap: 1px;
+}
+
+.find-rail-sub {
+  color: #a8998a;
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.find-rail-item.is-active .find-rail-sub {
+  color: #3d2f22;
+}
+
+.find-rail-tag {
+  border: 1px solid #5a4a3c;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.find-start-open {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  opacity: 0.85;
+  padding: 6px 8px;
+}
+
+.find-start-open .find-rail-name {
+  font-style: italic;
+}
+
+.find-rail-apart {
+  border-top: 1px solid #3a2e24;
+  margin-top: 18px;
+  padding-top: 4px;
+}

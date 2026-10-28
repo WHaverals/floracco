@@ -784,6 +784,50 @@ export type FindHow = {
   params: (string | number)[];
 };
 
+/** Words of a standing figure: plain text, or a number that opens a Find
+ * question (its question and its view, written as the address by the page). */
+export type FindSegment = {
+  text: string;
+  spec?: import("./utils/findSpec").FindSpec;
+  view?: Partial<import("./utils/findView").FindView>;
+};
+
+/** A standing figure on the landing (GET /api/analysis/find/landing). */
+export type FindFigure = {
+  key: string;
+  label: string;
+  value: FindSegment[];
+  detail: FindSegment[];
+  definition: string;
+  /** the last edit logged to what it counts */
+  as_of: string;
+};
+
+/** The corpus before the first condition: its answer line, the decade chart's
+ * figure and the standing figures (review 7 and 12.1). */
+export type FindLanding = { answer: string[]; chart: FindFigure; figures: FindFigure[] };
+
+/** A starting question in the rail (GET /api/analysis/find/starting): a Find
+ * question with today's count, a library query Find cannot ask yet, or a
+ * question that waits for a decision. */
+export type FindStartingItem =
+  | {
+      kind: "find";
+      title: string;
+      says: string;
+      spec: import("./utils/findSpec").FindSpec;
+      view: Partial<import("./utils/findView").FindView>;
+      count: number;
+      library: string | null;
+    }
+  | { kind: "library"; title: string; says: string; library: string }
+  | { kind: "open"; title: string; waits: string };
+
+export type FindStarting = {
+  labels: { library: string };
+  groups: { group: string; items: FindStartingItem[] }[];
+};
+
 export type DbFacets = {
   registers: { folder: string; label: string; count: number }[];
   year_histogram: { decade: number; count: number }[];
@@ -913,6 +957,8 @@ export type DbPlace = {
   place_id: string;
   place: string;
   address: string;
+  /** The data-entry team's mark "inferred" (place_db). */
+  inferred?: boolean;
   removed: boolean;
 };
 
@@ -941,6 +987,9 @@ export type DbPartnerRow = {
   removed: boolean;
   /** Full attribute set for the expand panel (live rows only; null when removed). */
   attributes: DbPartnerAttributes | null;
+  /** The two Jewish layers, kept apart: stated in the act (is_jewish) and the
+   * data-entry team's editorial attribution (jewish_db). Null when removed. */
+  jewish?: { stated: boolean; attributed: boolean } | null;
 };
 
 export type DbPartners = {
@@ -1116,6 +1165,10 @@ export type DbRecord = {
   manuscript_images?: WordEntryImage[];
   word_sources: DbWordSource[];
   word_sources_note?: string | null;
+  /** Contracts only: the register as the filters name it ("" when none is recorded). */
+  register?: string;
+  /** Contracts only: the data-entry team's mark "inferred" on the activity. */
+  activity_inferred?: boolean;
   is_deleted?: boolean;
   dependents?: Record<string, number>;
   history?: RecordHistory;

@@ -240,6 +240,16 @@ export function findHow(spec: import("./utils/findSpec").FindSpec): Promise<impo
   return request("/api/analysis/find/how", { method: "POST", body: JSON.stringify({ spec }) });
 }
 
+/** The corpus before the first condition: the standing figures (review 7, 12.1). */
+export function loadFindLanding(): Promise<import("./types").FindLanding> {
+  return request("/api/analysis/find/landing");
+}
+
+/** The starting questions of the rail, grouped as she asks (review 12.1). */
+export function loadFindStarting(): Promise<import("./types").FindStarting> {
+  return request("/api/analysis/find/starting");
+}
+
 /** The Find list as a CSV: every row, opening with the question, its answer,
  * the date and `link`, the address that reopens it. */
 export async function downloadFindCsv(spec: import("./utils/findSpec").FindSpec, link: string): Promise<Blob> {

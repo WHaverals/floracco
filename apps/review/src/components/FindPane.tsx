@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import ContractDrawer, { ContractLink, drawerOrder, drawerRow } from "./ContractDrawer";
 import CopyLinkButton from "./CopyLinkButton";
 import { AddMenu, ConditionChip, contractsWord, freshCondition, useCounts } from "./FindChips";
+import FindLanding from "./FindLanding";
 import { CountView, PartnersView, TimeView } from "./FindViews";
 import { SavedQuestionBar, recordFindHistory } from "./FindQuestions";
 import { downloadFindCsv, findHow, loadFindRegistry, runFind } from "../api";
@@ -12,6 +14,7 @@ import {
   findSearch,
   fromSpec,
   incompleteReason,
+  isEmpty,
   isYears,
   kindsFrom,
   lineOpenings,
@@ -125,6 +128,9 @@ function FindList({ result }: { result: FindResult }) {
     return [...result.rows].sort((x, y) => compareCells(column, x[sort.col], y[sort.col], sort.desc));
   }, [result, sort]);
   const idCol = result.columns.indexOf("contract_id");
+  // a contract opened in the drawer; previous / next follow the order shown
+  const [drawer, setDrawer] = useState<number | null>(null);
+  const order = useMemo(() => drawerOrder(rows.map((row) => row[idCol])), [rows, idCol]);
   return (
     <div className="an-table-wrap">
       <table className="an-table find-table">
@@ -147,10 +153,10 @@ function FindList({ result }: { result: FindResult }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={String(row[idCol])}>
+            <tr key={String(row[idCol])} {...drawerRow(Number(row[idCol]), drawer)}>
               {row.map((cell, ci) => (
                 <td key={ci}>
-                  {ci === idCol ? <Link to={`/database/contract/${cell}`}>{String(cell)}</Link> : cellText(result.columns[ci], cell)}
+                  {ci === idCol ? <ContractLink id={Number(cell)} onOpen={setDrawer} /> : cellText(result.columns[ci], cell)}
                 </td>
               ))}
             </tr>
@@ -162,6 +168,7 @@ function FindList({ result }: { result: FindResult }) {
           The list shows the first {result.row_count.toLocaleString()} rows; the download holds all of them.
         </p>
       )}
+      {drawer !== null && <ContractDrawer id={drawer} order={order} onMove={setDrawer} onClose={() => setDrawer(null)} />}
     </div>
   );
 }
@@ -397,11 +404,13 @@ export default function FindPane({ onAddress }: { onAddress: (search: string) =>
   }, [current, navigate, onAddress]);
 
   const incomplete = registry ? incompleteReason(state, kinds) : "";
+  // No condition yet, and no view asked for: the corpus and its standing figures (12.1).
+  const landing = isEmpty(state) && view.view === "list" && !view.all;
   const spec = useMemo(() => toSpec(state), [state]);
   const specKey = JSON.stringify(spec);
   const questionSearch = registry ? findSearch(state, kinds) : "";
   useEffect(() => {
-    if (!registry || incomplete) return;
+    if (!registry || incomplete || landing) return;
     setRunning(true);
     const handle = window.setTimeout(() => {
       const fresh = beginRun();
@@ -426,7 +435,13 @@ export default function FindPane({ onAddress }: { onAddress: (search: string) =>
         .finally(() => fresh() && setRunning(false));
     }, 350);
     return () => window.clearTimeout(handle);
-  }, [registry, specKey, incomplete, beginRun, questionSearch]);
+  }, [registry, specKey, incomplete, landing, beginRun, questionSearch]);
+
+  // "The whole corpus as a set" means nothing once a condition is added.
+  const empty = isEmpty(state);
+  useEffect(() => {
+    if (!empty && view.all) setView({ all: false });
+  }, [empty, view.all, setView]);
 
   // A new question closes an opened cell.
   useEffect(() => setOpened(null), [specKey]);
@@ -676,7 +691,9 @@ export default function FindPane({ onAddress }: { onAddress: (search: string) =>
         </div>
       </div>
 
-      {incomplete ? (
+      {landing ? (
+        <FindLanding kinds={kinds} />
+      ) : incomplete ? (
         <p className="muted an-note">{incomplete}</p>
       ) : error ? (
         <p className="error-text">{error}</p>

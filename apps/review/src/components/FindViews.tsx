@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import ContractDrawer, { ContractLink, drawerOrder, drawerRow } from "./ContractDrawer";
 import { AddMenu, ConditionChip, contractsWord } from "./FindChips";
 import { downloadFindPartnersCsv, findCount, findPartners, findTime } from "../api";
 import { useLatest } from "../utils/latest";
@@ -982,6 +983,10 @@ export function PartnersView({
     setExporting(false);
     setExportError("");
   }, [specKey, view.partners, begin]);
+  // a contract opened in the drawer; previous / next follow the contracts in the order shown
+  const [drawer, setDrawer] = useState<number | null>(null);
+  const contractAt = data ? data.columns.indexOf("contract_id") : -1;
+  const order = useMemo(() => (data ? drawerOrder(data.rows.map((row) => row[contractAt])) : []), [data, contractAt]);
   if (error && !data) return <p className="error-text">{error}</p>;
   if (!data) return <p className="muted">Loading…</p>;
   const which = data.counts[view.partners] ? view.partners : "every";
@@ -1035,13 +1040,13 @@ export function PartnersView({
           </thead>
           <tbody>
             {data.rows.map((row, r) => (
-              <tr key={r}>
+              <tr key={r} {...drawerRow(Number(row[contractAt]), drawer)}>
                 {row.map((cell, ci) => {
                   const column = data.columns[ci];
                   if (column === "contract_id")
                     return (
                       <td key={ci}>
-                        <Link to={`/database/contract/${cell}`}>{String(cell)}</Link>
+                        <ContractLink id={Number(cell)} onOpen={setDrawer} />
                       </td>
                     );
                   if (column === "person_id")
@@ -1064,6 +1069,7 @@ export function PartnersView({
           </p>
         )}
       </div>
+      {drawer !== null && <ContractDrawer id={drawer} order={order} onMove={setDrawer} onClose={() => setDrawer(null)} />}
     </div>
   );
 }

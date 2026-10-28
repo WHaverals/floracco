@@ -9,8 +9,10 @@
  * question's earlier step the share is of: 0 is all contracts); Compare: `split`
  * (a grouping), or `beside` (repeated): the same question with one condition
  * changed, written as where~condition ("c0~place-16", "p0.1~role-lp"); See
- * their partners: `view=partners` with `partners` every | matched; and `saved`,
- * the saved question this address was opened from.
+ * their partners: `view=partners` with `partners` every | matched; `saved`,
+ * the saved question this address was opened from; and `all=1`, the whole
+ * corpus as a set, where a question with no condition would otherwise show the
+ * landing (the corpus and its standing figures, review 12.1).
  *
  * Kept free of React and of other imports so tests/test_find.py can run it
  * under Node. */
@@ -28,9 +30,11 @@ export type FindView = {
   beside: Beside[];
   partners: "every" | "matched";
   saved: string;
+  /** with no condition: the corpus as a set, in place of the landing */
+  all: boolean;
 };
 
-export const VIEW_KEYS = ["view", "by", "by2", "period", "show", "base", "split", "beside", "partners", "saved"];
+export const VIEW_KEYS = ["view", "by", "by2", "period", "show", "base", "split", "beside", "partners", "saved", "all"];
 export const DEFAULT_VIEW: FindView = {
   view: "list",
   by: "decade",
@@ -42,6 +46,7 @@ export const DEFAULT_VIEW: FindView = {
   beside: [],
   partners: "every",
   saved: "",
+  all: false,
 };
 export const MAX_BESIDE = 3;
 const SAVED = /^[0-9a-f]{12}$/;
@@ -62,6 +67,7 @@ export function viewSearch(view: FindView): string {
   for (const b of view.beside) query.append("beside", `${b.target}~${b.token}`);
   if (view.partners !== DEFAULT_VIEW.partners) query.append("partners", view.partners);
   if (view.saved) query.append("saved", view.saved);
+  if (view.all) query.append("all", "1");
   return query.toString();
 }
 
@@ -74,6 +80,7 @@ export function parseView(search: string): FindView {
   if (query.get("partners") === "matched") view.partners = "matched";
   const saved = query.get("saved");
   if (saved && SAVED.test(saved)) view.saved = saved;
+  if (query.get("all") === "1") view.all = true;
   const by = query.get("by");
   if (by && KEY.test(by)) view.by = by;
   const by2 = query.get("by2");
@@ -91,6 +98,12 @@ export function parseView(search: string): FindView {
     if (at > 0 && TARGET.test(target) && TOKEN.test(token)) view.beside.push({ target, token });
   }
   return view;
+}
+
+/** A view the server names in part (a starting question, a standing figure),
+ * the rest left as the default. */
+export function viewOf(partial: Partial<FindView>): FindView {
+  return { ...DEFAULT_VIEW, beside: [], ...partial };
 }
 
 /** An address without the view's keys: the question alone. */

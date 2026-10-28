@@ -492,9 +492,10 @@ export default function Analysis() {
   const navigate = useNavigate();
   const location = useLocation();
   const { view } = useParams<{ view?: string }>();
+  // Find is the centre of the tab (review 2026-10-27, section 11): /analysis opens it.
   const mode: "find" | "library" | "builder" | "console" =
-    view === "find" ? "find" : view === "build" ? "builder" : view === "console" ? "console" : "library";
-  const selectedId = mode === "library" ? (view ?? null) : null;
+    view === undefined || view === "find" ? "find" : view === "build" ? "builder" : view === "console" ? "console" : "library";
+  const selectedId = mode === "library" && view !== "library" ? (view ?? null) : null;
 
   // library state
   const [queries, setQueries] = useState<AnalysisQuery[]>([]);
@@ -712,7 +713,7 @@ export default function Analysis() {
             <button
               type="button"
               className={mode === "library" ? "db-tab is-active" : "db-tab"}
-              onClick={() => mode !== "library" && navigate(lastLibrary.current ? `/analysis/${lastLibrary.current}` : "/analysis")}
+              onClick={() => mode !== "library" && navigate(lastLibrary.current ? `/analysis/${lastLibrary.current}` : "/analysis/library")}
             >
               Library
             </button>

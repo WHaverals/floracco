@@ -1,8 +1,16 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { listFindQuestions, loadFindRegistry, removeFindQuestion, renameFindQuestion, saveFindQuestion } from "../api";
-import type { FindQuestion, FindRegistry } from "../types";
-import type { FindSpec } from "../utils/findSpec";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { findAddress } from "./FindLanding";
+import {
+  listFindQuestions,
+  loadFindRegistry,
+  loadFindStarting,
+  removeFindQuestion,
+  renameFindQuestion,
+  saveFindQuestion,
+} from "../api";
+import type { FindQuestion, FindRegistry, FindStarting } from "../types";
+import { kindsFrom, type FindSpec } from "../utils/findSpec";
 import { questionPart } from "../utils/findView";
 
 /* Find, step 4 (review 2026-10-27, 12.1 and 12.8): the left rail of the Find
@@ -10,7 +18,11 @@ import { questionPart } from "../utils/findView";
  * signed-in person and each asked again today, marked "changed" when today's
  * contracts differ from the ones it held when saved. "This session" is the
  * numbered history of the questions asked in this tab; two of them can be
- * combined (in both, in either, in one and not in the other) into a new set. */
+ * combined (in both, in either, in one and not in the other) into a new set.
+ * "Starting questions" (12.1) are the library's entries grouped as she asks:
+ * each opens as a Find question with today's count, stays a library query when
+ * Find cannot ask it yet, or waits for one of her decisions and has no number.
+ * Their words and groups are the server's (find_starting). */
 
 const QUESTIONS_EVENT = "floracco:find-questions";
 const HISTORY_EVENT = "floracco:find-history";
@@ -99,20 +111,87 @@ export function combinedSearch(op: "and" | "or" | "not", first: string, second: 
 
 let registryOnce: Promise<FindRegistry> | null = null;
 
-function useCombineWords(): FindRegistry["combine"] {
-  const [words, setWords] = useState<FindRegistry["combine"]>([]);
+function useRegistry(): FindRegistry | null {
+  const [registry, setRegistry] = useState<FindRegistry | null>(null);
   useEffect(() => {
     registryOnce ??= loadFindRegistry();
-    registryOnce.then((r) => setWords(r.combine)).catch(() => {
+    registryOnce.then(setRegistry).catch(() => {
       registryOnce = null;
     });
   }, []);
-  return words;
+  return registry;
+}
+
+/** The starting questions, asked again each time the rail opens. */
+function useStarting(): { starting: FindStarting | null; failed: boolean } {
+  const [starting, setStarting] = useState<FindStarting | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    loadFindStarting()
+      .then((s) => live && setStarting(s))
+      .catch(() => live && setFailed(true));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return { starting, failed };
+}
+
+function StartingQuestions({ registry, current }: { registry: FindRegistry | null; current: string }) {
+  const { starting, failed } = useStarting();
+  const kinds = useMemo(() => (registry ? kindsFrom(registry) : null), [registry]);
+  if (failed) return <p className="muted find-rail-note">The starting questions could not be loaded.</p>;
+  if (!starting || !kinds) return <p className="muted find-rail-note">Loading…</p>;
+  return (
+    <>
+      {starting.groups.map((group) => (
+        <div key={group.group} className="find-start-group">
+          <p className="find-start-head">{group.group}</p>
+          <ul className="find-rail-list">
+            {group.items.map((item) => {
+              if (item.kind === "open") {
+                return (
+                  <li key={item.title} className="find-start-open">
+                    <span className="find-rail-name">{item.title}</span>
+                    <span className="find-rail-sub">{item.waits}</span>
+                  </li>
+                );
+              }
+              if (item.kind === "library") {
+                return (
+                  <li key={item.title}>
+                    <Link to={`/analysis/${item.library}`} className="find-rail-item find-start-item" title={item.says}>
+                      <span className="find-rail-name">{item.title}</span>
+                      <span className="find-rail-sub">
+                        <span className="find-rail-tag">{starting.labels.library}</span> {item.says}
+                      </span>
+                    </Link>
+                  </li>
+                );
+              }
+              const address = findAddress(item.spec, item.view, kinds);
+              const active = `/analysis/find${current}` === address;
+              return (
+                <li key={item.title}>
+                  <Link to={address} className={active ? "find-rail-item is-active" : "find-rail-item"} title={item.says}>
+                    <span className="find-rail-name">{item.title}</span>
+                    <span className="find-rail-count">{item.count.toLocaleString()}</span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </>
+  );
 }
 
 export default function FindRail({ current }: { current: string }) {
   const navigate = useNavigate();
-  const words = useCombineWords();
+  const registry = useRegistry();
+  const words = registry?.combine ?? [];
   const { questions, failed } = useFindQuestions();
   const history = useFindHistory();
   const [picked, setPicked] = useState<number[]>([]);
@@ -124,6 +203,11 @@ export default function FindRail({ current }: { current: string }) {
   };
   return (
     <div className="an-library find-rail">
+      <section>
+        <Link to="/analysis/find" className={current ? "find-rail-item find-new" : "find-rail-item find-new is-active"}>
+          <span className="find-rail-name">New question</span>
+        </Link>
+      </section>
       <section>
         <p className="find-rail-title">My questions</p>
         {failed ? (
@@ -193,6 +277,16 @@ export default function FindRail({ current }: { current: string }) {
         ) : history.length > 1 ? (
           <p className="muted find-rail-note">Tick two to combine them.</p>
         ) : null}
+      </section>
+      <section>
+        <p className="find-rail-title">Starting questions</p>
+        <StartingQuestions registry={registry} current={current} />
+      </section>
+      <section className="find-rail-apart">
+        <p className="find-rail-title">For checking</p>
+        <Link to="/analysis/console" className="find-rail-item">
+          <span className="find-rail-name">Database query (SQL)</span>
+        </Link>
       </section>
     </div>
   );
