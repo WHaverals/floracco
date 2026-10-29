@@ -8335,7 +8335,10 @@ _FIND_GROUP_EXPR = {
     "register": ("TRIM(COALESCE(c.folder, ''))", ""),
 }
 _FIND_GROUP_WORDS = {
-    "provenance": {"stated": "stated in the act", "attributed": "editorial attribution alone"},
+    # The answer line's own words (find_answer): on an "editorial attribution"
+    # line the first part holds the contracts that also have a partner stated
+    # Jewish in the act, so it must not name the matching partner.
+    "provenance": {"stated": "with a partner stated Jewish in the act", "attributed": "on editorial attribution alone"},
     "role": {"gp": "general partner", "lp": "external investor (accomandante)"},
 }
 

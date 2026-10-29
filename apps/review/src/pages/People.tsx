@@ -1219,7 +1219,11 @@ export default function People() {
         expected_status: target.status,
         expected_event_id: target.latest_event_id ?? null,
         citations: selectedCitations,
-        review_mode: detail.lane === "labeling_round" ? "blind_labeling" : "standard",
+        // Blind mode belongs to the packet case itself. A flag from a Judge
+        // blind pair page lands on the entry's own split case, which is not in
+        // the round, so it goes in standard mode (else the server refuses it
+        // as "not in the current Judge blind round").
+        review_mode: sameCase && detail.lane === "labeling_round" ? "blind_labeling" : "standard",
       });
       // The message names its own entries, so it still reads right when it
       // sits above the next case after the queue advances.
