@@ -1,0 +1,150 @@
+{
+  "centre": 5308,
+  "steps": 1,
+  "cap": 300,
+  "hubs": "stop",
+  "others": "on",
+  "widen": [],
+  "nodes": [
+    {
+      "id": 5308, "step": 0, "name": "Giuseppe Frescobaldi",
+      "name_fields": {"first_name": "Giuseppe", "father_mother": "Lorenzo", "grandfather": null, "last_name": "Frescobaldi", "nickname": null},
+      "kind": "person", "hub": false, "woman": false,
+      "acts_in_view": 3, "acts_total": 3, "roles": ["gp"],
+      "first_year": 1669, "last_year": 1690, "undated_acts": 0,
+      "parent": null, "widened": false
+    },
+    {
+      "id": 5155, "step": 1, "name": "Gabbriello Riccardi",
+      "name_fields": {"first_name": "Gabbriello", "father_mother": null, "grandfather": null, "last_name": "Riccardi", "nickname": null},
+      "kind": "person", "hub": true, "woman": false,
+      "acts_in_view": 2, "acts_total": 42, "roles": ["lp"],
+      "first_year": 1669, "last_year": 1671, "undated_acts": 0,
+      "parent": null, "widened": false
+    },
+    {
+      "id": 12319, "step": 1, "name": "Francesco Riccardi",
+      "name_fields": {"first_name": "Francesco", "father_mother": null, "grandfather": null, "last_name": "Riccardi", "nickname": null},
+      "kind": "person", "hub": false, "woman": false,
+      "acts_in_view": 2, "acts_total": 20, "roles": ["lp"],
+      "first_year": 1669, "last_year": 1671, "undated_acts": 0,
+      "parent": null, "widened": false
+    },
+    {
+      "id": 7516, "step": 1, "name": "Carlo Taddei",
+      "name_fields": {"first_name": "Carlo", "father_mother": null, "grandfather": null, "last_name": "Taddei", "nickname": null},
+      "kind": "person", "hub": false, "woman": false,
+      "acts_in_view": 1, "acts_total": 6, "roles": ["lp"],
+      "first_year": 1669, "last_year": 1669, "undated_acts": 0,
+      "parent": null, "widened": false
+    },
+    {
+      "id": 7812, "step": 1, "name": "Piero Niccolini",
+      "name_fields": {"first_name": "Piero", "father_mother": null, "grandfather": null, "last_name": "Niccolini", "nickname": null},
+      "kind": "person", "hub": false, "woman": false,
+      "acts_in_view": 1, "acts_total": 9, "roles": ["lp"],
+      "first_year": 1669, "last_year": 1669, "undated_acts": 0,
+      "parent": null, "widened": false
+    },
+    {
+      "id": 8089, "step": 1, "name": "Lorenzo Niccolini",
+      "name_fields": {"first_name": "Lorenzo", "father_mother": null, "grandfather": null, "last_name": "Niccolini", "nickname": null},
+      "kind": "person", "hub": false, "woman": false,
+      "acts_in_view": 1, "acts_total": 4, "roles": ["lp"],
+      "first_year": 1669, "last_year": 1669, "undated_acts": 0,
+      "parent": null, "widened": false
+    },
+    {
+      "id": 8278, "step": 1, "name": "Matteo da Romena",
+      "name_fields": {"first_name": "Matteo", "father_mother": "Paolo", "grandfather": null, "last_name": "da Romena", "nickname": null},
+      "kind": "person", "hub": false, "woman": false,
+      "acts_in_view": 1, "acts_total": 1, "roles": ["gp"],
+      "first_year": 1669, "last_year": 1669, "undated_acts": 0,
+      "parent": null, "widened": false
+    },
+    {
+      "id": 11303, "step": 1, "name": "Francesco Buonaventura Feducci",
+      "name_fields": {"first_name": "Francesco Buonaventura", "father_mother": null, "grandfather": null, "last_name": "Feducci", "nickname": null},
+      "kind": "person", "hub": false, "woman": false,
+      "acts_in_view": 1, "acts_total": 1, "roles": ["gp"],
+      "first_year": 1669, "last_year": 1669, "undated_acts": 0,
+      "parent": null, "widened": false
+    },
+    {
+      "id": 11477, "step": 1, "name": "Francesco Riccardi",
+      "name_fields": {"first_name": "Francesco", "father_mother": null, "grandfather": null, "last_name": "Riccardi", "nickname": null},
+      "kind": "person", "hub": true, "woman": false,
+      "acts_in_view": 1, "acts_total": 42, "roles": ["lp"],
+      "first_year": 1690, "last_year": 1690, "undated_acts": 0,
+      "parent": null, "widened": false
+    }
+  ],
+  "ties": [
+    {"a": 5308, "b": 5155, "acts": [3990, 3278]},
+    {"a": 5308, "b": 12319, "acts": [3990, 3278]},
+    {"a": 5308, "b": 7516, "acts": [3990]},
+    {"a": 5308, "b": 7812, "acts": [3990]},
+    {"a": 5308, "b": 8089, "acts": [3990]},
+    {"a": 5308, "b": 8278, "acts": [3990]},
+    {"a": 5308, "b": 11303, "acts": [3990]},
+    {"a": 5308, "b": 11477, "acts": [4364]},
+    {"a": 5155, "b": 12319, "acts": [3990, 3278]},
+    {"a": 5155, "b": 7516, "acts": [3990]},
+    {"a": 5155, "b": 7812, "acts": [3990]},
+    {"a": 5155, "b": 8089, "acts": [3990]},
+    {"a": 5155, "b": 8278, "acts": [3990]},
+    {"a": 5155, "b": 11303, "acts": [3990]},
+    {"a": 7516, "b": 7812, "acts": [3990]},
+    {"a": 7516, "b": 8089, "acts": [3990]},
+    {"a": 7516, "b": 8278, "acts": [3990]},
+    {"a": 7516, "b": 11303, "acts": [3990]},
+    {"a": 7516, "b": 12319, "acts": [3990]},
+    {"a": 7812, "b": 8089, "acts": [3990]},
+    {"a": 7812, "b": 8278, "acts": [3990]},
+    {"a": 7812, "b": 11303, "acts": [3990]},
+    {"a": 7812, "b": 12319, "acts": [3990]},
+    {"a": 8089, "b": 8278, "acts": [3990]},
+    {"a": 8089, "b": 11303, "acts": [3990]},
+    {"a": 8089, "b": 12319, "acts": [3990]},
+    {"a": 8278, "b": 11303, "acts": [3990]},
+    {"a": 8278, "b": 12319, "acts": [3990]},
+    {"a": 11303, "b": 12319, "acts": [3990]}
+  ],
+  "acts": [
+    {"id": 3990, "date": "1669-10-03", "year": 1669, "firm_name": "Mario Morelli e compagni",
+     "places": ["Firenze"], "places_inferred": false, "activity": "negozio di arte di seta",
+     "currency": "ducati di lire 7 per ducato", "total": 24000, "signers_live": 8, "signers_in_view": 8},
+    {"id": 3278, "date": "1671-10-12", "year": 1671, "firm_name": "Mario Morelli e compagni",
+     "places": ["Firenze"], "places_inferred": false, "activity": "negozio di arte di seta",
+     "currency": "ducati di moneta di lire 7 per ducato", "total": 24000, "signers_live": 3, "signers_in_view": 3},
+    {"id": 4364, "date": "1690-09-18", "year": 1690, "firm_name": "Mario Morelli e compagni",
+     "places": ["Firenze"], "places_inferred": false, "activity": "negozio di arte di seta",
+     "currency": "ducati di lire 7 per ducato", "total": 50000, "signers_live": 2, "signers_in_view": 2}
+  ],
+  "appearances": [
+    {"person": 5308, "act": 3990, "role": "gp", "cash": 2000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false},
+    {"person": 5155, "act": 3990, "role": "lp", "cash": 18000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true},
+    {"person": 12319, "act": 3990, "role": "lp", "cash": 18000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true},
+    {"person": 7516, "act": 3990, "role": "lp", "cash": 1500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false},
+    {"person": 7812, "act": 3990, "role": "lp", "cash": 2500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true},
+    {"person": 8089, "act": 3990, "role": "lp", "cash": 2500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true},
+    {"person": 8278, "act": 3990, "role": "gp", "cash": 0, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false},
+    {"person": 11303, "act": 3990, "role": "gp", "cash": 0, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false},
+    {"person": 5308, "act": 3278, "role": "gp", "cash": 4500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false},
+    {"person": 5155, "act": 3278, "role": "lp", "cash": 19500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true},
+    {"person": 12319, "act": 3278, "role": "lp", "cash": 19500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true},
+    {"person": 5308, "act": 4364, "role": "gp", "cash": 9365, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false},
+    {"person": 11477, "act": 4364, "role": "lp", "cash": 40725, "non_cash": null, "heirs_of": false, "proxy": true, "joint": false}
+  ],
+  "counts": {"reached": 9, "drawn": 9, "persons": 9, "others": 0, "hubs": 2, "acts": 3, "ties": 29},
+  "cut": null,
+  "sentence": "Who signed acts together with Giuseppe Frescobaldi, entry 5308?",
+  "answer": "8 co-signers on 3 acts, 1669–1690; 9 entries within one step. Person entries are counted as entered; one person may have several.",
+  "how": [
+    "Entries as entered, not yet reviewed as people; a tie is an act signed together.",
+    "Acts of entry 5308: 3 › co-signers: 8 › ties among the 9 entries: 29.",
+    "Entries on more than 20 acts (22 in the corpus; 2 in this circle) are drawn but not widened through; the line at 20 is a readability cut, not a break in the data.",
+    "Hidden records are left out.",
+    "Position is the layout's and nothing more."
+  ]
+}

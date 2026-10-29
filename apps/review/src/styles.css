@@ -11780,3 +11780,486 @@ a.find-rail-item {
   margin-top: 18px;
   padding-top: 4px;
 }
+
+/* Network */
+
+/* The Network view (docs/network/step1_contract.md §3): the Database page's
+   grid with a third column for the side table. The rail reuses .db-rail; the
+   rules on .db-browser:not(.pl-browser) still narrow the rail under 1200 px
+   and stack everything under 800 px. */
+.db-browser.nw-browser {
+  grid-template-columns: 340px minmax(0, 1fr) 560px;
+}
+
+.nw-rail-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+  padding: 14px 18px 20px;
+}
+
+.nw-sentence {
+  color: #f8f3ea;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.05rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.nw-answer {
+  color: #cbbdab;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.nw-control-label {
+  color: #9a8a78;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0 0 6px;
+  text-transform: uppercase;
+}
+
+.nw-tabs-col {
+  flex-direction: column;
+}
+
+.nw-tabs-col .db-tab {
+  flex: none;
+  text-align: left;
+}
+
+.nw-check {
+  align-items: flex-start;
+  color: #e9dfd0;
+  cursor: pointer;
+  display: flex;
+  font-size: 0.82rem;
+  gap: 8px;
+  line-height: 1.35;
+}
+
+.nw-check input {
+  flex: none;
+  margin: 3px 0 0;
+}
+
+.nw-widened {
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.nw-hits {
+  border-top: 1px solid #2a221b;
+  flex: none;
+  margin: 2px -8px 0;
+  max-height: 40vh;
+  padding: 6px 0 0;
+}
+
+.nw-main {
+  height: 100%;
+  overflow: auto;
+  padding: 22px 26px 32px;
+}
+
+.nw-landing {
+  margin: 0 auto;
+  max-width: 560px;
+  padding-top: 40px;
+}
+
+.nw-landing h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 500;
+  margin: 8px 0 12px;
+}
+
+.nw-landing p {
+  line-height: 1.5;
+}
+
+.nw-error {
+  margin: 0;
+}
+
+.nw-stage-wrap.is-updating {
+  opacity: 0.55;
+}
+
+.nw-stage {
+  background: #fffdf9;
+  border: 1px solid #eadfcc;
+  border-radius: 10px;
+  position: relative;
+}
+
+.nw-stage svg {
+  display: block;
+  width: 100%;
+}
+
+.nw-line {
+  fill: none;
+  stroke: #c9bba6;
+  stroke-linecap: round;
+  transition: opacity 120ms ease;
+}
+
+.nw-line.is-tie {
+  opacity: 0.7;
+}
+
+.nw-line.is-dim {
+  opacity: 0.18;
+}
+
+.nw-line.is-active,
+.nw-line.is-selected {
+  opacity: 1;
+  stroke: #b07a47;
+}
+
+.nw-hit-line {
+  cursor: help;
+  fill: none;
+  stroke: transparent;
+  stroke-width: 10;
+}
+
+.nw-node {
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.nw-node.is-dim {
+  opacity: 0.3;
+}
+
+.nw-mark {
+  fill: #7a4a26;
+  fill-opacity: 0.82;
+  stroke: #f6efe3;
+  stroke-width: 0.9;
+}
+
+.nw-mark.is-heirs {
+  fill: #fffdf9;
+  fill-opacity: 1;
+  stroke: #7a4a26;
+  stroke-width: 1.4;
+}
+
+.nw-node.is-hover .nw-mark {
+  fill-opacity: 1;
+}
+
+.nw-node.is-centre .nw-mark {
+  fill-opacity: 1;
+  stroke: #241d18;
+  stroke-width: 1.6;
+}
+
+.nw-node.is-selected .nw-mark {
+  fill: #d6aa7d;
+  fill-opacity: 1;
+  stroke: #241d18;
+  stroke-width: 1.6;
+}
+
+.nw-node.is-signer .nw-mark {
+  stroke: #d6aa7d;
+  stroke-width: 2.2;
+}
+
+.nw-hub-ring {
+  fill: none;
+  opacity: 0.85;
+  stroke: #7a4a26;
+  stroke-width: 0.8;
+}
+
+.nw-hit {
+  fill: transparent;
+}
+
+/* Every label wears a halo in the stage colour, so it stays legible where a
+   line passes beneath it. */
+.nw-label {
+  fill: #241d18;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  paint-order: stroke;
+  pointer-events: none;
+  stroke: #fffdf9;
+  stroke-linejoin: round;
+  stroke-width: 3.5px;
+}
+
+.nw-label.is-hub {
+  font-weight: 600;
+}
+
+.nw-label.is-centre {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* The house dark balloon, as the business circle's. */
+.nw-tip {
+  background: #302720;
+  border-radius: 9px;
+  box-shadow: 0 3px 14px rgba(40, 25, 15, 0.25);
+  color: #efe4d5;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.74rem;
+  gap: 3px;
+  line-height: 1.4;
+  max-width: 340px;
+  padding: 9px 11px;
+  pointer-events: none;
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 10px));
+  width: max-content;
+  z-index: 30;
+}
+
+.nw-tip.is-below {
+  transform: translate(-50%, 10px);
+}
+
+.nw-tip.is-left {
+  transform: translate(-12px, calc(-100% - 10px));
+}
+
+.nw-tip.is-left.is-below {
+  transform: translate(-12px, 10px);
+}
+
+.nw-tip.is-right {
+  transform: translate(calc(-100% + 12px), calc(-100% - 10px));
+}
+
+.nw-tip.is-right.is-below {
+  transform: translate(calc(-100% + 12px), 10px);
+}
+
+.nw-tip strong {
+  color: #fff;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+
+.nw-tip-id {
+  color: #d6aa7d;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.nw-tip-more {
+  color: #c9b899;
+}
+
+.nw-key {
+  color: #6f6052;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  gap: 6px 16px;
+  margin: 8px 4px 0;
+}
+
+.nw-key span {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.nw-key-dot,
+.nw-key-ring,
+.nw-key-square,
+.nw-key-diamond,
+.nw-key-line {
+  display: inline-block;
+  flex: none;
+}
+
+.nw-key-dot {
+  background: #7a4a26;
+  border: 1px solid #f6efe3;
+  border-radius: 50%;
+  height: 10px;
+  opacity: 0.85;
+  width: 10px;
+}
+
+.nw-key-ring {
+  border: 1px solid #7a4a26;
+  border-radius: 50%;
+  height: 14px;
+  position: relative;
+  width: 14px;
+}
+
+.nw-key-ring::after {
+  background: #7a4a26;
+  border-radius: 50%;
+  content: "";
+  height: 8px;
+  left: 3px;
+  opacity: 0.85;
+  position: absolute;
+  top: 3px;
+  width: 8px;
+}
+
+.nw-key-square {
+  background: #7a4a26;
+  height: 10px;
+  opacity: 0.85;
+  width: 10px;
+}
+
+.nw-key-diamond {
+  border: 1.4px solid #7a4a26;
+  height: 9px;
+  transform: rotate(45deg);
+  width: 9px;
+}
+
+.nw-key-line {
+  background: #c9bba6;
+  height: 2px;
+  width: 18px;
+}
+
+.nw-how {
+  margin-top: 14px;
+}
+
+.nw-side {
+  background: #fffaf3;
+  border-left: 1px solid #eadfcc;
+  height: 100%;
+  overflow: auto;
+  padding: 22px 22px 32px;
+}
+
+.nw-side-empty,
+.nw-side-note {
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.nw-side-head {
+  margin-bottom: 14px;
+}
+
+.nw-side-head h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.2rem;
+  font-weight: 500;
+  margin: 2px 0 6px;
+}
+
+.nw-side-head h3 a {
+  color: inherit;
+}
+
+.nw-side-id {
+  color: #a57a4b;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.nw-side-facts {
+  color: #2e2620;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
+.nw-side-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nw-side-actions .pill-button {
+  font-size: 0.82rem;
+  padding: 6px 12px;
+}
+
+.nw-table {
+  font-size: 0.82rem;
+}
+
+.nw-table th,
+.nw-table td {
+  vertical-align: top;
+}
+
+/* Under 1400 px the side table moves under the figure, in the main column;
+   the rail keeps its height. */
+@media (max-width: 1400px) {
+  .db-browser.nw-browser {
+    grid-template-columns: 340px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .nw-rail {
+    grid-row: 1 / 3;
+  }
+
+  .nw-main {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .nw-side {
+    border-left: none;
+    border-top: 1px solid #eadfcc;
+    grid-column: 2;
+    grid-row: 2;
+    height: auto;
+    max-height: 45vh;
+  }
+}
+
+@media (max-width: 1200px) {
+  .db-browser.nw-browser {
+    grid-template-columns: 270px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 800px) {
+  .nw-rail-body {
+    flex: none;
+    overflow: visible;
+  }
+
+  .nw-main,
+  .nw-side {
+    flex: none;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .nw-main {
+    padding: 16px 14px 20px;
+  }
+
+  .nw-side {
+    padding: 16px 14px 24px;
+  }
+}

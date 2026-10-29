@@ -13,6 +13,7 @@ import Hub from "./pages/Hub";
 import People from "./pages/People";
 import Reference from "./pages/Reference";
 import Reconcile from "./pages/Reconcile";
+import Network from "./pages/Network";
 
 const REVIEWER_KEY = "floracco_reviewer";
 
@@ -90,6 +91,8 @@ export default function App() {
           <Route path="/reference/:kind/:termId" element={isToolHidden("reference") ? NOT_IN_PILOT : <Reference />} />
           <Route path="/analysis" element={isToolHidden("analysis") ? NOT_IN_PILOT : <Analysis />} />
           <Route path="/analysis/:view" element={isToolHidden("analysis") ? NOT_IN_PILOT : <Analysis />} />
+          <Route path="/network" element={isToolHidden("network") ? NOT_IN_PILOT : <Network />} />
+          <Route path="/network/person/:id" element={isToolHidden("network") ? NOT_IN_PILOT : <Network />} />
           <Route path="*" element={<ComingSoon title="Page not found" blurb="There is no page at this address." />} />
         </Routes>
         </ErrorBoundary>

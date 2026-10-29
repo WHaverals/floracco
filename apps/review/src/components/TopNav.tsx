@@ -8,6 +8,7 @@ const LINKS = [
   { to: "/people", label: "People", key: "people" },
   { to: "/reference", label: "Reference", key: "reference" },
   { to: "/analysis", label: "Analysis", key: "analysis" },
+  { to: "/network", label: "Network", key: "network" },
 ];
 
 /* Global search lives on the home page; every other page carries this compact

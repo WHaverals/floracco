@@ -14,7 +14,7 @@
  */
 export const HIDDEN_TOOLS: ReadonlySet<string> = import.meta.env.DEV
   ? new Set<string>()
-  : new Set<string>(["reconcile"]);
+  : new Set<string>(["reconcile", "network"]);
 
 export function isToolHidden(key: string): boolean {
   return HIDDEN_TOOLS.has(key);

@@ -37,6 +37,12 @@ const TOOLS = [
     blurb: "Guided queries, a saved library, CSV, and charts.",
   },
   {
+    to: "/network",
+    key: "network",
+    title: "Network",
+    blurb: "People as nodes, the acts they signed together as ties.",
+  },
+  {
     to: "/reconcile",
     key: "reconcile",
     title: "Attach Word summaries",

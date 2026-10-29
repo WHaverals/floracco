@@ -653,3 +653,21 @@ export function createInvestor(
 }> {
   return request("/api/db/create/investor", { method: "POST", body: JSON.stringify(payload) });
 }
+
+// --- Network view -------------------------------------------------------------
+
+/** The circle of one entry (docs/network/step1_contract.md §2). A GET, as every
+ * read outside the Analysis queries. */
+export function loadNetworkCircle(
+  personId: number,
+  params: { steps: number; cap: number; hubs: string; others: string; widen: number[] },
+): Promise<import("./types").NetworkCircle> {
+  const query = new URLSearchParams({
+    steps: String(params.steps),
+    cap: String(params.cap),
+    hubs: params.hubs,
+    others: params.others,
+  });
+  if (params.widen.length) query.set("widen", params.widen.join("."));
+  return request(`/api/network/circle/${personId}?${query.toString()}`);
+}

@@ -9845,6 +9845,657 @@ def analysis_find_values(
         connection.close()
 
 
+# --- Network view --------------------------------------------------------------
+# The circle of one person entry (docs/network/step1_contract.md; the why in
+# docs/network/scope_2026-10-29.md §3.10, §3.12, §4.2): entries as entered are
+# the nodes, acts signed together the ties. Ring 0 is the centre, ring 1 every
+# entry sharing a live act with it, ring 2 every entry sharing a live act with
+# a ring-1 entry. Read-only, one connection per request, ring by ring with
+# IN lists; never the spine, never person_cache.db. Hidden rows read as absent.
+
+NETWORK_STEPS = (1, 2)
+NETWORK_CAP_LEAST, NETWORK_CAP_DEFAULT, NETWORK_CAP_MOST = 50, 300, 600
+NETWORK_HUBS = ("stop", "through", "off")
+NETWORK_OTHERS = ("on", "off")
+
+# Every sentence the circle sends to the screen; a (one, many) pair is a count's
+# noun. The client turns role codes into words through utils/roles.ts.
+NETWORK_WORDS: dict[str, Any] = {
+    "sentence": "Who signed acts together with {name}, entry {id}?",
+    "answer": "{co_signers} on {acts}{years}; {entries}.",
+    "standing": "Person entries are counted as entered; one person may have several.",
+    "entries": "{count}{others} within {steps}",
+    "entries_cut": "showing {drawn} of {count}{others} within {steps}",
+    "entries_others": " ({persons} and {others})",
+    "years": ", {first}–{last}",
+    "year": ", {year}",
+    "steps": {1: "one step", 2: "two steps"},
+    "co_signer": ("co-signer", "co-signers"),
+    "act": ("act", "acts"),
+    "entry": ("entry", "entries"),
+    "person_entry": ("person entry", "person entries"),
+    "other": (
+        "institution, estate, shareholder group or placeholder",
+        "institutions, estates, shareholder groups or placeholders",
+    ),
+    "how_entries": "Entries as entered, not yet reviewed as people; a tie is an act signed together.",
+    "how_steps_1": "Acts of entry {id}: {acts} › co-signers: {ring1}{widened} › ties among the {drawn} entries: {ties}.",
+    "how_steps_2": (
+        "Acts of entry {id}: {acts} › co-signers: {ring1} › their co-signers: {ring2}{widened} › "
+        "ties among the {drawn} entries: {ties}."
+    ),
+    "how_widened": " › widened by hand from entry {id}: {added}",
+    "how_cut": (
+        "Of the {reached} entries reached, {drawn} are drawn: the centre, its co-signers and the entries "
+        "widened by hand whole, then entries by acts shared with their parent, earliest shared act and lowest id."
+    ),
+    "how_hubs_stop": (
+        "Entries on more than {threshold} acts ({corpus} in the corpus; {circle} in this circle) are drawn "
+        "but not widened through{except}; the line at {threshold} is a readability cut, not a break in the data."
+    ),
+    "how_hubs_except": ", except {entries}, widened by hand",
+    "how_hubs_through": (
+        "Entries on more than {threshold} acts ({corpus} in the corpus; {circle} in this circle) are widened "
+        "through; the line at {threshold} is a readability cut, not a break in the data."
+    ),
+    "how_hubs_off": (
+        "Entries on more than {threshold} acts ({corpus} in the corpus) are left out; "
+        "the line at {threshold} is a readability cut, not a break in the data."
+    ),
+    "how_others_off": "Institutions, estates, shareholder groups and placeholders are left out.",
+    "how_hidden": "Hidden records are left out.",
+    "how_position": "Position is the layout's and nothing more.",
+    "no_live_appearance": "No live appearance for entry {id}.",
+    "hub_centre_off": "This entry is on more than {threshold} acts; choose hubs=stop or hubs=through.",
+    "other_centre_off": "This entry is an institution, estate, shareholder group or placeholder; choose others=on.",
+    "bad_entry": "The entry id must be a whole number.",
+    "bad_steps": "steps must be 1 or 2.",
+    "bad_cap": "cap must be a whole number from 50 to 600.",
+    "bad_hubs": "hubs must be stop, through or off.",
+    "bad_others": "others must be on or off.",
+    "bad_widen": "widen must be entry ids joined by a full stop.",
+}
+
+
+def network_params(person_id: str, steps: str, cap: str, hubs: str, others: str, widen: str) -> dict[str, Any]:
+    """The request's parameters, parsed; a bad one is refused with a plain sentence."""
+
+    def refuse(key: str) -> None:
+        raise HTTPException(status_code=400, detail=NETWORK_WORDS[key])
+
+    if not re.fullmatch(r"\d{1,9}", person_id.strip()):
+        refuse("bad_entry")
+    if steps.strip() not in {str(n) for n in NETWORK_STEPS}:
+        refuse("bad_steps")
+    if not re.fullmatch(r"\d{1,4}", cap.strip()) or not NETWORK_CAP_LEAST <= int(cap) <= NETWORK_CAP_MOST:
+        refuse("bad_cap")
+    if hubs not in NETWORK_HUBS:
+        refuse("bad_hubs")
+    if others not in NETWORK_OTHERS:
+        refuse("bad_others")
+    widen_ids: list[int] = []
+    for part in (p for p in widen.strip().split(".") if p != ""):
+        if not re.fullmatch(r"\d{1,9}", part):
+            refuse("bad_widen")
+        if int(part) not in widen_ids:
+            widen_ids.append(int(part))
+    return {
+        "centre": int(person_id),
+        "steps": int(steps),
+        "cap": int(cap),
+        "hubs": hubs,
+        "others": others,
+        "widen": widen_ids,
+    }
+
+
+def network_marks(values: Iterable[Any]) -> str:
+    """The placeholders of one IN (...) list."""
+    return ",".join("?" for _ in values)
+
+
+def network_year(date: Any) -> int | None:
+    """The year of a stored registration date; None for 0000-00-00 and anything that is not a date."""
+    text = str(date or "")
+    return int(text[:4]) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) and text[:4] != "0000" else None
+
+
+def network_amount(value: Any) -> int | float | None:
+    """A stored amount as a number; None when nothing is stored."""
+    if value is None or str(value).strip() == "":
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else value
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        try:
+            number = float(str(value).strip())
+        except ValueError:
+            return None
+        return int(number) if number.is_integer() else number
+
+
+def network_earliest(acts: Iterable[int], dates: dict[int, str]) -> str:
+    """The earliest registration date among these acts; an undated act sorts after every dated one."""
+    return min(
+        (str(dates.get(act)) if network_year(dates.get(act)) is not None else "9999-99-99" for act in acts),
+        default="9999-99-99",
+    )
+
+
+def network_hub_ids(connection: sqlite3.Connection) -> set[int]:
+    """Entries on strictly more than HUB_CONTRACT_THRESHOLD distinct live acts, computed live (22 today)."""
+    from workflows.person_features import HUB_CONTRACT_THRESHOLD
+
+    return {
+        int(row[0])
+        for row in connection.execute(
+            """
+            SELECT i.person_id
+            FROM investor i
+            JOIN contract c ON c.contract_id = i.contract_id
+            JOIN person p ON p.person_id = i.person_id
+            WHERE i.is_deleted = 0 AND c.is_deleted = 0 AND p.is_deleted = 0
+            GROUP BY i.person_id
+            HAVING COUNT(DISTINCT i.contract_id) > ?
+            """,
+            (HUB_CONTRACT_THRESHOLD,),
+        )
+    }
+
+
+def network_acts_of(connection: sqlite3.Connection, person_ids: list[int]) -> list[tuple[int, int, str]]:
+    """The distinct live (entry, act, date) appearances of these entries on live acts."""
+    if not person_ids:
+        return []
+    return [
+        (int(person), int(act), date)
+        for person, act, date in connection.execute(
+            f"""
+            SELECT DISTINCT i.person_id, i.contract_id, c.registration_date
+            FROM investor i
+            JOIN contract c ON c.contract_id = i.contract_id
+            WHERE i.person_id IN ({network_marks(person_ids)}) AND i.is_deleted = 0 AND c.is_deleted = 0
+            """,
+            person_ids,
+        )
+    ]
+
+
+def network_signers(connection: sqlite3.Connection, act_ids: list[int]) -> list[tuple[int, int]]:
+    """The distinct live (entry, act) appearances on these acts; hidden entries read as absent."""
+    if not act_ids:
+        return []
+    return [
+        (int(person), int(act))
+        for person, act in connection.execute(
+            f"""
+            SELECT DISTINCT i.person_id, i.contract_id
+            FROM investor i
+            JOIN person p ON p.person_id = i.person_id
+            WHERE i.contract_id IN ({network_marks(act_ids)}) AND i.is_deleted = 0 AND p.is_deleted = 0
+            """,
+            act_ids,
+        )
+    ]
+
+
+def network_expand(
+    connection: sqlite3.Connection, spec: dict[str, Any], hub_ids: set[int], other_ids: set[int]
+) -> tuple[dict[int, dict[str, Any]], dict[int, str], list[int]]:
+    """Breadth-first over the live co-signing graph, one ring at a time with IN
+    lists. Returns every entry reached (its step, its parent, the acts shared
+    with that parent, whether a hand widening added it), the dates of the acts
+    walked, and the widen ids that applied (those already in the circle)."""
+    centre, hubs = spec["centre"], spec["hubs"]
+    blocked: set[int] = set()
+    if hubs == "off":
+        blocked |= hub_ids
+    if spec["others"] == "off":
+        blocked |= other_ids
+    members: dict[int, dict[str, Any]] = {centre: {"step": 0, "parent": None, "shared": set(), "widened": False}}
+    dates: dict[int, str] = {}
+
+    def grow(parents: list[int], step: int, widened: bool) -> list[int]:
+        on_act: dict[int, list[int]] = {}
+        for parent, act, date in network_acts_of(connection, parents):
+            on_act.setdefault(act, []).append(parent)
+            dates[act] = date
+        shared: dict[int, dict[int, set[int]]] = {}
+        for entry, act in network_signers(connection, list(on_act)):
+            if entry in members or entry in blocked:
+                continue
+            for parent in on_act[act]:
+                shared.setdefault(entry, {}).setdefault(parent, set()).add(act)
+        added: list[int] = []
+        for entry, by_parent in shared.items():
+            # the parent: most acts shared, then earliest shared act, then lowest id
+            parent = min(by_parent, key=lambda p: (-len(by_parent[p]), network_earliest(by_parent[p], dates), p))
+            members[entry] = {"step": step, "parent": parent, "shared": by_parent[parent], "widened": widened}
+            added.append(entry)
+        return added
+
+    ring = [centre]
+    for step in range(1, spec["steps"] + 1):
+        # the centre always expands; with hubs=stop a hub on the ring is drawn, its co-signers not added
+        ring = grow([p for p in ring if p == centre or hubs != "stop" or p not in hub_ids], step, False)
+    applied: list[int] = []
+    for entry in spec["widen"]:
+        if entry in members:
+            applied.append(entry)
+            grow([entry], members[entry]["step"] + 1, True)
+    return members, dates, applied
+
+
+def network_cut(
+    members: dict[int, dict[str, Any]], dates: dict[int, str], cap: int, pinned: set[int]
+) -> tuple[list[int], dict[str, int] | None]:
+    """The drawn entries. Ring 0 and ring 1 stay whole, as do the entries widened
+    by hand (so no drawn entry hangs from an undrawn parent); the rest are kept
+    by acts shared with their parent, descending, then earliest shared act, then
+    lowest id, until the cap."""
+    whole = [entry for entry, m in members.items() if m["step"] <= 1 or entry in pinned]
+    keep = set(whole)
+    rest = sorted(
+        (entry for entry in members if entry not in keep),
+        key=lambda entry: (-len(members[entry]["shared"]), network_earliest(members[entry]["shared"], dates), entry),
+    )
+    if len(members) <= cap:
+        return whole + rest, None
+    drawn = whole + rest[: max(cap - len(whole), 0)]
+    return drawn, {"reached": len(members), "drawn": len(drawn)}
+
+
+def network_words(
+    spec: dict[str, Any],
+    centre_name: str,
+    centre_years: list[int | None],
+    counts: dict[str, int],
+    cut: dict[str, int] | None,
+    rings: dict[str, int],
+    widened: list[tuple[int, int]],
+    hub_ids: set[int],
+    threshold: int,
+) -> dict[str, Any]:
+    """The sentence, the answer and the how lines, every word from NETWORK_WORDS."""
+    words = NETWORK_WORDS
+    centre = spec["centre"]
+    dated = [year for year in centre_years if year is not None]
+    if not dated:
+        years = ""
+    elif min(dated) == max(dated):
+        years = words["year"].format(year=min(dated))
+    else:
+        years = words["years"].format(first=min(dated), last=max(dated))
+    others = ""
+    if counts["others"]:
+        others = words["entries_others"].format(
+            persons=_count_words(counts["persons"], *words["person_entry"]),
+            others=_count_words(counts["others"], *words["other"]),
+        )
+    steps = words["steps"][spec["steps"]]
+    count = _count_words(counts["reached"], *words["entry"])
+    if cut:
+        entries = words["entries_cut"].format(drawn=f"{cut['drawn']:,}", count=count, others=others, steps=steps)
+    else:
+        entries = words["entries"].format(count=count, others=others, steps=steps)
+    answer = words["answer"].format(
+        co_signers=_count_words(rings["ring1"], *words["co_signer"]),
+        acts=_count_words(rings["acts"], *words["act"]),
+        years=years,
+        entries=entries,
+    )
+    widened_text = "".join(words["how_widened"].format(id=entry, added=f"{added:,}") for entry, added in widened)
+    steps_line = words["how_steps_1" if spec["steps"] == 1 else "how_steps_2"].format(
+        id=centre,
+        acts=f"{rings['acts']:,}",
+        ring1=f"{rings['ring1']:,}",
+        ring2=f"{rings['ring2']:,}",
+        widened=widened_text,
+        drawn=f"{counts['drawn']:,}",
+        ties=f"{counts['ties']:,}",
+    )
+    how = [words["how_entries"], steps_line]
+    if cut:
+        how.append(words["how_cut"].format(reached=f"{cut['reached']:,}", drawn=f"{cut['drawn']:,}"))
+    if spec["hubs"] == "stop":
+        widened_hubs = [entry for entry, _added in widened if entry in hub_ids]
+        if len(widened_hubs) == 1:
+            exception = words["how_hubs_except"].format(entries=f"entry {widened_hubs[0]}")
+        elif widened_hubs:
+            exception = words["how_hubs_except"].format(entries="entries " + _join_and([str(e) for e in widened_hubs]))
+        else:
+            exception = ""
+        how.append(
+            words["how_hubs_stop"].format(
+                threshold=threshold, corpus=f"{len(hub_ids):,}", circle=f"{counts['hubs']:,}", **{"except": exception}
+            )
+        )
+    elif spec["hubs"] == "through":
+        how.append(
+            words["how_hubs_through"].format(threshold=threshold, corpus=f"{len(hub_ids):,}", circle=f"{counts['hubs']:,}")
+        )
+    else:
+        how.append(words["how_hubs_off"].format(threshold=threshold, corpus=f"{len(hub_ids):,}"))
+    if spec["others"] == "off":
+        how.append(words["how_others_off"])
+    how += [words["how_hidden"], words["how_position"]]
+    return {
+        "sentence": words["sentence"].format(name=centre_name, id=centre),
+        "answer": f"{answer} {words['standing']}",
+        "how": how,
+    }
+
+
+def network_circle_data(connection: sqlite3.Connection, spec: dict[str, Any]) -> dict[str, Any]:
+    """The circle of one entry, as docs/network/step1_contract.md §2 specifies it,
+    from one read-only connection: the reach ring by ring, the cap, then the
+    nodes, ties, acts and appearances of the drawn entries, and the words."""
+    from workflows.person_features import HUB_CONTRACT_THRESHOLD, classify_entity_kind
+
+    centre = spec["centre"]
+    live = connection.execute(
+        """
+        SELECT 1 FROM investor i
+        JOIN contract c ON c.contract_id = i.contract_id
+        JOIN person p ON p.person_id = i.person_id
+        WHERE i.person_id = ? AND i.is_deleted = 0 AND c.is_deleted = 0 AND p.is_deleted = 0
+        LIMIT 1
+        """,
+        (centre,),
+    ).fetchone()
+    if live is None:
+        raise HTTPException(status_code=404, detail=NETWORK_WORDS["no_live_appearance"].format(id=centre))
+    hub_ids = network_hub_ids(connection)
+    if spec["hubs"] == "off" and centre in hub_ids:
+        raise HTTPException(status_code=400, detail=NETWORK_WORDS["hub_centre_off"].format(threshold=HUB_CONTRACT_THRESHOLD))
+    # The non-person rows are read only when they are to be left out (about 140 ms
+    # on the live corpus); each drawn node's kind comes from the same classifier.
+    other_ids = set(non_person_ids(connection)) if spec["others"] == "off" else set()
+    if centre in other_ids:
+        raise HTTPException(status_code=400, detail=NETWORK_WORDS["other_centre_off"])
+
+    members, dates, applied = network_expand(connection, spec, hub_ids, other_ids)
+    drawn, cut = network_cut(members, dates, spec["cap"], set(applied))
+
+    # Every live act of the drawn entries: in view are those at least two drawn
+    # entries share, plus every act of the centre.
+    acts_total: dict[int, set[int]] = {}
+    on_act: dict[int, set[int]] = {}
+    for entry, act, date in network_acts_of(connection, drawn):
+        acts_total.setdefault(entry, set()).add(act)
+        on_act.setdefault(act, set()).add(entry)
+        dates[act] = date
+    acts_in_view = sorted(act for act, who in on_act.items() if len(who) > 1 or centre in who)
+
+    # Appearances: the live rows of drawn entries on acts in view, with the live
+    # stake of each row on that same act (a stake on another act reads as none).
+    seen: dict[tuple[int, int], dict[str, Any]] = {}
+    if acts_in_view:
+        rows = connection.execute(
+            f"""
+            SELECT i.person_id, i.contract_id, i.investor_id, i.heirs_of, i.via_proxy, i.is_joint,
+                   inv.investment_id, inv.type, inv.investment_cash, inv.investment_non_cash
+            FROM investor i
+            LEFT JOIN investor_group ig ON ig.investor_id = i.investor_id AND ig.is_deleted = 0
+            LEFT JOIN investment inv ON inv.investment_id = ig.investment_id AND inv.is_deleted = 0
+                 AND inv.contract_id = i.contract_id
+            WHERE i.person_id IN ({network_marks(drawn)}) AND i.contract_id IN ({network_marks(acts_in_view)})
+              AND i.is_deleted = 0
+            """,
+            [*drawn, *acts_in_view],
+        )
+        for person, act, investor_id, heirs_of, proxy, joint_flag, stake, role, cash, non_cash in rows:
+            item = seen.setdefault(
+                (int(person), int(act)),
+                {"rows": set(), "stakes": {}, "roles": set(), "heirs_of": False, "proxy": False, "flag": False},
+            )
+            item["rows"].add(int(investor_id))
+            item["heirs_of"] = item["heirs_of"] or heirs_of in (1, "1", True)
+            item["proxy"] = item["proxy"] or proxy in (1, "1", True)
+            item["flag"] = item["flag"] or joint_flag in (1, "1", True)
+            if stake is not None:
+                item["stakes"][int(stake)] = (cash, non_cash)
+                if role not in (None, ""):
+                    item["roles"].add(str(role))
+    stake_ids = sorted({stake for item in seen.values() for stake in item["stakes"]})
+    holders: dict[int, int] = {}
+    if stake_ids:
+        # joint is derived: distinct live entries on the stake, drawn or not
+        holders = {
+            int(stake): int(count)
+            for stake, count in connection.execute(
+                f"""
+                SELECT ig.investment_id, COUNT(DISTINCT i.person_id)
+                FROM investor_group ig
+                JOIN investor i ON i.investor_id = ig.investor_id
+                JOIN person p ON p.person_id = i.person_id
+                WHERE ig.investment_id IN ({network_marks(stake_ids)})
+                  AND ig.is_deleted = 0 AND i.is_deleted = 0 AND p.is_deleted = 0
+                GROUP BY ig.investment_id
+                """,
+                stake_ids,
+            )
+        }
+    appearances: list[dict[str, Any]] = []
+    for (person, act), item in sorted(seen.items()):
+        roles = sorted(item["roles"])
+        cashes = [amount for amount in (network_amount(c) for c, _ in item["stakes"].values()) if amount is not None]
+        non_cashes: list[str] = []
+        for _cash, non_cash in item["stakes"].values():
+            text = str(non_cash).strip() if non_cash is not None else ""
+            if text and text not in non_cashes:
+                non_cashes.append(text)
+        row: dict[str, Any] = {
+            "person": person,
+            "act": act,
+            "role": roles[0] if len(roles) == 1 else ("both" if roles else None),
+            "cash": sum(cashes) if cashes else None,
+            "non_cash": "; ".join(non_cashes) if non_cashes else None,
+            "heirs_of": item["heirs_of"],
+            "proxy": item["proxy"],
+            "joint": item["flag"] or any(holders.get(stake, 0) > 1 for stake in item["stakes"]),
+        }
+        if len(item["rows"]) > 1:
+            row["rows"] = len(item["rows"])
+        appearances.append(row)
+
+    # Nodes.
+    fields = {
+        int(person_id): (first, father, grandfather, last, nickname, woman)
+        for person_id, first, father, grandfather, last, nickname, woman in connection.execute(
+            f"""
+            SELECT person_id, first_name, father_mother, grandfather, last_name, nickname, is_woman
+            FROM person WHERE person_id IN ({network_marks(drawn)})
+            """,
+            drawn,
+        )
+    }
+    by_entry: dict[int, list[int]] = {}
+    for person, act in seen:
+        by_entry.setdefault(person, []).append(act)
+    nodes: list[dict[str, Any]] = []
+    for entry in drawn:
+        first, father, grandfather, last, nickname, woman = fields[entry]
+        m = members[entry]
+        mine = by_entry.get(entry, [])
+        years = [network_year(dates.get(act)) for act in mine]
+        dated_all = [year for year in years if year is not None]
+        # An appearance through heirs is the estate's act, not the entry's: it never
+        # extends the span (review_lane.md §7); it counts only when nothing else is dated.
+        dated = [
+            year for act, year in zip(mine, years) if year is not None and not seen[(entry, act)]["heirs_of"]
+        ] or dated_all
+        roles: set[str] = set()
+        for act in mine:
+            roles |= seen[(entry, act)]["roles"]
+        nodes.append(
+            {
+                "id": entry,
+                "step": m["step"],
+                "name": person_display_name(first, last, nickname, father, grandfather),
+                "name_fields": {
+                    "first_name": first,
+                    "father_mother": father,
+                    "grandfather": grandfather,
+                    "last_name": last,
+                    "nickname": nickname,
+                },
+                "kind": classify_entity_kind(first, father, grandfather, last),
+                "hub": entry in hub_ids,
+                "woman": woman in (1, "1", True),
+                "acts_in_view": len(mine),
+                "acts_total": len(acts_total.get(entry, ())),
+                "roles": sorted(roles),
+                "first_year": min(dated) if dated else None,
+                "last_year": max(dated) if dated else None,
+                "undated_acts": len(years) - len(dated_all),
+                "parent": m["parent"],
+                "widened": m["widened"],
+            }
+        )
+    nodes.sort(
+        key=lambda n: (
+            n["step"],
+            -len(members[n["id"]]["shared"]),
+            network_earliest(members[n["id"]]["shared"], dates),
+            n["id"],
+        )
+    )
+
+    # Acts in view, with their places, and ties among the drawn entries.
+    acts: list[dict[str, Any]] = []
+    ties: list[dict[str, Any]] = []
+    if acts_in_view:
+        stored = {
+            int(cid): (date, firm, total, activity, currency)
+            for cid, date, firm, total, activity, currency in connection.execute(
+                f"""
+                SELECT c.contract_id, c.registration_date, c.firm_name, c.total, ea.activity, cur.currency
+                FROM contract c
+                LEFT JOIN economic_activity ea ON ea.ec_activity_id = c.economic_sector
+                LEFT JOIN currency cur ON cur.currency_id = c.currency_id
+                WHERE c.contract_id IN ({network_marks(acts_in_view)})
+                """,
+                acts_in_view,
+            )
+        }
+        places: dict[int, list[tuple[str, bool]]] = {}
+        for cid, name, inferred in connection.execute(
+            f"""
+            SELECT cp.contract_id, pl.place_name, cp.place_db
+            FROM contract_place cp JOIN place pl ON pl.place_id = cp.place_id
+            WHERE cp.contract_id IN ({network_marks(acts_in_view)}) AND cp.is_deleted = 0
+            ORDER BY cp.contract_id, cp.place_id
+            """,
+            acts_in_view,
+        ):
+            places.setdefault(int(cid), []).append((name, inferred in (1, "1", True)))
+        signers_live = {
+            int(cid): int(count)
+            for cid, count in connection.execute(
+                f"""
+                SELECT i.contract_id, COUNT(DISTINCT i.person_id)
+                FROM investor i JOIN person p ON p.person_id = i.person_id
+                WHERE i.contract_id IN ({network_marks(acts_in_view)}) AND i.is_deleted = 0 AND p.is_deleted = 0
+                GROUP BY i.contract_id
+                """,
+                acts_in_view,
+            )
+        }
+        ties_map: dict[tuple[int, int], list[int]] = {}
+        for cid in acts_in_view:
+            date, firm, total, activity, currency = stored[cid]
+            acts.append(
+                {
+                    "id": cid,
+                    "date": date,
+                    "year": network_year(date),
+                    "firm_name": firm,
+                    "places": [name for name, _inferred in places.get(cid, [])],
+                    "places_inferred": any(inferred for _name, inferred in places.get(cid, [])),
+                    "activity": activity,
+                    "currency": currency,
+                    "total": network_amount(total),
+                    "signers_live": signers_live.get(cid, 0),
+                    "signers_in_view": len(on_act[cid]),
+                }
+            )
+            who = sorted(on_act[cid])
+            for index, a in enumerate(who):
+                for b in who[index + 1 :]:
+                    ties_map.setdefault((a, b), []).append(cid)
+        acts.sort(key=lambda a: (network_earliest([a["id"]], dates), a["id"]))
+        ties = [{"a": a, "b": b, "acts": sorted(shared)} for (a, b), shared in sorted(ties_map.items())]
+
+    counts = {
+        "reached": len(members),
+        "drawn": len(drawn),
+        "persons": sum(1 for n in nodes if n["kind"] == "person"),
+        "others": sum(1 for n in nodes if n["kind"] != "person"),
+        "hubs": sum(1 for n in nodes if n["hub"]),
+        "acts": len(acts),
+        "ties": len(ties),
+    }
+    rings = {
+        "acts": len(acts_total.get(centre, ())),
+        "ring1": sum(1 for m in members.values() if m["step"] == 1),
+        "ring2": sum(1 for m in members.values() if m["step"] == 2 and not m["widened"]),
+    }
+    widened = [
+        (entry, sum(1 for m in members.values() if m["widened"] and m["parent"] == entry)) for entry in applied
+    ]
+    centre_node = nodes[0]
+    words = network_words(
+        spec,
+        centre_node["name"],
+        [centre_node["first_year"], centre_node["last_year"]],
+        counts,
+        cut,
+        rings,
+        widened,
+        hub_ids,
+        HUB_CONTRACT_THRESHOLD,
+    )
+    return {
+        "centre": centre,
+        "steps": spec["steps"],
+        "cap": spec["cap"],
+        "hubs": spec["hubs"],
+        "others": spec["others"],
+        "widen": applied,
+        "nodes": nodes,
+        "ties": ties,
+        "acts": acts,
+        "appearances": appearances,
+        "counts": counts,
+        "cut": cut,
+        **words,
+    }
+
+
+@app.get("/api/network/circle/{person_id}")
+def network_circle(
+    person_id: str, steps: str = "2", cap: str = "300", hubs: str = "stop", others: str = "on", widen: str = ""
+) -> dict[str, Any]:
+    """The circle of one person entry: its co-signers at one or two steps, the
+    acts they signed together and the ties among them (docs/network/
+    step1_contract.md §2). A GET, read-only, one connection per request."""
+    spec = network_params(person_id, steps, cap, hubs, others, widen)
+    connection = _readonly_connection()
+    try:
+        return network_circle_data(connection, spec)
+    except sqlite3.Error as exc:
+        raise _sql_error(exc) from exc
+    finally:
+        connection.close()
+
+
 @app.get("/api/db/record/{table}/{record_id}")
 def db_record(table: str, record_id: str, include_hidden: bool = False) -> dict[str, Any]:
     if table not in DB_BROWSE_TABLES:

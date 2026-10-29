@@ -1455,3 +1455,86 @@ export type InvestorCreatePayload = {
   and_c: boolean;
   note: string;
 };
+
+// --- Network view (docs/network/step1_contract.md §2) --------------------------
+
+export type NetworkHubs = "stop" | "through" | "off";
+export type NetworkKind = "person" | "institution" | "estate" | "collective" | "placeholder";
+
+/** One person entry as entered, drawn as a node. `step` is its ring (0 the centre). */
+export type NetworkNode = {
+  id: number;
+  step: number;
+  name: string;
+  name_fields: {
+    first_name: string | null;
+    father_mother: string | null;
+    grandfather: string | null;
+    last_name: string | null;
+    nickname: string | null;
+  };
+  kind: NetworkKind;
+  hub: boolean;
+  woman: boolean;
+  acts_in_view: number;
+  acts_total: number;
+  /** distinct stored role codes of the entry's live stakes on the acts in view */
+  roles: string[];
+  first_year: number | null;
+  last_year: number | null;
+  undated_acts: number;
+  /** the ring-1 entry a ring-2 entry hangs from; null on rings 0 and 1 */
+  parent: number | null;
+  widened: boolean;
+};
+
+/** An unordered pair of drawn entries and the live acts they signed together. */
+export type NetworkTie = { a: number; b: number; acts: number[] };
+
+export type NetworkAct = {
+  id: number;
+  /** as stored; "0000-00-00" is an act with no registration date */
+  date: string;
+  year: number | null;
+  firm_name: string | null;
+  places: string[];
+  places_inferred: boolean;
+  activity: string | null;
+  currency: string | null;
+  total: number | null;
+  signers_live: number;
+  signers_in_view: number;
+};
+
+/** One (entry, act) pair of a drawn entry on an act in view. */
+export type NetworkAppearance = {
+  person: number;
+  act: number;
+  /** "gp", "lp", "both" (two rows with different roles), or null with no live stake */
+  role: string | null;
+  cash: number | null;
+  non_cash: string | null;
+  heirs_of: boolean;
+  proxy: boolean;
+  joint: boolean;
+  /** present only when the entry has two live rows on the act */
+  rows?: number;
+};
+
+export type NetworkCircle = {
+  centre: number;
+  steps: number;
+  cap: number;
+  hubs: NetworkHubs;
+  others: "on" | "off";
+  widen: number[];
+  nodes: NetworkNode[];
+  ties: NetworkTie[];
+  acts: NetworkAct[];
+  appearances: NetworkAppearance[];
+  counts: { reached: number; drawn: number; persons: number; others: number; hubs: number; acts: number; ties: number };
+  cut: { reached: number; drawn: number } | null;
+  sentence: string;
+  answer: string;
+  how: string[];
+};
