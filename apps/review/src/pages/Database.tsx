@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   addPlace,
   decidePersonLinkage,
@@ -2445,6 +2445,11 @@ function RecordDetail({
         <div className="db-record-head-actions">
         {/* A clean link: never the ?review / ?fix worklist state. */}
         <CopyLinkButton path={`/database/${record.table}/${record.id}`} title="Copy a link to this record" />
+        {record.table === "person" && !record.is_deleted && !isToolHidden("network") && (
+          <Link className="copy-link-chip" to={`/network/person/${record.id}`}>
+            Draw its circle
+          </Link>
+        )}
         {!record.is_deleted && (
           <details className="db-actions">
             <summary>Hide this record…</summary>

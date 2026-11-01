@@ -2357,3 +2357,39 @@ def test_person_page_shows_the_marks_as_a_quiet_column(tmp_path, monkeypatch):
         assert "Marked as" not in section["columns"]
     finally:
         connection.close()
+
+
+def test_a_flag_from_a_blind_pair_page_goes_to_the_split_case_in_standard_mode(tmp_path, monkeypatch):
+    """What bit WH on 2026-10-29: the page posted a flag from a Judge-blind
+    pair page in blind mode, against the entry's own split case, which is not
+    a packet case. The server rightly refuses that; the page now posts such a
+    flag in standard mode, which is accepted while the round is open."""
+    _wire(tmp_path, monkeypatch)
+    _labeling_packet(tmp_path, monkeypatch)  # pair 1:2 is open in the round
+    with pytest.raises(HTTPException) as exc:
+        review_server.decide_person_linkage.__wrapped__(
+            "split:2",
+            review_server.PersonLinkageDecision(
+                reviewer="WH", action="flag_split", person_ids=[2],
+                rationale="The 1635 act reads like another man.",
+                expected_status="open", expected_event_id=None,
+                review_mode="blind_labeling",
+            ),
+        )
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "This case is not in the current Judge blind round."
+    assert review_server.person_identity_status(2)["split_flags"] == []
+    saved = review_server.decide_person_linkage.__wrapped__(
+        "split:2",
+        review_server.PersonLinkageDecision(
+            reviewer="WH", action="flag_split", person_ids=[2],
+            rationale="The 1635 act reads like another man.",
+            expected_status="open", expected_event_id=None,
+            review_mode="standard",
+        ),
+    )
+    assert saved["ok"] is True
+    assert review_server.person_identity_status(2)["split_flags"][0]["created_by"] == "WH"
+    # The pair itself stays open and blind in the round.
+    assert review_server.person_linkage_summary()["lanes"]["labeling_round"] == 1
+    assert "match_probability" not in review_server.person_linkage_case("pair:1:2")

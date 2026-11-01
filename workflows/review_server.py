@@ -9861,7 +9861,7 @@ NETWORK_OTHERS = ("on", "off")
 # Every sentence the circle sends to the screen; a (one, many) pair is a count's
 # noun. The client turns role codes into words through utils/roles.ts.
 NETWORK_WORDS: dict[str, Any] = {
-    "sentence": "Who signed acts together with {name}, entry {id}?",
+    "sentence": "Who signed acts with {name}, entry {id}?",
     "answer": "{co_signers} on {acts}{years}; {entries}.",
     "standing": "Person entries are counted as entered; one person may have several.",
     "entries": "{count}{others} within {steps}",
@@ -9873,41 +9873,61 @@ NETWORK_WORDS: dict[str, Any] = {
     "co_signer": ("co-signer", "co-signers"),
     "act": ("act", "acts"),
     "entry": ("entry", "entries"),
+    "pair": ("pair", "pairs"),
+    "more_entry": ("more entry", "more entries"),
     "person_entry": ("person entry", "person entries"),
-    "other": (
-        "institution, estate, shareholder group or placeholder",
-        "institutions, estates, shareholder groups or placeholders",
-    ),
-    "how_entries": "Entries as entered, not yet reviewed as people; a tie is an act signed together.",
-    "how_steps_1": "Acts of entry {id}: {acts} › co-signers: {ring1}{widened} › ties among the {drawn} entries: {ties}.",
+    # the non-person kinds, in the order the answer names them; a count of one is "one"
+    "kinds": {
+        "institution": ("institution", "institutions"),
+        "estate": ("estate", "estates"),
+        "collective": ("shareholder group", "shareholder groups"),
+        "placeholder": ("placeholder", "placeholders"),
+    },
+    "one": "one",
+    "and": " and ",
+    # How this was drawn: the steps line names the centre; "are drawn", since with
+    # hubs or others left out more entries signed those acts than are drawn.
+    "how_steps_1": "{name}, entry {id}, is on {acts}; {ring1} are drawn. Among the {drawn}, {ties} signed an act together.",
     "how_steps_2": (
-        "Acts of entry {id}: {acts} › co-signers: {ring1} › their co-signers: {ring2}{widened} › "
-        "ties among the {drawn} entries: {ties}."
+        "{name}, entry {id}, is on {acts}; {ring1} are drawn, and {ring2} that signed with those. "
+        "Among the {drawn}, {ties} signed an act together."
     ),
-    "how_widened": " › widened by hand from entry {id}: {added}",
+    "how_steps_none": "No other entry on its acts is drawn.",
+    "how_widened": "Widened from entry {id}: {added} on the next ring.",
     "how_cut": (
-        "Of the {reached} entries reached, {drawn} are drawn: the centre, its co-signers and the entries "
-        "widened by hand whole, then entries by acts shared with their parent, earliest shared act and lowest id."
+        "The {drawn} drawn are the centre, its co-signers and the entries widened from, kept whole; "
+        "then the rest by acts shared with the entry they hang from, most first, earliest act first."
     ),
+    # the hub lines by state and step; the centre is never counted among the hubs
     "how_hubs_stop": (
-        "Entries on more than {threshold} acts ({corpus} in the corpus; {circle} in this circle) are drawn "
-        "but not widened through{except}; the line at {threshold} is a readability cut, not a break in the data."
+        "Entries on more than {threshold} acts ({circle} here; {corpus} in the corpus) are drawn, "
+        "and the second step stops at them{except}. The cut at {threshold} is for readability."
     ),
-    "how_hubs_except": ", except {entries}, widened by hand",
+    "how_hubs_except": ", except {entries}, widened",
     "how_hubs_through": (
-        "Entries on more than {threshold} acts ({corpus} in the corpus; {circle} in this circle) are widened "
-        "through; the line at {threshold} is a readability cut, not a break in the data."
+        "Entries on more than {threshold} acts ({circle} here; {corpus} in the corpus) are drawn, "
+        "and the second step goes through them. The cut at {threshold} is for readability."
     ),
     "how_hubs_off": (
-        "Entries on more than {threshold} acts ({corpus} in the corpus) are left out; "
-        "the line at {threshold} is a readability cut, not a break in the data."
+        "Entries on more than {threshold} acts ({corpus} in the corpus) are left out. "
+        "The cut at {threshold} is for readability."
     ),
-    "how_others_off": "Institutions, estates, shareholder groups and placeholders are left out.",
-    "how_hidden": "Hidden records are left out.",
-    "how_position": "Position is the layout's and nothing more.",
-    "no_live_appearance": "No live appearance for entry {id}.",
-    "hub_centre_off": "This entry is on more than {threshold} acts; choose hubs=stop or hubs=through.",
-    "other_centre_off": "This entry is an institution, estate, shareholder group or placeholder; choose others=on.",
+    "how_hubs_drawn": "Entries on more than {threshold} acts ({circle} here; {corpus} in the corpus) are drawn.",
+    "how_hidden": "Hidden entries, appearances and acts are left out.",
+    "how_position_1": "Clockwise from the top, the co-signers stand in the order of their first act with {name}.",
+    "how_position_2": (
+        "Ring 1, clockwise from the top: the co-signers, in the order of their first act with {name}; "
+        "a co-signer's room grows with the entries hanging from it. "
+        "Ring 2: the entries that signed with those, each beside the one it signed most acts with."
+    ),
+    "how_position_3": "The co-signers of an entry widened from stand on a third ring, in its sector.",
+    "no_live_appearance": "Entry {id} has no acts to draw: there is no such entry, or the entry or its acts are hidden.",
+    # the page matches these two on their first words and offers the control they name
+    "hub_centre_off": "This entry is itself on more than {threshold} acts; choose “drawn” to draw it.",
+    "other_centre_off": (
+        "This entry is itself an institution, estate, shareholder group or placeholder; "
+        "untick “Leave out institutions, estates, shareholder groups and placeholders” to draw it."
+    ),
     "bad_entry": "The entry id must be a whole number.",
     "bad_steps": "steps must be 1 or 2.",
     "bad_cap": "cap must be a whole number from 50 to 600.",
@@ -10086,7 +10106,7 @@ def network_expand(
         ring = grow([p for p in ring if p == centre or hubs != "stop" or p not in hub_ids], step, False)
     applied: list[int] = []
     for entry in spec["widen"]:
-        if entry in members:
+        if entry in members and entry != centre:  # the centre is always widened
             applied.append(entry)
             grow([entry], members[entry]["step"] + 1, True)
     return members, dates, applied
@@ -10111,18 +10131,25 @@ def network_cut(
     return drawn, {"reached": len(members), "drawn": len(drawn)}
 
 
+def network_kind_count(n: int, one: str, many: str) -> str:
+    """A count inside the answer's parenthesis: "one institution", "2 estates"."""
+    return f"{NETWORK_WORDS['one']} {one}" if n == 1 else f"{n:,} {many}"
+
+
 def network_words(
     spec: dict[str, Any],
     centre_name: str,
     centre_years: list[int | None],
-    counts: dict[str, int],
+    counts: dict[str, Any],
     cut: dict[str, int] | None,
     rings: dict[str, int],
     widened: list[tuple[int, int]],
     hub_ids: set[int],
     threshold: int,
 ) -> dict[str, Any]:
-    """The sentence, the answer and the how lines, every word from NETWORK_WORDS."""
+    """The sentence, the answer and the how lines, every word from NETWORK_WORDS.
+    rings carries the ring sizes reached, the hubs drawn other than the centre
+    and the entries drawn on a third ring."""
     words = NETWORK_WORDS
     centre = spec["centre"]
     dated = [year for year in centre_years if year is not None]
@@ -10135,8 +10162,12 @@ def network_words(
     others = ""
     if counts["others"]:
         others = words["entries_others"].format(
-            persons=_count_words(counts["persons"], *words["person_entry"]),
-            others=_count_words(counts["others"], *words["other"]),
+            persons=network_kind_count(counts["persons"], *words["person_entry"]),
+            others=words["and"].join(
+                network_kind_count(counts["kinds"][kind], *words["kinds"][kind])
+                for kind in words["kinds"]
+                if counts["kinds"].get(kind)
+            ),
         )
     steps = words["steps"][spec["steps"]]
     count = _count_words(counts["reached"], *words["entry"])
@@ -10150,20 +10181,35 @@ def network_words(
         years=years,
         entries=entries,
     )
-    widened_text = "".join(words["how_widened"].format(id=entry, added=f"{added:,}") for entry, added in widened)
-    steps_line = words["how_steps_1" if spec["steps"] == 1 else "how_steps_2"].format(
-        id=centre,
-        acts=f"{rings['acts']:,}",
-        ring1=f"{rings['ring1']:,}",
-        ring2=f"{rings['ring2']:,}",
-        widened=widened_text,
-        drawn=f"{counts['drawn']:,}",
-        ties=f"{counts['ties']:,}",
-    )
-    how = [words["how_entries"], steps_line]
+
+    how: list[str] = []
+    if rings["ring1"] == 0:
+        how.append(words["how_steps_none"])
+    else:
+        how.append(
+            words["how_steps_1" if spec["steps"] == 1 else "how_steps_2"].format(
+                name=centre_name,
+                id=centre,
+                acts=_count_words(rings["acts"], *words["act"]),
+                ring1=_count_words(rings["ring1"], *words["co_signer"]),
+                ring2=_count_words(rings["ring2"], *words["more_entry"]),
+                drawn=f"{counts['drawn']:,}",
+                ties=_count_words(counts["ties"], *words["pair"]),
+            )
+        )
+    how += [
+        words["how_widened"].format(id=entry, added=_count_words(added, *words["more_entry"]))
+        for entry, added in widened
+    ]
     if cut:
-        how.append(words["how_cut"].format(reached=f"{cut['reached']:,}", drawn=f"{cut['drawn']:,}"))
-    if spec["hubs"] == "stop":
+        how.append(words["how_cut"].format(drawn=f"{cut['drawn']:,}"))
+    corpus, circle = f"{len(hub_ids):,}", f"{rings['hubs']:,}"
+    if spec["hubs"] == "off":
+        how.append(words["how_hubs_off"].format(threshold=threshold, corpus=corpus))
+    elif spec["steps"] == 1:
+        if rings["hubs"]:
+            how.append(words["how_hubs_drawn"].format(threshold=threshold, corpus=corpus, circle=circle))
+    elif spec["hubs"] == "stop":
         widened_hubs = [entry for entry, _added in widened if entry in hub_ids]
         if len(widened_hubs) == 1:
             exception = words["how_hubs_except"].format(entries=f"entry {widened_hubs[0]}")
@@ -10172,19 +10218,15 @@ def network_words(
         else:
             exception = ""
         how.append(
-            words["how_hubs_stop"].format(
-                threshold=threshold, corpus=f"{len(hub_ids):,}", circle=f"{counts['hubs']:,}", **{"except": exception}
-            )
-        )
-    elif spec["hubs"] == "through":
-        how.append(
-            words["how_hubs_through"].format(threshold=threshold, corpus=f"{len(hub_ids):,}", circle=f"{counts['hubs']:,}")
+            words["how_hubs_stop"].format(threshold=threshold, corpus=corpus, circle=circle, **{"except": exception})
         )
     else:
-        how.append(words["how_hubs_off"].format(threshold=threshold, corpus=f"{len(hub_ids):,}"))
-    if spec["others"] == "off":
-        how.append(words["how_others_off"])
-    how += [words["how_hidden"], words["how_position"]]
+        how.append(words["how_hubs_through"].format(threshold=threshold, corpus=corpus, circle=circle))
+    how.append(words["how_hidden"])
+    if rings["ring1"]:
+        how.append(words["how_position_1" if spec["steps"] == 1 else "how_position_2"].format(name=centre_name))
+        if spec["steps"] == 2 and rings["ring3"]:
+            how.append(words["how_position_3"])
     return {
         "sentence": words["sentence"].format(name=centre_name, id=centre),
         "answer": f"{answer} {words['standing']}",
@@ -10240,6 +10282,7 @@ def network_circle_data(connection: sqlite3.Connection, spec: dict[str, Any]) ->
         rows = connection.execute(
             f"""
             SELECT i.person_id, i.contract_id, i.investor_id, i.heirs_of, i.via_proxy, i.is_joint,
+                   i.is_jewish, i.jewish_db,
                    inv.investment_id, inv.type, inv.investment_cash, inv.investment_non_cash
             FROM investor i
             LEFT JOIN investor_group ig ON ig.investor_id = i.investor_id AND ig.is_deleted = 0
@@ -10250,15 +10293,22 @@ def network_circle_data(connection: sqlite3.Connection, spec: dict[str, Any]) ->
             """,
             [*drawn, *acts_in_view],
         )
-        for person, act, investor_id, heirs_of, proxy, joint_flag, stake, role, cash, non_cash in rows:
+        for person, act, investor_id, heirs_of, proxy, joint_flag, stated, attributed, stake, role, cash, non_cash in rows:
             item = seen.setdefault(
                 (int(person), int(act)),
-                {"rows": set(), "stakes": {}, "roles": set(), "heirs_of": False, "proxy": False, "flag": False},
+                {
+                    "rows": set(), "stakes": {}, "roles": set(), "heirs_of": False, "proxy": False, "flag": False,
+                    "stated": False, "attributed": False,
+                },
             )
             item["rows"].add(int(investor_id))
             item["heirs_of"] = item["heirs_of"] or heirs_of in (1, "1", True)
             item["proxy"] = item["proxy"] or proxy in (1, "1", True)
             item["flag"] = item["flag"] or joint_flag in (1, "1", True)
+            # The two Jewish layers as the Database record keeps them apart: stated
+            # in the act (is_jewish) and the editorial attribution (jewish_db).
+            item["stated"] = item["stated"] or stated in (1, "1", True)
+            item["attributed"] = item["attributed"] or attributed in (1, "1", True)
             if stake is not None:
                 item["stakes"][int(stake)] = (cash, non_cash)
                 if role not in (None, ""):
@@ -10300,6 +10350,8 @@ def network_circle_data(connection: sqlite3.Connection, spec: dict[str, Any]) ->
             "heirs_of": item["heirs_of"],
             "proxy": item["proxy"],
             "joint": item["flag"] or any(holders.get(stake, 0) > 1 for stake in item["stakes"]),
+            # "stated" when is_jewish = 1; "attributed" when jewish_db = 1 alone; never merged
+            "jewish": "stated" if item["stated"] else ("attributed" if item["attributed"] else None),
         }
         if len(item["rows"]) > 1:
             row["rows"] = len(item["rows"])
@@ -10433,11 +10485,16 @@ def network_circle_data(connection: sqlite3.Connection, spec: dict[str, Any]) ->
         acts.sort(key=lambda a: (network_earliest([a["id"]], dates), a["id"]))
         ties = [{"a": a, "b": b, "acts": sorted(shared)} for (a, b), shared in sorted(ties_map.items())]
 
-    counts = {
+    kinds: dict[str, int] = {}
+    for n in nodes:
+        if n["kind"] != "person":
+            kinds[n["kind"]] = kinds.get(n["kind"], 0) + 1
+    counts: dict[str, Any] = {
         "reached": len(members),
         "drawn": len(drawn),
         "persons": sum(1 for n in nodes if n["kind"] == "person"),
         "others": sum(1 for n in nodes if n["kind"] != "person"),
+        "kinds": {kind: kinds[kind] for kind in NETWORK_WORDS["kinds"] if kind in kinds},
         "hubs": sum(1 for n in nodes if n["hub"]),
         "acts": len(acts),
         "ties": len(ties),
@@ -10446,6 +10503,8 @@ def network_circle_data(connection: sqlite3.Connection, spec: dict[str, Any]) ->
         "acts": len(acts_total.get(centre, ())),
         "ring1": sum(1 for m in members.values() if m["step"] == 1),
         "ring2": sum(1 for m in members.values() if m["step"] == 2 and not m["widened"]),
+        "ring3": sum(1 for n in nodes if n["step"] >= 3),
+        "hubs": sum(1 for n in nodes if n["hub"] and n["id"] != centre),  # the centre is always widened
     }
     widened = [
         (entry, sum(1 for m in members.values() if m["widened"] and m["parent"] == entry)) for entry in applied

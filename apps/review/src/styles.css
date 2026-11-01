@@ -11783,12 +11783,19 @@ a.find-rail-item {
 
 /* Network */
 
-/* The Network view (docs/network/step1_contract.md §3): the Database page's
-   grid with a third column for the side table. The rail reuses .db-rail; the
-   rules on .db-browser:not(.pl-browser) still narrow the rail under 1200 px
-   and stack everything under 800 px. */
+/* The Network view (docs/network/step1_review_2026-10-29.md §2): the Database
+   page's grid with a third column, the side column, 400 px beside the figure
+   from 1400 px up and 480 px from 1680; under 1400 it stands under the figure
+   while something is selected (the media rules at the end of this block). The
+   rail reuses .db-rail; the rules on .db-browser:not(.pl-browser) still narrow
+   the rail under 1200 px and stack everything under 800 px. */
 .db-browser.nw-browser {
-  grid-template-columns: 340px minmax(0, 1fr) 560px;
+  grid-template-columns: 340px minmax(0, 1fr) 400px;
+}
+
+/* The landing, a load from nothing and a refusal: no circle, no side column. */
+.db-browser.nw-browser.is-bare {
+  grid-template-columns: 340px minmax(0, 1fr);
 }
 
 .nw-rail-body {
@@ -11813,6 +11820,19 @@ a.find-rail-item {
   font-size: 0.82rem;
   line-height: 1.45;
   margin: 0;
+}
+
+/* The window line under the answer, while a window is set: the counts from
+   the mask and "All years" to clear it. */
+.nw-window {
+  color: #e9dfd0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.nw-window .link-like {
+  color: #d6aa7d;
 }
 
 .nw-control-label {
@@ -11861,16 +11881,53 @@ a.find-rail-item {
   padding: 6px 0 0;
 }
 
+/* A link whose parts this page cannot read; the parts are the line's title. */
+.nw-dropped {
+  color: #9a8a78;
+  cursor: help;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
+/* The figure column: the stage takes the height, the key sits under it. */
 .nw-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   height: 100%;
-  overflow: auto;
-  padding: 22px 26px 32px;
+  overflow: hidden;
+  padding: 18px 22px 16px;
+}
+
+.nw-main.is-updating {
+  opacity: 0.55;
+}
+
+.nw-main > .nw-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.nw-main > .nw-key {
+  flex: none;
+}
+
+/* The strip stands between the stage and the key at its own height. */
+.nw-main > .nw-strip {
+  flex: none;
+}
+
+.nw-loading {
+  margin: 0;
 }
 
 .nw-landing {
+  flex: none;
   margin: 0 auto;
   max-width: 560px;
   padding-top: 40px;
+  width: 100%;
 }
 
 .nw-landing h2 {
@@ -11887,6 +11944,17 @@ a.find-rail-item {
   margin: 0;
 }
 
+/* The figure column: the stage takes the height the column gives it (the
+   layout fits the stage's measured box, one viewBox unit one pixel), the key
+   stands under it. The SVG is absolute inside the stage, so its own size never
+   feeds back into the measurement. */
+.nw-stage-wrap {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .nw-stage-wrap.is-updating {
   opacity: 0.55;
 }
@@ -11895,12 +11963,22 @@ a.find-rail-item {
   background: #fffdf9;
   border: 1px solid #eadfcc;
   border-radius: 10px;
+  flex: 1 1 auto;
+  min-height: 320px;
+  overflow: hidden;
   position: relative;
 }
 
 .nw-stage svg {
   display: block;
+  height: 100%;
+  inset: 0;
+  position: absolute;
   width: 100%;
+}
+
+.nw-stage-bg {
+  fill: transparent;
 }
 
 .nw-line {
@@ -11911,7 +11989,7 @@ a.find-rail-item {
 }
 
 .nw-line.is-tie {
-  opacity: 0.7;
+  opacity: 0.45;
 }
 
 .nw-line.is-dim {
@@ -11924,11 +12002,17 @@ a.find-rail-item {
   stroke: #b07a47;
 }
 
+/* Hit lines: 10 px on spokes and parent lines, 6 px on the chords (every
+   chord at one step; at two steps only a chord drawn for a selection). */
 .nw-hit-line {
-  cursor: help;
+  cursor: pointer;
   fill: none;
   stroke: transparent;
   stroke-width: 10;
+}
+
+.nw-hit-line.is-tie {
+  stroke-width: 6;
 }
 
 .nw-node {
@@ -11937,6 +12021,12 @@ a.find-rail-item {
 }
 
 .nw-node.is-dim {
+  opacity: 0.3;
+}
+
+/* An entry with no act inside the window keeps its place at 30%. */
+.nw-node.is-faded,
+.nw-label.is-faded {
   opacity: 0.3;
 }
 
@@ -11988,16 +12078,18 @@ a.find-rail-item {
 }
 
 /* Every label wears a halo in the stage colour, so it stays legible where a
-   line passes beneath it. */
+   line passes beneath it. A label carries its mark's handlers: the name is
+   the largest target on the figure. */
 .nw-label {
+  cursor: pointer;
   fill: #241d18;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-size: 11px;
+  font-size: 11.5px;
   paint-order: stroke;
-  pointer-events: none;
   stroke: #fffdf9;
   stroke-linejoin: round;
   stroke-width: 3.5px;
+  user-select: none;
 }
 
 .nw-label.is-hub {
@@ -12009,7 +12101,9 @@ a.find-rail-item {
   font-weight: 600;
 }
 
-/* The house dark balloon, as the business circle's. */
+/* The house dark balloon, as the business circle's, placed outward from the
+   mark: its left/top is the anchor point beside, above or below the mark, and
+   the side class turns it away from the circle's interior. */
 .nw-tip {
   background: #302720;
   border-radius: 9px;
@@ -12020,33 +12114,28 @@ a.find-rail-item {
   font-size: 0.74rem;
   gap: 3px;
   line-height: 1.4;
-  max-width: 340px;
+  max-width: 280px;
   padding: 9px 11px;
   pointer-events: none;
   position: absolute;
-  transform: translate(-50%, calc(-100% - 10px));
   width: max-content;
   z-index: 30;
 }
 
-.nw-tip.is-below {
-  transform: translate(-50%, 10px);
+.nw-tip.is-right {
+  transform: translate(0, -50%);
 }
 
 .nw-tip.is-left {
-  transform: translate(-12px, calc(-100% - 10px));
+  transform: translate(-100%, -50%);
 }
 
-.nw-tip.is-left.is-below {
-  transform: translate(-12px, 10px);
+.nw-tip.is-above {
+  transform: translate(-50%, -100%);
 }
 
-.nw-tip.is-right {
-  transform: translate(calc(-100% + 12px), calc(-100% - 10px));
-}
-
-.nw-tip.is-right.is-below {
-  transform: translate(calc(-100% + 12px), 10px);
+.nw-tip.is-below {
+  transform: translate(-50%, 0);
 }
 
 .nw-tip strong {
@@ -12063,23 +12152,31 @@ a.find-rail-item {
   font-weight: 600;
 }
 
-.nw-tip-more {
-  color: #c9b899;
-}
-
 .nw-key {
   color: #6f6052;
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   font-size: 0.78rem;
   gap: 6px 16px;
   margin: 8px 4px 0;
 }
 
-.nw-key span {
+.nw-key span,
+.nw-key-check {
   align-items: center;
   display: inline-flex;
   gap: 6px;
+}
+
+/* "Label all" is figure state and ends the key line. */
+.nw-key-check {
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.nw-key-check input {
+  margin: 0;
 }
 
 .nw-key-dot,
@@ -12140,32 +12237,199 @@ a.find-rail-item {
   width: 18px;
 }
 
-.nw-how {
-  margin-top: 14px;
+/* The time strip (components/NetworkStrip.tsx): the acts in view as bars per
+   year on the decade axis, 96 px tall, drawn in true pixels for the measured
+   width; the centre's own acts in the dot colour under the other acts in the
+   ring colour; a bar outside the window as an outline; the two handles and
+   the tint between them. */
+.nw-strip {
+  height: 96px;
+  position: relative;
+  user-select: none;
 }
 
+.nw-strip svg {
+  display: block;
+  overflow: visible;
+}
+
+.nw-strip-axis {
+  stroke: #ddcfbb;
+  stroke-width: 1;
+}
+
+.nw-strip-tick {
+  stroke: #eee5d8;
+  stroke-width: 1;
+}
+
+.nw-strip-year {
+  fill: #6f6052;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+}
+
+.nw-strip-count {
+  fill: #6f6052;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.nw-strip-bar.is-centre {
+  fill: #7a4a26;
+}
+
+.nw-strip-bar.is-other {
+  fill: #b07a47;
+}
+
+.nw-strip-bar.is-outside {
+  fill: #fffdf9;
+  stroke-width: 1;
+}
+
+.nw-strip-bar.is-centre.is-outside {
+  stroke: #7a4a26;
+}
+
+.nw-strip-bar.is-other.is-outside {
+  stroke: #b07a47;
+}
+
+/* The hollow diamond of the People ribbons: an act of the centre only through heirs. */
+.nw-strip-heirs {
+  fill: #fffdf9;
+  stroke: #7a4a26;
+  stroke-width: 1.4;
+}
+
+.nw-strip-heirs.is-outside {
+  opacity: 0.45;
+}
+
+.nw-strip-hover {
+  fill: #9d7355;
+  opacity: 0.09;
+  pointer-events: none;
+}
+
+.nw-strip-hit {
+  fill: transparent;
+}
+
+.nw-strip-window {
+  fill: #b07a47;
+  opacity: 0.1;
+}
+
+.nw-strip-handle-line {
+  stroke: #c9bba6;
+  stroke-width: 1.5;
+}
+
+.nw-strip-grip {
+  fill: #c9bba6;
+}
+
+.nw-strip-handle.is-set .nw-strip-handle-line,
+.nw-strip-handle.is-set .nw-strip-grip {
+  stroke: #7a4a26;
+}
+
+.nw-strip-handle.is-set .nw-strip-grip {
+  fill: #7a4a26;
+}
+
+.nw-strip-handle-hit {
+  cursor: ew-resize;
+  fill: transparent;
+  touch-action: none;
+}
+
+.nw-strip.is-dragging {
+  cursor: ew-resize;
+}
+
+/* The strip's balloon, the figure's dark one, stands above the hovered bar. */
+.nw-strip-tip {
+  white-space: nowrap;
+}
+
+/* The side column, never empty: the co-signers at rest, the selected entry,
+   act or pair with its rows, and "How this was drawn" at the foot. */
 .nw-side {
   background: #fffaf3;
   border-left: 1px solid #eadfcc;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
   height: 100%;
   overflow: auto;
-  padding: 22px 22px 32px;
+  padding: 20px 20px 24px;
 }
 
-.nw-side-empty,
+.nw-side-block {
+  flex: none;
+}
+
+.nw-side .nw-how {
+  flex: none;
+  margin-top: auto;
+}
+
+.nw-how summary {
+  cursor: pointer;
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+
+.nw-how[open] summary {
+  margin-bottom: 8px;
+}
+
 .nw-side-note {
   font-size: 0.86rem;
   line-height: 1.5;
+  margin: 0 0 10px;
 }
 
 .nw-side-head {
-  margin-bottom: 14px;
+  margin-bottom: 12px;
+}
+
+.nw-side-head-row {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.nw-side-head-row .eyebrow {
+  margin: 0;
+}
+
+.nw-side-close {
+  margin: -6px -4px -6px 0;
+}
+
+/* The order of the co-signer list, two small pills in the eyebrow row. */
+.nw-sort .db-tab {
+  font-size: 0.72rem;
+  padding: 3px 9px;
+}
+
+.nw-side-back {
+  display: inline-block;
+  font-size: 0.82rem;
+  margin-bottom: 8px;
+  text-decoration: none;
 }
 
 .nw-side-head h3 {
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.2rem;
+  font-size: 1.15rem;
   font-weight: 500;
+  line-height: 1.3;
   margin: 2px 0 6px;
 }
 
@@ -12189,28 +12453,128 @@ a.find-rail-item {
 }
 
 .nw-side-actions {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin: 0;
 }
 
 .nw-side-actions .pill-button {
+  font-size: 0.8rem;
+  padding: 5px 11px;
+}
+
+.nw-side-open {
+  color: #6d4a2c;
   font-size: 0.82rem;
-  padding: 6px 12px;
+  font-weight: 600;
 }
 
-.nw-table {
-  font-size: 0.82rem;
+/* Rows on the light column: the co-signers at rest and the signers of an act
+   (a name and the entry number, then one muted line); the dark rail's
+   .db-result colours do not carry over. */
+.nw-cosigners,
+.nw-signers,
+.nw-acts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.nw-table th,
-.nw-table td {
-  vertical-align: top;
+.nw-cosigners li,
+.nw-signers li,
+.nw-acts li {
+  border-top: 1px solid #efe5d6;
 }
 
-/* Under 1400 px the side table moves under the figure, in the main column;
-   the rail keeps its height. */
-@media (max-width: 1400px) {
+.nw-cosigners li:first-child,
+.nw-signers li:first-child,
+.nw-acts li:first-child {
+  border-top: none;
+}
+
+.nw-cosigner {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 1px;
+  padding: 7px 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.nw-cosigner:hover,
+li.is-lit > .nw-cosigner {
+  background: #f3e9da;
+}
+
+.nw-row-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.nw-row-meta {
+  color: #6b5840;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+/* An entry's acts as two-line rows: the act number (the drawer), the date and
+   the firm name; then the role and the rest, muted; "{n} signers" at the right. */
+.nw-acts li {
+  align-items: flex-start;
+  display: flex;
+  gap: 10px;
+  padding: 7px 8px;
+}
+
+.nw-acts li.is-in-drawer {
+  background: #f3e9da;
+  border-radius: 8px;
+}
+
+.nw-act-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nw-act-line {
+  font-size: 0.84rem;
+  line-height: 1.4;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.nw-act-line.muted {
+  font-size: 0.78rem;
+}
+
+.nw-act-signers {
+  flex: none;
+  font-size: 0.78rem;
+  padding-top: 2px;
+  white-space: nowrap;
+}
+
+@media (min-width: 1680px) {
+  .db-browser.nw-browser {
+    grid-template-columns: 340px minmax(0, 1fr) 480px;
+  }
+
+  .db-browser.nw-browser.is-bare {
+    grid-template-columns: 340px minmax(0, 1fr);
+  }
+}
+
+/* Under 1400 px the side column stands under the figure, in the main column,
+   only while something is selected; the rail keeps its height. */
+@media (max-width: 1399px) {
   .db-browser.nw-browser {
     grid-template-columns: 340px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
@@ -12231,7 +12595,11 @@ a.find-rail-item {
     grid-column: 2;
     grid-row: 2;
     height: auto;
-    max-height: 45vh;
+    max-height: 36vh;
+  }
+
+  .nw-browser:not(.has-selection) .nw-side {
+    display: none;
   }
 }
 
@@ -12241,6 +12609,7 @@ a.find-rail-item {
   }
 }
 
+/* The stack: the stage keeps an explicit height, square up to 70vh. */
 @media (max-width: 800px) {
   .nw-rail-body {
     flex: none;
@@ -12256,7 +12625,12 @@ a.find-rail-item {
   }
 
   .nw-main {
-    padding: 16px 14px 20px;
+    padding: 14px 14px 16px;
+  }
+
+  .nw-main > .nw-stage {
+    flex: none;
+    height: min(calc(100vw - 28px), 70vh);
   }
 
   .nw-side {

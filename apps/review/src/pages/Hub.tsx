@@ -40,7 +40,7 @@ const TOOLS = [
     to: "/network",
     key: "network",
     title: "Network",
-    blurb: "People as nodes, the acts they signed together as ties.",
+    blurb: "The circle of one person entry: the entries that signed acts with it, and the entries that signed with those.",
   },
   {
     to: "/reconcile",

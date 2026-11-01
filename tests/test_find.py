@@ -872,8 +872,8 @@ def test_count_by_two_groupings_gives_each_cell_its_contracts(corpus):
     out = _by(HER_REQUEST, "provenance", "half")
     assert [c["name"] for c in out["columns"]] == ["1700–1749", "1750–1799", "no registration date"]
     assert [(row["name"], [cell["ids"] for cell in row["cells"]]) for row in out["rows"]] == [
-        ("editorial attribution alone", [[102], [107], [104]]),
-        ("stated in the act", [[101, 103], [], []]),
+        ("on editorial attribution alone", [[102], [107], [104]]),
+        ("with a partner stated Jewish in the act", [[101, 103], [], []]),
     ]
     assert out["by"]["label"] == "how the matching partner is marked Jewish"
 
@@ -918,7 +918,7 @@ def test_over_time_draws_every_period_and_names_the_partial_last_one(corpus):
     (series,) = out["series"]
     assert series["counts"][10:16] == [1, 1, 1, 0, 0, 1] and sum(series["counts"]) == 4 and series["undated"] == 1
     # stated and attributed as split bars
-    assert [p["label"] for p in series["parts"]] == ["stated in the act", "editorial attribution alone"]
+    assert [p["label"] for p in series["parts"]] == ["with a partner stated Jewish in the act", "on editorial attribution alone"]
     assert series["parts"][0]["counts"][10:13] == [1, 0, 1] and series["parts"][1]["counts"][10:16] == [0, 1, 0, 0, 0, 1]
 
 
@@ -1986,6 +1986,18 @@ def test_a_partner_with_neither_mark_is_worded_as_having_no_mark():
                                          {"quantifier": "any", "conditions": [
                                              {"kind": "jewish", "choice": "either", "not": True}]}]}, PLACES)
     assert "has no Jewish mark (neither stated in the act nor by editorial attribution)" in query["sentence"]
+
+
+def test_the_provenance_parts_use_the_answer_lines_words(corpus):
+    # On an "editorial attribution" line the first part is the contracts that
+    # also have a partner stated Jewish in the act, as the answer line says.
+    words = review_server._FIND_GROUP_WORDS["provenance"]
+    attributed = _find({"contract": [LIVORNO], "partners": [_partner("any", ("jewish", "attributed"))]})
+    either = _find({"contract": [LIVORNO], "partners": [_partner("any", ("jewish", "either"))]})
+    assert "1 of them also has a partner stated Jewish in the act" in attributed["answer"]
+    assert "with a partner stated Jewish in the act" in either["answer"]
+    assert "on editorial attribution alone" in either["answer"]
+    assert words == {"stated": "with a partner stated Jewish in the act", "attributed": "on editorial attribution alone"}
 
 
 def test_no_find_or_library_wording_says_is_not_jewish_or_known():

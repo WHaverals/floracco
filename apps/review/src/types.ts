@@ -1519,6 +1519,10 @@ export type NetworkAppearance = {
   joint: boolean;
   /** present only when the entry has two live rows on the act */
   rows?: number;
+  /** the Jewish marks as the Database record carries them: "stated" (in the act),
+   * "attributed" (the editorial attribution alone), or null (added 2026-11-01;
+   * absent in older fixtures) */
+  jewish?: "stated" | "attributed" | null;
 };
 
 export type NetworkCircle = {
@@ -1532,7 +1536,17 @@ export type NetworkCircle = {
   ties: NetworkTie[];
   acts: NetworkAct[];
   appearances: NetworkAppearance[];
-  counts: { reached: number; drawn: number; persons: number; others: number; hubs: number; acts: number; ties: number };
+  counts: {
+    reached: number;
+    drawn: number;
+    persons: number;
+    others: number;
+    hubs: number;
+    acts: number;
+    ties: number;
+    /** the non-person entries drawn, by kind (added 2026-11-01; absent in older fixtures) */
+    kinds?: Partial<Record<Exclude<NetworkKind, "person">, number>>;
+  };
   cut: { reached: number; drawn: number } | null;
   sentence: string;
   answer: string;
