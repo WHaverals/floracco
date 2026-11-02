@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { NetworkAct, NetworkAppearance, NetworkCircle, NetworkKind } from "../types";
 import { labelWidth, layoutCircle, pairKey, tieWidth, windowTies, type NetworkLayout, type PlacedLine, type PlacedNode } from "../utils/networkLayout";
-import { pairSelect, sameSelect, type NetworkHubs, type NetworkSelect } from "../utils/networkSpec";
+import { duplicateNames, pairSelect, sameSelect, type NetworkHubs, type NetworkSelect } from "../utils/networkSpec";
 import { roleLabel } from "../utils/roles";
 
 /* The circle of one entry as a figure (docs/network/step1_contract.md §3,
@@ -14,16 +14,25 @@ import { roleLabel } from "../utils/roles";
  * heirs), the spokes and parent lines always, the other ties light at one
  * step and on hover or selection at two, labels at rest for the centre, the
  * hubs, the best-connected entries and every ring-1 entry when the ring has
- * room, and the house dark balloon on hover: who, how many acts in what
- * roles, how tied to the entry it hangs from, one qualifier. A mark or its
- * label selects the entry; a line selects the pair; the selected mark again,
- * or empty stage, clears. The page keeps the selection and fills the side
- * column.
+ * room. A mark or its label selects the entry; a line selects the pair; the
+ * selected mark again, or empty stage, clears. The page keeps the selection
+ * and fills the side column.
+ *
+ * The reading card (step 2c, docs/network/step2c_contract.md §2): a hover does
+ * two things in two places. On the drawing the entry is lit, its lines lit,
+ * its co-signers labelled and the rest dimmed; at the stage's top, in a band
+ * the circle is inscribed below (cardBand), a fixed card says who, how many
+ * acts in what roles, how tied to the entry it hangs from, and the
+ * qualifiers, at most five sentences run together. At rest the card reads the
+ * centre; a hover on a mark, a label or a line fills it; so does a
+ * side-column row (the `highlight` prop) and a year on the strip
+ * (`yearCard`); a selection pins it while the pointer is over nothing. The
+ * card never catches the pointer and nothing floats over the figure.
  *
  * The window (step 2a, `years`): the mask of utils/networkLayout.ts
  * (windowTies) decides which lines are drawn and how wide; nothing moves. An
  * entry left with no tie inside is faded to 30% and keeps its place and its
- * label rule; the balloon's tie line adds the acts inside the window. With no
+ * label rule; the card's tie line adds the acts inside the window. With no
  * window the figure is the full picture. */
 
 export const KIND_WORDS: Record<NetworkKind, string> = {
@@ -34,8 +43,8 @@ export const KIND_WORDS: Record<NetworkKind, string> = {
   placeholder: "placeholder",
 };
 
-/** The balloon's line for a non-person entry: the kind is a rule over the
- * name fields, so it is said as the name reads, with no claim of a record. */
+/** The card's line for a non-person entry: the kind is a rule over the name
+ * fields, so it is said as the name reads, with no claim of a record. */
 const KIND_LINES: Record<Exclude<NetworkKind, "person">, string> = {
   institution: "An institution, by the name as entered.",
   estate: "An estate, by the name as entered.",
@@ -74,15 +83,33 @@ const LABEL_YIELD = 14;
 const LABEL_NEAR = 6;
 const LABEL_FAR = 34;
 const STAGGER_SIN = Math.sin((20 * Math.PI) / 180);
-/** The balloon stands this far from the mark, and this far inside the stage. */
-const TIP_GAP = 10;
-const TIP_EDGE = 6;
-const TIP_ACTS_LISTED = 3;
-const LINE_TIP_LISTED = 5;
+/** The card lists a tie's acts up to this many, a line's up to this many, and
+ * never runs past CARD_LINES lines. */
+const CARD_ACTS_LISTED = 3;
+const LINE_CARD_LISTED = 5;
+const CARD_LINES = 5;
 const HUB_ACTS = 20;
+/** The card's band at the stage's top: 12 px above and below the card, the
+ * card's border and padding, the head's row, and as many rows of Inter
+ * 0.78rem as the longest card (CARD_CHARS characters at CARD_CHAR_W px each)
+ * needs at the stage's width. Fixed per width, so nothing moves on hover. */
+const CARD_EDGE = 12;
+const CARD_FRAME = 2 + 8 + 9 + 21 + 3;
+const CARD_ROW = 18.2;
+const CARD_CHARS = 280;
+const CARD_CHAR_W = 6.2;
+const CARD_PAD_X = 22;
+
+function cardBand(width: number): number {
+  const rows = Math.max(1, Math.ceil(CARD_CHARS / ((width - 2 * CARD_EDGE - CARD_PAD_X) / CARD_CHAR_W)));
+  return Math.round(2 * CARD_EDGE + CARD_FRAME + rows * CARD_ROW);
+}
 
 type Hover = { kind: "node"; id: number } | { kind: "line"; key: string };
-type TipSide = "right" | "left" | "above" | "below";
+/** What the card reads: its head (the name and number, or the year) and the lines under it. */
+type Card = { state: "rest" | "entry" | "line" | "year" | "pinned"; head: ReactNode; lines: string[] };
+/** A year's facts from the strip, for the card. */
+export type YearCard = { head: string; line: string };
 
 const num = (n: number) => n.toLocaleString("en-US");
 
@@ -149,7 +176,7 @@ function windowWords(years: [number, number]): string {
   return years[0] === years[1] ? String(years[0]) : `${years[0]}–${years[1]}`;
 }
 
-/** The balloon's second line: acts in view, their span, the roles by count. */
+/** The card's second line: acts in view, their span, the roles by count. */
 function actsLine(placed: PlacedNode, appearances: NetworkAppearance[]): string {
   const node = placed.node;
   const total = node.acts_in_view;
@@ -194,12 +221,13 @@ export default function NetworkFigure({
   selected,
   highlight,
   years = null,
+  yearCard = null,
   labelAll,
   onSelect,
   onHover,
 }: {
   data: NetworkCircle;
-  /** the hub state in force; nothing in the balloon reads it now, the key may */
+  /** the hub state in force; nothing in the card reads it now, the key may */
   hubs: NetworkHubs;
   selected: NetworkSelect | null;
   /** an entry lit from a side-column row, as hover lights it; or a set of
@@ -207,6 +235,8 @@ export default function NetworkFigure({
   highlight: number | ReadonlySet<number> | null;
   /** the window on the strip; null for all years */
   years?: [number, number] | null;
+  /** the hovered strip year's facts, read by the card while the strip lights its signers */
+  yearCard?: YearCard | null;
   labelAll: boolean;
   /** null clears: the selected mark clicked again, or empty stage */
   onSelect: (select: NetworkSelect | null) => void;
@@ -215,10 +245,8 @@ export default function NetworkFigure({
 }) {
   void hubs;
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const tipRef = useRef<HTMLDivElement | null>(null);
   const [frame, setFrame] = useState({ width: 0, height: 0 });
   const [hover, setHover] = useState<Hover | null>(null);
-  const [nudge, setNudge] = useState({ key: "", dx: 0, dy: 0 });
 
   // The stage's own box, measured; the layout fits it, one unit one pixel.
   useEffect(() => {
@@ -240,14 +268,20 @@ export default function NetworkFigure({
     return () => observer.disconnect();
   }, []);
 
+  // The card's band at the stage's top is reserved: the circle is inscribed
+  // in the stage below it, so the card never covers a mark, and the band's
+  // height follows the stage's width only, never the card's content.
+  const band = frame.width > 0 ? cardBand(frame.width) : 0;
   const layout: NetworkLayout | null = useMemo(
-    () => (frame.width > 0 && frame.height > 0 ? layoutCircle(data, frame) : null),
-    [data, frame],
+    () => (frame.width > 0 && frame.height - band > 0 ? layoutCircle(data, { width: frame.width, height: frame.height - band }) : null),
+    [data, frame, band],
   );
-  // The balloon is hidden during a relayout.
+  // A relayout drops the hover: the marks have moved under the pointer.
   useEffect(() => setHover(null), [layout]);
 
   const actsById = useMemo(() => new Map(data.acts.map((act) => [act.id, act])), [data]);
+  /** the stored names two or more drawn entries share, for the card's namesake line */
+  const duplicates = useMemo(() => duplicateNames(data.nodes), [data]);
   const appearancesByPerson = useMemo(() => {
     const map = new Map<number, NetworkAppearance[]>();
     for (const appearance of data.appearances) {
@@ -368,118 +402,108 @@ export default function NetworkFigure({
     return false;
   };
 
-  // The balloon stands outward from the mark: beside it in the left and right
-  // halves, above or below it in the twelve and six o'clock sectors, and is
-  // nudged inside the stage when it would cross an edge.
-  const tipAnchor = (placed: PlacedNode): { side: TipSide; x: number; y: number } => {
-    const { x, y, r, angle, ring } = placed;
-    const s = Math.sin(angle);
-    const c = Math.cos(angle);
-    if (ring !== 0 && Math.abs(s) < STAGGER_SIN) {
-      return c > 0 ? { side: "above", x, y: y - r - TIP_GAP } : { side: "below", x, y: y + r + TIP_GAP };
-    }
-    return s < 0 ? { side: "left", x: x - r - TIP_GAP, y } : { side: "right", x: x + r + TIP_GAP, y };
-  };
-
-  /** "; 4 in 1640–1649" for the balloon's tie line while a window is set. */
+  /** "; 4 in 1640–1649" for the card's tie line while a window is set. */
   const insideWords = (acts: number[]): string => {
     if (!years) return "";
     const inside = acts.filter((id) => mask.inside.has(id)).length;
     return `; ${num(inside)} in ${windowWords(years)}`;
   };
 
-  const nodeTip = (placed: PlacedNode): ReactNode => {
+  const entryHead = (placed: PlacedNode): ReactNode => (
+    <>
+      {placed.label} <span className="nw-side-id">entry {placed.node.id}</span>
+    </>
+  );
+
+  /** The card for one entry: name and number; acts in view, span and roles;
+   * the tie to the entry it hangs from (none on the centre); then, each only
+   * when true, the qualifiers, cut where the card would pass CARD_LINES. */
+  const entryCard = (placed: PlacedNode, state: Card["state"]): Card => {
     const node = placed.node;
     const appearances = appearancesByPerson.get(node.id) ?? [];
     const anchor = placed.anchor !== null && layout ? layout.byId.get(placed.anchor) : undefined;
     const shared = anchor ? sortByDate(layout?.sharedActs.get(pairKey(node.id, anchor.node.id)) ?? [], actsById) : [];
-    let tie: string | null = null;
+    const lines: string[] = [actsLine(placed, appearances)];
     if (anchor && shared.length) {
       const lead = placed.ring === 1 ? `With ${anchor.label}` : `In this circle through ${anchor.label}`;
-      tie =
-        shared.length <= TIP_ACTS_LISTED
+      const tie =
+        shared.length <= CARD_ACTS_LISTED
           ? `${lead}: ${shared.length === 1 ? "act" : "acts"} ${shared.map((id) => actRef(id, actsById)).join(", ")}`
           : `${lead}: ${actsTogether(shared, actsById)}`;
-      tie += `${insideWords(shared)}.`;
+      lines.push(`${tie}${insideWords(shared)}.`);
     }
-    return (
-      <>
-        <strong>
-          {placed.label} <span className="nw-tip-id">entry {node.id}</span>
-        </strong>
-        <span>{actsLine(placed, appearances)}</span>
-        {tie && <span>{tie}</span>}
-        {node.woman && <span>Recorded as woman.</span>}
-        {node.kind !== "person" && <span>{KIND_LINES[node.kind]}</span>}
-        {node.acts_total > HUB_ACTS && <span>On {num(node.acts_total)} acts in the corpus.</span>}
-        {placed.heirsOnly && <span>Appears here only through heirs.</span>}
-      </>
-    );
+    if (node.woman) lines.push("Recorded as woman.");
+    if (node.kind !== "person") lines.push(KIND_LINES[node.kind]);
+    if (node.acts_total > HUB_ACTS) lines.push(`On ${num(node.acts_total)} acts in the corpus.`);
+    if (placed.heirsOnly) lines.push("Appears here only through heirs.");
+    if (duplicates.has(node.name)) {
+      const others = data.nodes.filter((other) => other.name === node.name && other.id !== node.id).map((other) => `entry ${other.id}`);
+      lines.push(`Same name as ${others.join(", ")}, as entered.`);
+    }
+    return { state, head: entryHead(placed), lines: lines.slice(0, CARD_LINES - 1) };
   };
 
-  const lineTip = (line: PlacedLine): ReactNode => {
-    const a = layout?.byId.get(line.a);
-    const b = layout?.byId.get(line.b);
-    const acts = sortByDate(line.acts, actsById);
+  /** The card for a pair: both names and numbers; the acts together, listed
+   * up to LINE_CARD_LISTED, one more named as such, beyond that the span. */
+  const pairCard = (a: PlacedNode, b: PlacedNode, shared: number[], state: Card["state"]): Card => {
+    const acts = sortByDate(shared, actsById);
     let text: string;
     if (acts.length === 1) {
-      const firm = actsById.get(acts[0])?.firm_name;
+      const firm = actsById.get(acts[0])?.firm_name?.trim();
       text = `One act together: ${actRef(acts[0], actsById)}${firm ? `, in the firm ${firm}` : ""}`;
-    } else if (acts.length <= LINE_TIP_LISTED) {
+    } else if (acts.length <= LINE_CARD_LISTED) {
       text = `${num(acts.length)} acts together: ${acts.map((id) => actRef(id, actsById)).join(", ")}`;
-    } else if (acts.length === LINE_TIP_LISTED + 1) {
+    } else if (acts.length === LINE_CARD_LISTED + 1) {
       text = `${num(acts.length)} acts together: ${acts
-        .slice(0, LINE_TIP_LISTED)
+        .slice(0, LINE_CARD_LISTED)
         .map((id) => actRef(id, actsById))
         .join(", ")}, and one more`;
     } else {
       text = actsTogether(acts, actsById);
     }
-    text += `${insideWords(acts)}.`;
-    return (
-      <>
-        <strong>
-          {a?.label} <span className="nw-tip-id">entry {line.a}</span> and {b?.label} <span className="nw-tip-id">entry {line.b}</span>
-        </strong>
-        <span>{text}</span>
-      </>
-    );
+    return {
+      state,
+      head: (
+        <>
+          {entryHead(a)} and {entryHead(b)}
+        </>
+      ),
+      lines: [`${text}${insideWords(acts)}.`],
+    };
   };
 
-  const tip = (() => {
-    if (!hover || !layout) return null;
-    if (hover.kind === "node") {
+  // What the card reads, first match: the mark, label or line under the
+  // pointer; the side-column row under it; the strip year under it; the
+  // selection, while the pointer is over nothing; the centre.
+  const card = ((): Card | null => {
+    if (!layout) return null;
+    if (hover?.kind === "node") {
       const placed = layout.byId.get(hover.id);
-      if (!placed) return null;
-      return { key: `n${hover.id}`, ...tipAnchor(placed), body: nodeTip(placed) };
+      if (placed) return entryCard(placed, "entry");
     }
-    const line = linesByKey.get(hover.key);
-    if (!line) return null;
-    const a = layout.byId.get(line.a);
-    const b = layout.byId.get(line.b);
-    if (!a || !b) return null;
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    const side: TipSide = my < layout.cy ? "below" : "above";
-    return { key: `l${line.key}`, side, x: mx, y: side === "below" ? my + TIP_GAP : my - TIP_GAP, body: lineTip(line) };
+    if (hoveredLine) {
+      const a = layout.byId.get(hoveredLine.a);
+      const b = layout.byId.get(hoveredLine.b);
+      if (a && b) return pairCard(a, b, hoveredLine.acts, "line");
+    }
+    if (typeof highlight === "number") {
+      const placed = layout.byId.get(highlight);
+      if (placed) return entryCard(placed, "entry");
+    }
+    if (yearCard) return { state: "year", head: yearCard.head, lines: [yearCard.line] };
+    if (selectedPerson !== null) {
+      const placed = layout.byId.get(selectedPerson);
+      if (placed) return entryCard(placed, "pinned");
+    }
+    if (selectedPair) {
+      const a = layout.byId.get(selectedPair.a);
+      const b = layout.byId.get(selectedPair.b);
+      const shared = layout.sharedActs.get(pairKey(selectedPair.a, selectedPair.b));
+      if (a && b && shared?.length) return pairCard(a, b, shared, "pinned");
+    }
+    const centre = layout.byId.get(data.centre);
+    return centre ? entryCard(centre, "rest") : null;
   })();
-
-  // The edge-hug fallback: once drawn, a balloon crossing the stage's edge is moved inside.
-  useLayoutEffect(() => {
-    const el = tipRef.current;
-    const stage = stageRef.current;
-    if (!el || !stage || !tip) return;
-    const box = el.getBoundingClientRect();
-    const host = stage.getBoundingClientRect();
-    const current = nudge.key === tip.key ? nudge : { key: tip.key, dx: 0, dy: 0 };
-    let dx = current.dx;
-    let dy = current.dy;
-    if (box.left < host.left + TIP_EDGE) dx += host.left + TIP_EDGE - box.left;
-    else if (box.right > host.right - TIP_EDGE) dx -= box.right - (host.right - TIP_EDGE);
-    if (box.top < host.top + TIP_EDGE) dy += host.top + TIP_EDGE - box.top;
-    else if (box.bottom > host.bottom - TIP_EDGE) dy -= box.bottom - (host.bottom - TIP_EDGE);
-    if (nudge.key !== tip.key || Math.abs(dx - nudge.dx) > 0.5 || Math.abs(dy - nudge.dy) > 0.5) setNudge({ key: tip.key, dx, dy });
-  });
 
   const enterNode = (id: number) => {
     setHover({ kind: "node", id });
@@ -536,9 +560,9 @@ export default function NetworkFigure({
     <div ref={stageRef} className="nw-stage" onMouseLeave={leaveNode}>
       {layout && (
         <svg
-          viewBox={`0 0 ${layout.width} ${layout.height}`}
-          width={layout.width}
-          height={layout.height}
+          viewBox={`0 0 ${frame.width} ${frame.height}`}
+          width={frame.width}
+          height={frame.height}
           role="img"
           aria-label={data.sentence}
           data-labels-rest={rest.shown.size}
@@ -546,92 +570,91 @@ export default function NetworkFigure({
           data-labels-overlap={rest.yielded.overlap}
           data-faded={mask.faded.size}
           data-lines={lines.length}
+          data-band={band}
         >
-          <rect className="nw-stage-bg" x={0} y={0} width={layout.width} height={layout.height} onClick={() => onSelect(null)} />
-          <g>
-            {drawn.map((line) => {
-              const a = layout.byId.get(line.a)!;
-              const b = layout.byId.get(line.b)!;
-              const hovered = hover?.kind === "line" ? hover.key === line.key : litLine(line);
-              const selectedLine = chosen(line);
-              const cls = [
-                "nw-line",
-                `is-${line.kind}`,
-                hovered ? "is-active" : "",
-                selectedLine ? "is-selected" : "",
-                (hover || highlight !== null) && !hovered && !selectedLine ? "is-dim" : "",
-              ]
-                .filter(Boolean)
-                .join(" ");
-              const hit = line.kind !== "tie" || oneStep || selectedLine;
-              return (
-                <g key={line.key}>
-                  <line className={cls} x1={a.x} y1={a.y} x2={b.x} y2={b.y} strokeWidth={line.width} />
-                  {hit && (
-                    <line
-                      className={`nw-hit-line is-${line.kind}`}
-                      x1={a.x}
-                      y1={a.y}
-                      x2={b.x}
-                      y2={b.y}
-                      onMouseEnter={() => setHover({ kind: "line", key: line.key })}
-                      onMouseLeave={() => setHover(null)}
-                      onClick={() => clickLine(line)}
-                    />
-                  )}
-                </g>
-              );
-            })}
+          <rect className="nw-stage-bg" x={0} y={0} width={frame.width} height={frame.height} onClick={() => onSelect(null)} />
+          <g transform={`translate(0 ${band})`}>
+            <g>
+              {drawn.map((line) => {
+                const a = layout.byId.get(line.a)!;
+                const b = layout.byId.get(line.b)!;
+                const hovered = hover?.kind === "line" ? hover.key === line.key : litLine(line);
+                const selectedLine = chosen(line);
+                const cls = [
+                  "nw-line",
+                  `is-${line.kind}`,
+                  hovered ? "is-active" : "",
+                  selectedLine ? "is-selected" : "",
+                  (hover || highlight !== null) && !hovered && !selectedLine ? "is-dim" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ");
+                const hit = line.kind !== "tie" || oneStep || selectedLine;
+                return (
+                  <g key={line.key}>
+                    <line className={cls} x1={a.x} y1={a.y} x2={b.x} y2={b.y} strokeWidth={line.width} />
+                    {hit && (
+                      <line
+                        className={`nw-hit-line is-${line.kind}`}
+                        x1={a.x}
+                        y1={a.y}
+                        x2={b.x}
+                        y2={b.y}
+                        onMouseEnter={() => setHover({ kind: "line", key: line.key })}
+                        onMouseLeave={() => setHover(null)}
+                        onClick={() => clickLine(line)}
+                      />
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+            <g>
+              {layout.nodes.map((placed) => {
+                const id = placed.node.id;
+                const near =
+                  lit !== null
+                    ? id === lit || Boolean(litNeighbours?.has(id))
+                    : litSet !== null
+                      ? litSet.has(id)
+                      : hoveredLine
+                        ? hoveredLine.a === id || hoveredLine.b === id
+                        : true;
+                const cls = [
+                  "nw-node",
+                  placed.ring === 0 ? "is-centre" : "",
+                  isSelectedNode(id) ? "is-selected" : "",
+                  signersOfSelectedAct.has(id) ? "is-signer" : "",
+                  id === lit || (litSet !== null && litSet.has(id)) ? "is-hover" : "",
+                  (hover || highlight !== null) && !near && !isSelectedNode(id) ? "is-dim" : "",
+                  mask.faded.has(id) ? "is-faded" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ");
+                return (
+                  <g
+                    key={id}
+                    className={cls}
+                    data-id={id}
+                    onMouseEnter={() => enterNode(id)}
+                    onMouseLeave={leaveNode}
+                    onClick={() => clickNode(id)}
+                  >
+                    {placed.node.hub && <circle className="nw-hub-ring" cx={placed.x} cy={placed.y} r={placed.r + 3.5} />}
+                    {mark(placed)}
+                    <circle className="nw-hit" cx={placed.x} cy={placed.y} r={Math.max(12, placed.r + 4)} />
+                  </g>
+                );
+              })}
+            </g>
+            <g>{layout.nodes.filter(labelled).map(label)}</g>
           </g>
-          <g>
-            {layout.nodes.map((placed) => {
-              const id = placed.node.id;
-              const near =
-                lit !== null
-                  ? id === lit || Boolean(litNeighbours?.has(id))
-                  : litSet !== null
-                    ? litSet.has(id)
-                    : hoveredLine
-                      ? hoveredLine.a === id || hoveredLine.b === id
-                      : true;
-              const cls = [
-                "nw-node",
-                placed.ring === 0 ? "is-centre" : "",
-                isSelectedNode(id) ? "is-selected" : "",
-                signersOfSelectedAct.has(id) ? "is-signer" : "",
-                id === lit || (litSet !== null && litSet.has(id)) ? "is-hover" : "",
-                (hover || highlight !== null) && !near && !isSelectedNode(id) ? "is-dim" : "",
-                mask.faded.has(id) ? "is-faded" : "",
-              ]
-                .filter(Boolean)
-                .join(" ");
-              return (
-                <g
-                  key={id}
-                  className={cls}
-                  data-id={id}
-                  onMouseEnter={() => enterNode(id)}
-                  onMouseLeave={leaveNode}
-                  onClick={() => clickNode(id)}
-                >
-                  {placed.node.hub && <circle className="nw-hub-ring" cx={placed.x} cy={placed.y} r={placed.r + 3.5} />}
-                  {mark(placed)}
-                  <circle className="nw-hit" cx={placed.x} cy={placed.y} r={Math.max(12, placed.r + 4)} />
-                </g>
-              );
-            })}
-          </g>
-          <g>{layout.nodes.filter(labelled).map(label)}</g>
         </svg>
       )}
-      {tip && (
-        <div
-          ref={tipRef}
-          className={`nw-tip is-${tip.side}`}
-          style={{ left: tip.x + (nudge.key === tip.key ? nudge.dx : 0), top: tip.y + (nudge.key === tip.key ? nudge.dy : 0) }}
-          role="tooltip"
-        >
-          {tip.body}
+      {card && (
+        <div className="nw-card" data-state={card.state}>
+          <p className="nw-card-head">{card.head}</p>
+          <p className="nw-card-lines">{card.lines.join(" ")}</p>
         </div>
       )}
     </div>

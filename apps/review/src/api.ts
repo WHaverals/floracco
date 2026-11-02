@@ -671,3 +671,16 @@ export function loadNetworkCircle(
   if (params.widen.length) query.set("widen", params.widen.join("."));
   return request(`/api/network/circle/${personId}?${query.toString()}`);
 }
+
+/** The corpus before an entry is chosen: the answer line, the five figures, the
+ * decades and the two lists (docs/network/step2b_contract.md §2). */
+export function loadNetworkLanding(): Promise<import("./types").NetworkLanding> {
+  return request("/api/network/landing");
+}
+
+/** The firm view: the registrations carrying one stored firm name, their entries
+ * and later acts (docs/network/step3_contract.md §3). The name as stored on the
+ * act the reader came from; the server trims and folds case. */
+export function loadNetworkFirm(name: string): Promise<import("./types").NetworkFirm> {
+  return request(`/api/network/firm?${new URLSearchParams({ name }).toString()}`);
+}

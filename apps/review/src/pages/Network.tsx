@@ -1,10 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { loadNetworkCircle, searchPersonsRich } from "../api";
+import { loadNetworkCircle, loadNetworkFirm, searchPersonsRich } from "../api";
 import ContractDrawer, { ContractLink, drawerOrder, drawerRow } from "../components/ContractDrawer";
-import NetworkFigure, { KIND_WORDS, NetworkKey, appearanceNotes, roleWords } from "../components/NetworkFigure";
-import NetworkStrip from "../components/NetworkStrip";
-import type { NetworkAct, NetworkAppearance, NetworkCircle, NetworkNode, NetworkTie, PersonHit } from "../types";
+import FirmFigure, { FirmKey } from "../components/FirmFigure";
+import NetworkFigure, { KIND_WORDS, NetworkKey, appearanceNotes, roleWords, type YearCard } from "../components/NetworkFigure";
+import NetworkLanding from "../components/NetworkLanding";
+import NetworkStrip, { type StripHover } from "../components/NetworkStrip";
+import type {
+  NetworkAct,
+  NetworkAppearance,
+  NetworkCircle,
+  NetworkFirm,
+  NetworkFirmAct,
+  NetworkFirmCell,
+  NetworkFirmChange,
+  NetworkFirmRow,
+  NetworkNode,
+  NetworkTie,
+  PersonHit,
+} from "../types";
 import { useEscapeLayer } from "../utils/escapeLayers";
 import { useLatest } from "../utils/latest";
 import { ringOrder, windowTies } from "../utils/networkLayout";
@@ -40,10 +54,23 @@ import { roleLabel } from "../utils/roles";
  * time strip under the stage (components/NetworkStrip.tsx) and the window it
  * drags, `years` in the address; the mask (windowTies) is applied in the
  * client, nothing is refetched. While a window is set the rail carries the
- * window line with "All years", and the How card two more lines. */
+ * window line with "All years", and the How card two more lines.
+ *
+ * Step 2c (step2c_contract.md §2): the reading card in the stage's corner
+ * lives in the figure; the page feeds it what the figure cannot see, the
+ * side-column row under the pointer (`highlight`) and the strip year under it
+ * (`yearCard`, with the year's signers lit as before).
+ *
+ * Step 3 (docs/network/step3_contract.md §4): the firm view. "Follow this firm
+ * name" on an act row or in the act block's head sets `firm=` in the address;
+ * while it is set the figure column shows the registrations carrying that
+ * stored name (components/FirmFigure.tsx, from GET /api/network/firm), the
+ * rail the firm's sentence and answer with "‹ Back to the circle", and the
+ * side column the registrations at rest, or the selected entry or act over
+ * the firm's rows. The circle's keys stay in the address, so Back returns the
+ * circle as it was; a link with `firm=` and no entry shows the firm alone. */
 
 const FIXTURE_KEY = "fixture";
-const STANDING_LINE = "Person entries are counted as entered; one person may have several.";
 const DROPPED_LINE = "Part of this link asks for a setting this page does not offer; it was left out.";
 const OPEN_TITLE = "The full record, where it can be edited, in a new tab";
 const ALL_YEARS = "All years";
@@ -51,6 +78,9 @@ const ALL_YEARS = "All years";
 const HOW_WINDOW = (window: string) =>
   `Only acts registered ${window} make ties, and a tie's width counts those acts. An entry with no act in those years is faded and keeps its place.`;
 const HOW_DRAG = "Drag the end earlier to see the circle as it stood in that year.";
+/** The firm view's entry point on act rows and in the act block's head, and its way back. */
+const FOLLOW_FIRM = "Follow this firm name";
+const BACK_TO_CIRCLE = "‹ Back to the circle";
 /** Under 1400 px the side column stands under the figure and the How card folds. */
 const NARROW = "(max-width: 1399px)";
 
@@ -65,16 +95,16 @@ function shown(value: string | null | undefined): string {
   return text && text !== "—" ? text : "not recorded";
 }
 
-function dateWords(act: NetworkAct): string {
+function dateWords(act: Pick<NetworkAct, "date">): string {
   return !act.date || act.date.startsWith("0000") ? "no registration date" : act.date;
 }
 
-function placeWords(act: NetworkAct): string {
+function placeWords(act: Pick<NetworkAct, "places" | "places_inferred">): string {
   if (act.places.length === 0) return "not recorded";
   return `${act.places.join("; ")}${act.places_inferred ? " (marked as inferred)" : ""}`;
 }
 
-function cashWords(appearance: NetworkAppearance, act: NetworkAct | undefined): string {
+function cashWords(appearance: Pick<NetworkAppearance, "cash" | "non_cash">, act: Pick<NetworkAct, "currency"> | undefined): string {
   const parts: string[] = [];
   if (appearance.cash !== null) parts.push(`${appearance.cash.toLocaleString("en-US")}${act?.currency ? ` ${act.currency}` : ""}`);
   if (appearance.non_cash) parts.push(`non-cash: ${appearance.non_cash}`);
@@ -86,6 +116,45 @@ function roleCell(appearance: NetworkAppearance): string {
   const role = appearance.role ? roleWords(appearance.role) : "no role recorded";
   const notes = appearanceNotes(appearance);
   return notes.length ? `${role}, ${notes.join(", ")}` : role;
+}
+
+/** The stored firm name an act row can be followed by: trimmed of ASCII and
+ * non-breaking space at the ends (the server trims the same way); null when blank. */
+function firmNameOf(act: Pick<NetworkAct, "firm_name">): string | null {
+  const name = (act.firm_name ?? "").replace(/^[\s\u00a0]+|[\s\u00a0]+$/g, "");
+  return name || null;
+}
+
+/** A firm cell as an appearance, for the words the circle's rows use. */
+function cellAppearance(cell: NetworkFirmCell, rowId: number, actId: number): NetworkAppearance {
+  return { person: rowId, act: actId, ...cell };
+}
+
+/** "renewal 1662-09-10 · termination 1700-01-05": a registration's later acts, as stored. */
+function laterWords(act: NetworkFirmAct): string {
+  return act.later.map((later) => `${later.kind.trim() || "later act"} ${dateWords(later)}`).join(" · ");
+}
+
+/** "1659 → 1664: 4 stayed, 1 left, 1 joined" between two consecutive dated registrations. */
+function changeLine(change: NetworkFirmChange, actsById: Map<number, NetworkFirmAct>): string {
+  const year = (id: number) => actsById.get(id)?.year ?? "no date";
+  return `${year(change.from)} → ${year(change.to)}: ${change.stayed} stayed, ${change.left} left, ${change.joined} joined`;
+}
+
+/** "3 acts under this firm name, 1669–1690; general partner" for the firm's entry block. */
+function firmRowFacts(row: NetworkFirmRow, acts: NetworkFirmAct[]): string {
+  const mine = acts.filter((act) => row.cells[String(act.id)]);
+  const years = mine.map((act) => act.year).filter((y): y is number => typeof y === "number" && y > 0);
+  const span = years.length ? (Math.min(...years) === Math.max(...years) ? String(years[0]) : `${Math.min(...years)}–${Math.max(...years)}`) : "";
+  const undated = mine.length - years.length;
+  const roles = [...new Set(mine.map((act) => row.cells[String(act.id)].role).filter((role): role is string => Boolean(role)))]
+    .flatMap((role) => (role === "both" ? ["gp", "lp"] : [role]))
+    .filter((role, i, all) => all.indexOf(role) === i)
+    .sort()
+    .map((role) => roleLabel(role).toLowerCase())
+    .join(" and ");
+  const when = [span, undated > 0 ? `${undated} with no registration date` : ""].filter(Boolean).join("; ");
+  return `${mine.length === 1 ? "One act" : `${mine.length.toLocaleString("en-US")} acts`} under this firm name${when ? `, ${when}` : ""}${roles ? `; ${roles}` : ""}.`;
 }
 
 function yearsWords(node: NetworkNode): string {
@@ -167,8 +236,15 @@ export default function Network() {
   /** an entry lit from a side-column row, or the set of a year's signers lit from the strip */
   const [cosignerOrder, setCosignerOrder] = useState<CosignerOrder>("first");
   const [highlight, setHighlight] = useState<number | Set<number> | null>(null);
+  /** the strip year under the pointer, for the card; set with `highlight` */
+  const [yearCard, setYearCard] = useState<YearCard | null>(null);
   /** the entry an act was opened from, for "‹ Back to {name}" */
   const [backTo, setBackTo] = useState<{ act: number; entry: number } | null>(null);
+  /** the firm view's data while `firm=` is set */
+  const [firmData, setFirmData] = useState<NetworkFirm | null>(null);
+  const [firmLoading, setFirmLoading] = useState(false);
+  const [firmError, setFirmError] = useState("");
+  const [firmAttempt, setFirmAttempt] = useState(0);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<PersonHit[] | null>(null);
   const [searchFailed, setSearchFailed] = useState(false);
@@ -177,6 +253,8 @@ export default function Network() {
   const side = useRef<HTMLElement | null>(null);
   const beginLoad = useLatest();
   const beginSearch = useLatest();
+  const beginFirm = useLatest();
+  const firmFor = useRef<string | null>(null);
   const narrow = useMedia(NARROW);
 
   // Read a link (or Back/Forward) into the state; our own writes never re-read.
@@ -239,6 +317,42 @@ export default function Network() {
       });
   }, [personId, key, fixture, attempt, beginLoad]);
 
+  // The firm view, from the server (or the fixture in development), while
+  // `firm=` is set; another name starts from nothing, a retry keeps the drawing.
+  useEffect(() => {
+    const name = state.firm;
+    if (!name) {
+      setFirmData(null);
+      setFirmError("");
+      setFirmLoading(false);
+      firmFor.current = null;
+      beginFirm();
+      return;
+    }
+    if (firmFor.current !== name) {
+      setFirmData(null);
+      firmFor.current = name;
+    }
+    const fresh = beginFirm();
+    setFirmLoading(true);
+    setFirmError("");
+    const request = fixture
+      ? import("../dev/network-firm-fixture.json").then((module) => module.default as unknown as NetworkFirm)
+      : loadNetworkFirm(name);
+    request
+      .then((data) => {
+        if (!fresh()) return;
+        setFirmData(data);
+        setFirmLoading(false);
+      })
+      .catch((e: Error) => {
+        if (!fresh()) return;
+        setFirmError(e.message);
+        setFirmData(null);
+        setFirmLoading(false);
+      });
+  }, [state.firm, fixture, firmAttempt, beginFirm]);
+
   // The person search in the rail.
   useEffect(() => {
     const term = query.trim();
@@ -266,7 +380,14 @@ export default function Network() {
   /** the window's counts for the rail line; the figure applies the same mask */
   const mask = useMemo(() => (circle && state.years ? windowTies(circle, state.years) : null), [circle, state.years]);
   // A circle drawn afresh carries no lit entries over.
-  useEffect(() => setHighlight(null), [circle]);
+  useEffect(() => {
+    setHighlight(null);
+    setYearCard(null);
+  }, [circle]);
+  const hoverYear = (hover: StripHover | null) => {
+    setHighlight(hover ? hover.ids : null);
+    setYearCard(hover ? { head: hover.head, line: hover.line } : null);
+  };
 
   const setSelect = (select: NetworkSelect | null) => {
     setBackTo(null);
@@ -275,10 +396,11 @@ export default function Network() {
   const update = (next: Partial<NetworkState>) => setState((s) => ({ ...s, ...next }));
   useEscapeLayer(state.select !== null && drawer === null, () => setSelect(null));
 
-  // Opening another entry's circle keeps the controls and drops the selection;
-  // it is pushed, so Back returns to this circle.
+  // Opening another entry's circle keeps the controls and drops the selection,
+  // the window (another entry's acts lie in other years) and the firm; it is
+  // pushed, so Back returns to this circle.
   const openEntry = (entryId: number) => {
-    const controls = withFixture(networkSearch({ ...state, select: null }), fixture);
+    const controls = withFixture(networkSearch({ ...state, select: null, years: null, firm: null }), fixture);
     setQuery("");
     setHits(null);
     navigate(`/network/person/${entryId}${controls ? `?${controls}` : ""}`);
@@ -292,6 +414,36 @@ export default function Network() {
       ? { a: nodesById.get(state.select.a)!, b: nodesById.get(state.select.b)!, tie: tiesByPair.get(pairKey(state.select.a, state.select.b)) }
       : null;
   const drawn = selectedNode !== null || selectedAct !== null || selectedPair !== null;
+
+  // The firm view's lookups and what its side column shows: a selected entry
+  // or act the firm holds; any other selection reads as rest.
+  const firm = state.firm !== null;
+  const firmActsById = useMemo(() => new Map((firmData?.acts ?? []).map((act) => [act.id, act])), [firmData]);
+  const firmRowsById = useMemo(() => new Map((firmData?.rows ?? []).map((row) => [row.id, row])), [firmData]);
+  const firmDuplicates = useMemo(() => duplicateNames(firmData?.rows ?? []), [firmData]);
+  const firmLabel = (row: NetworkFirmRow) => nodeLabel(row, firmDuplicates);
+  const firmRow = firm && state.select?.kind === "person" ? firmRowsById.get(state.select.id) ?? null : null;
+  const firmAct = firm && state.select?.kind === "contract" ? firmActsById.get(state.select.id) ?? null : null;
+  const firmDrawn = firmRow !== null || firmAct !== null;
+  const firmRowActs = useMemo(
+    () => (firmData && firmRow ? firmData.acts.filter((act) => firmRow.cells[String(act.id)]).map((act) => ({ act, cell: firmRow.cells[String(act.id)] })) : []),
+    [firmData, firmRow],
+  );
+  const firmActSigners = useMemo(() => {
+    if (!firmData || !firmAct) return [];
+    const rank = (role: string | null) => (role === "gp" ? 0 : role === "both" ? 1 : role === "lp" ? 2 : 3);
+    return firmData.rows
+      .filter((row) => row.cells[String(firmAct.id)])
+      .map((row) => ({ row, cell: row.cells[String(firmAct.id)] }))
+      .sort((p, q) => rank(p.cell.role) - rank(q.cell.role) || p.row.name.localeCompare(q.row.name) || p.row.id - q.row.id);
+  }, [firmData, firmAct]);
+  const firmChangeByFrom = useMemo(() => new Map((firmData?.changes ?? []).map((change) => [change.from, change])), [firmData]);
+  const followFirm = (act: Pick<NetworkAct, "firm_name">) => {
+    const name = firmNameOf(act);
+    if (name) update({ firm: name });
+  };
+  /** the firm's data while the firm view is up; the circle's otherwise */
+  const shownData = firm ? firmData : circle;
 
   const cosigners = useMemo(() => (circle ? sortCosigners(circle, cosignerOrder, order).map((row) => row.node) : []), [circle, cosignerOrder, order]);
   // The sentences over the loaded data (utils/networkWords.ts): who recurs, the
@@ -327,8 +479,21 @@ export default function Network() {
     }));
   }, [circle, selectedPair, actsById]);
   const listOrder = useMemo(
-    () => drawerOrder(selectedAct ? [selectedAct.id] : selectedPair ? pairActs.map((row) => row.act.id) : nodeAppearances.map((row) => row.act.id)),
-    [selectedAct, selectedPair, pairActs, nodeAppearances],
+    () =>
+      drawerOrder(
+        firm
+          ? firmAct
+            ? [firmAct.id]
+            : firmRow
+              ? firmRowActs.map((row) => row.act.id)
+              : (firmData?.acts ?? []).map((act) => act.id)
+          : selectedAct
+            ? [selectedAct.id]
+            : selectedPair
+              ? pairActs.map((row) => row.act.id)
+              : nodeAppearances.map((row) => row.act.id),
+      ),
+    [firm, firmAct, firmRow, firmRowActs, firmData, selectedAct, selectedPair, pairActs, nodeAppearances],
   );
 
   // Previous / Next through the drawn entries in ring order.
@@ -369,8 +534,8 @@ export default function Network() {
       ? { label: "Draw it", apply: () => update({ others: "on" }) }
       : null;
 
-  const howLines = circle ? (state.years ? [...circle.how, HOW_WINDOW(windowWords(state.years)), HOW_DRAG] : circle.how) : [];
-  const howCard = circle && (
+  const howLines = firm ? (firmData?.how ?? []) : circle ? (state.years ? [...circle.how, HOW_WINDOW(windowWords(state.years)), HOW_DRAG] : circle.how) : [];
+  const howCard = shownData && (
     narrow ? (
       <details className="find-how nw-how">
         <summary>How this was drawn</summary>
@@ -416,7 +581,17 @@ export default function Network() {
           {" · "}
           <span className={act.firm_name ? undefined : "muted"}>{shown(act.firm_name)}</span>
         </p>
-        <p className="nw-act-line muted">{line2}</p>
+        <p className="nw-act-line muted">
+          {line2}
+          {firmNameOf(act) && (
+            <>
+              {" · "}
+              <button type="button" className="link-like nw-firm-follow" onClick={() => followFirm(act)}>
+                {FOLLOW_FIRM}
+              </button>
+            </>
+          )}
+        </p>
       </div>
       <button
         type="button"
@@ -431,7 +606,37 @@ export default function Network() {
     </li>
   );
 
-  const browserClass = ["db-browser", "nw-browser", circle ? "" : "is-bare", drawn ? "has-selection" : ""].filter(Boolean).join(" ");
+  /** A registration's row in the firm view: the act number, date, places and
+   * activity; its later acts on a muted second line; "{n} signers" selects it. */
+  const firmActRow = (act: NetworkFirmAct, line2: string | null, from: number | null) => (
+    <li key={act.id} {...drawerRow(act.id, drawer)}>
+      <div className="nw-act-main">
+        <p className="nw-act-line">
+          <ContractLink id={act.id} onOpen={setDrawer} />
+          {" · "}
+          <span className={dateWords(act) === "no registration date" ? "muted" : undefined}>{dateWords(act)}</span>
+          {" · "}
+          {placeWords(act)}
+          {" · "}
+          {shown(act.activity)}
+        </p>
+        {line2 && <p className="nw-act-line muted">{line2}</p>}
+        {act.later.length > 0 && <p className="nw-act-line muted nw-firm-later">{laterWords(act)}</p>}
+      </div>
+      <button
+        type="button"
+        className="link-like nw-act-signers"
+        onClick={() => {
+          setState((s) => ({ ...s, select: { kind: "contract", id: act.id } }));
+          setBackTo(from !== null ? { act: act.id, entry: from } : null);
+        }}
+      >
+        {count(act.signers, "signer", "signers")}
+      </button>
+    </li>
+  );
+
+  const browserClass = ["db-browser", "nw-browser", shownData ? "" : "is-bare", (firm ? firmDrawn : drawn) ? "has-selection" : ""].filter(Boolean).join(" ");
 
   return (
     <div className={browserClass}>
@@ -467,9 +672,27 @@ export default function Network() {
             </ul>
           )}
         </div>
-        {personId !== null && (
+        {(personId !== null || firm) && (
           <div className="nw-rail-body">
-            {circle ? (
+            {firm ? (
+              <>
+                {firmData ? (
+                  <>
+                    <p className="nw-sentence">{firmData.sentence}</p>
+                    <p className="nw-answer">{firmData.answer}</p>
+                  </>
+                ) : firmLoading ? (
+                  <p className="nw-answer">Loading…</p>
+                ) : null}
+                {personId !== null && (
+                  <p className="nw-firm-back">
+                    <button type="button" className="link-like" onClick={() => update({ firm: null })}>
+                      {BACK_TO_CIRCLE}
+                    </button>
+                  </p>
+                )}
+              </>
+            ) : circle ? (
               <>
                 <p className="nw-sentence">{circle.sentence}</p>
                 <p className="nw-answer">{circle.answer}</p>
@@ -478,6 +701,7 @@ export default function Network() {
             ) : loading ? (
               <p className="nw-answer">Loading…</p>
             ) : null}
+            <div className={firm ? "nw-controls nw-firm-dim" : "nw-controls"}>
             <div className="nw-control">
               <div className="db-tabs">
                 <button type="button" className={state.steps === 1 ? "db-tab is-active" : "db-tab"} onClick={() => update({ steps: 1 })}>
@@ -507,6 +731,7 @@ export default function Network() {
               <input type="checkbox" checked={state.others === "off"} onChange={(event) => update({ others: event.target.checked ? "off" : "on" })} />
               <span>Leave out {OTHERS_PHRASE}</span>
             </label>
+            </div>
             {state.widen.length > 0 && (
               <p className="muted nw-widened">
                 Widened from {state.widen.map((w) => `entry ${w}`).join(", ")}.{" "}
@@ -524,27 +749,45 @@ export default function Network() {
         )}
       </aside>
 
-      <section className={loading && circle ? "nw-main is-updating" : "nw-main"}>
-        {badId ? (
+      <section className={(firm ? firmLoading && firmData : loading && circle) ? "nw-main is-updating" : "nw-main"}>
+        {firm ? (
+          firmError ? (
+            <p className="error-text nw-error">
+              {firmError}{" "}
+              <button type="button" className="link-like" onClick={() => setFirmAttempt((n) => n + 1)}>
+                Try again
+              </button>
+            </p>
+          ) : !firmData ? (
+            <p className="muted nw-loading">Loading…</p>
+          ) : (
+            <>
+              <FirmFigure
+                data={firmData}
+                selected={state.select}
+                highlight={typeof highlight === "number" ? highlight : null}
+                onSelect={setSelect}
+                onHover={setHovered}
+              />
+              <FirmKey data={firmData} />
+            </>
+          )
+        ) : badId ? (
           <div className="nw-landing">
             <p className="eyebrow">Network</p>
             <h2>There is no entry at this address.</h2>
             <p className="muted">Search for a person entry to draw its circle.</p>
           </div>
         ) : personId === null ? (
-          <div className="nw-landing">
+          <div className="nw-landing nw-landing-wide">
             <p className="eyebrow">Network</p>
             <h2>The circle of one person entry</h2>
-            <p>
-              Search for a person entry to draw its circle: the entries that signed acts with it, and the entries that signed
-              with those, two steps out.
-            </p>
-            <p>{STANDING_LINE}</p>
             {dropped.length > 0 && (
               <p className="muted" title={dropped.join(", ")}>
                 {DROPPED_LINE}
               </p>
             )}
+            <NetworkLanding fixture={fixture || (Boolean(import.meta.env.DEV) && new URLSearchParams(search).get(FIXTURE_KEY) === "1")} />
           </div>
         ) : error ? (
           <p className="error-text nw-error">
@@ -569,6 +812,7 @@ export default function Network() {
               selected={state.select}
               highlight={highlight}
               years={state.years}
+              yearCard={yearCard}
               labelAll={labelAll}
               onSelect={setSelect}
               onHover={setHovered}
@@ -578,16 +822,144 @@ export default function Network() {
               centreName={nodesById.has(circle.centre) ? label(nodesById.get(circle.centre)!) : `entry ${circle.centre}`}
               years={state.years}
               onYears={(years) => update({ years })}
-              onHoverYear={setHighlight}
+              onHoverYear={hoverYear}
             />
             <NetworkKey data={circle} labelAll={labelAll} onLabelAll={setLabelAll} />
           </>
         )}
       </section>
 
-      {circle && (
+      {shownData && (
         <aside className="nw-side" ref={side}>
-          {!state.select ? (
+          {firm && firmData ? (
+            firmRow ? (
+              <section className="nw-side-block">
+                <header className="nw-side-head">
+                  <div className="nw-side-head-row">
+                    <p className="eyebrow">Person entry</p>
+                    {clearButton}
+                  </div>
+                  <h3>
+                    {firmLabel(firmRow)} <span className="nw-side-id">entry {firmRow.id}</span>
+                  </h3>
+                  <p className="nw-side-facts">
+                    {firmRow.kind !== "person" && (
+                      <span>
+                        Recorded as {firmRow.kind === "institution" || firmRow.kind === "estate" ? "an" : "a"} {KIND_WORDS[firmRow.kind]}.{" "}
+                      </span>
+                    )}
+                    {firmRow.woman && <span>Recorded as woman. </span>}
+                    <span>{firmRowFacts(firmRow, firmData.acts)}</span>
+                    {firmRow.acts_total !== firmRowActs.length && (
+                      <span>
+                        {" "}
+                        On {firmRow.acts_total.toLocaleString("en-US")} acts in the corpus, {firmRowActs.length.toLocaleString("en-US")} here.
+                      </span>
+                    )}
+                    {firmDuplicates.has(firmRow.name) && (
+                      <span>
+                        {" "}
+                        Same name as{" "}
+                        {firmData.rows
+                          .filter((row) => row.name === firmRow.name && row.id !== firmRow.id)
+                          .map((row) => `entry ${row.id}`)
+                          .join(", ")}
+                        , as entered.
+                      </span>
+                    )}
+                  </p>
+                  <div className="nw-side-actions">
+                    <button type="button" className="pill-button" onClick={() => openEntry(firmRow.id)}>
+                      Draw its circle
+                    </button>
+                    <Link className="nw-side-open" to={`/database/person/${firmRow.id}`} target="_blank" rel="noopener" title={OPEN_TITLE}>
+                      Open in the Database
+                    </Link>
+                  </div>
+                </header>
+                <ul className="nw-acts">
+                  {firmRowActs.map(({ act, cell }) => {
+                    const appearance = cellAppearance(cell, firmRow.id, act.id);
+                    return firmActRow(act, [roleCell(appearance), jewishWords(appearance), cashWords(appearance, act)].filter(Boolean).join(" · "), firmRow.id);
+                  })}
+                </ul>
+              </section>
+            ) : firmAct ? (
+              <section className="nw-side-block">
+                <header className="nw-side-head">
+                  {backTo && backTo.act === firmAct.id && firmRowsById.has(backTo.entry) && (
+                    <button type="button" className="link-like nw-side-back" onClick={() => setSelect({ kind: "person", id: backTo.entry })}>
+                      ‹ Back to {firmLabel(firmRowsById.get(backTo.entry)!)}
+                    </button>
+                  )}
+                  <div className="nw-side-head-row">
+                    <p className="eyebrow">Act</p>
+                    {clearButton}
+                  </div>
+                  <h3>
+                    <ContractLink id={firmAct.id} onOpen={setDrawer} /> {firmAct.firm_name}
+                  </h3>
+                  <p className="nw-side-facts">
+                    {dateWords(firmAct)} · {placeWords(firmAct)} · {shown(firmAct.activity)}
+                    {firmAct.total !== null ? ` · ${firmAct.total.toLocaleString("en-US")}${firmAct.currency ? ` ${firmAct.currency}` : ""}` : ""}
+                  </p>
+                  {firmAct.later.length > 0 && <p className="nw-side-note muted">Later acts: {laterWords(firmAct)}.</p>}
+                </header>
+                <ul className="nw-signers">
+                  {firmActSigners.map(({ row, cell }) => {
+                    const appearance = cellAppearance(cell, row.id, firmAct.id);
+                    return (
+                      <li key={row.id} {...rowProps(row.id)}>
+                        <button type="button" className="nw-cosigner" onClick={() => setSelect({ kind: "person", id: row.id })}>
+                          <span className="nw-row-name">
+                            {firmLabel(row)} <span className="nw-side-id">entry {row.id}</span>
+                          </span>
+                          <span className="nw-row-meta">{[roleCell(appearance), jewishWords(appearance), cashWords(appearance, firmAct)].filter(Boolean).join(" · ")}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ) : (
+              <section className="nw-side-block">
+                <div className="nw-side-head-row">
+                  <p className="eyebrow">Registrations</p>
+                </div>
+                <ul className="nw-acts nw-firm-acts">
+                  {firmData.acts.flatMap((act) => {
+                    const change = firmChangeByFrom.get(act.id);
+                    return [
+                      firmActRow(act, null, null),
+                      change ? (
+                        <li key={`change-${act.id}`} className="nw-firm-change-row muted">
+                          {changeLine(change, firmActsById)}
+                        </li>
+                      ) : null,
+                    ];
+                  })}
+                </ul>
+                {(firmData.empty?.length ?? firmData.counts.empty ?? 0) > 0 && (
+                  <p className="muted nw-side-note nw-firm-empty">
+                    {count(firmData.empty?.length ?? firmData.counts.empty ?? 0, "registration", "registrations")} under this name{" "}
+                    {(firmData.empty?.length ?? firmData.counts.empty) === 1 ? "carries" : "carry"} no partner
+                    {firmData.empty?.length ? (
+                      <>
+                        :{" "}
+                        {firmData.empty.map((act, i) => (
+                          <span key={act.id}>
+                            {i > 0 ? ", " : ""}
+                            <ContractLink id={act.id} onOpen={setDrawer} /> ({dateWords(act)})
+                          </span>
+                        ))}
+                      </>
+                    ) : null}
+                    .
+                  </p>
+                )}
+              </section>
+            )
+          ) : !circle ? null : !state.select ? (
             <section className="nw-side-block">
               <div className="nw-side-head-row">
                 <p className="eyebrow">Co-signers</p>
@@ -737,6 +1109,13 @@ export default function Network() {
                     {selectedAct.signers_live - selectedAct.signers_in_view === 1
                       ? "This act has one more signer, outside this circle."
                       : `${selectedAct.signers_live.toLocaleString("en-US")} signers, ${selectedAct.signers_in_view.toLocaleString("en-US")} in this circle.`}
+                  </p>
+                )}
+                {firmNameOf(selectedAct) && (
+                  <p className="nw-side-actions">
+                    <button type="button" className="link-like nw-firm-follow" onClick={() => followFirm(selectedAct)}>
+                      {FOLLOW_FIRM}
+                    </button>
                   </p>
                 )}
               </header>

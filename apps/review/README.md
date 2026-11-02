@@ -18,6 +18,10 @@ Write scope — what touches what:
   with pre/post images (see `docs/corrections_workflow.md`).
 - **Database** hide/restore actions write through the audited operation log in
   `data/sqlite/corrections.db` (see `docs/workflows/db_corrections_design.md`).
+- **People** reviews whether preserved `person_id` rows describe the same
+  historical person. It never rewrites `main.db`: active `same_as`/`distinct`
+  links plus immutable decision evidence live in `corrections.db` and can be
+  undone. Machine suggestions live in regenerable `person_cache.db`.
 - Word files, images, and pipeline outputs are never written by any tool.
 
 ## Run
@@ -59,10 +63,35 @@ The server reads (all read-only except the decision CSV and the Corrections stor
 data/derived/word-pipeline/06_qa_packet/word_db_match_qa_packet.jsonl
 data/derived/word-pipeline/05_db_candidate_matches/source_entry_db_link_candidates.jsonl
 data/derived/word-pipeline/04_source_entries/source_entries.jsonl
+data/derived/word-pipeline/03_extracted_registers/comments.jsonl + footnotes.jsonl
 data/derived/word-pipeline/07_image_links/source_entry_image_candidates.jsonl
+data/derived/word-pipeline/07_image_links/image_folio_map.jsonl   (manuscript page by register+folio)
 data/derived/word-pipeline/10_corrections/*           (candidates + proposals)
 data/sqlite/main.db
 data/sqlite/corrections.db                            (change history)
+data/sqlite/search.db                                 (derived FTS index; rebuilt on demand)
+data/sqlite/person_cache.db                           (derived person-linkage worklist)
 ```
+
+Build the person worklist after training/validating the saved model:
+
+```bash
+uv sync --extra linkage
+uv run --extra linkage python scripts/train_person_model.py
+uv run --extra linkage python workflows/person_linkage.py --recall 0.5
+uv run python scripts/build_person_labeling_packet.py
+```
+
+The queue uses role-neutral Priority 1–4 percentiles; the raw saved-model
+probability is retained only in technical detail because it is not calibrated.
+The labeling command freezes the active 150-case v3 JSONL plus a manifest under
+`data/derived/person-linkage/`; earlier packets are retained by versioned name.
+V3 uses mutually-exclusive strata (including ego-size and firm-token-IDF cells)
+with a recorded quota baseline, inclusion probabilities and sampling weights. The **Labeling round** presents it in deterministic blind order, hides
+model ranks/contributions until judgment, copies sampling provenance into the
+event, and refuses a packet generated from another cache run.
+
+The People route is visible in local development and production-gated until the
+PI approves the pilot. See `docs/person_linkage/review_lane.md`.
 
 Use the `.env` values documented in the repository root to point to local data paths.

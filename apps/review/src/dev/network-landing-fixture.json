@@ -1,0 +1,1190 @@
+{
+  "answer": [
+    "10,535 entries stand on an act with another entry: 10,491 person entries and 44 institutions, estates, shareholder groups and placeholders.",
+    "They make 25,935 pairs on 4,852 acts, 1445–1808; 7 of those acts have no registration date and are included.",
+    "Person entries are counted as entered; one person may have several."
+  ],
+  "figures": [
+    {
+      "key": "cosigners",
+      "label": "Co-signers per entry",
+      "value": "3",
+      "detail": "for the entry in the middle; 2,166 entries have one co-signer, 34 have more than 50, the most is 160",
+      "definition": "The entries that signed an act with the entry, over all its acts; an act with 29 signers gives each of them 28.",
+      "as_of": "Last edit logged to what it counts: 16 September 2026."
+    },
+    {
+      "key": "acts",
+      "label": "Acts per entry",
+      "value": "7,646 on one act",
+      "detail": "2,198 on two or three; 619 on four to ten; 72 on more than ten, 22 of them on more than 20",
+      "definition": "Every act the entry stands on.",
+      "as_of": "Last edit logged to what it counts: 16 September 2026."
+    },
+    {
+      "key": "pairs",
+      "label": "Pairs that signed together",
+      "value": "25,935 pairs",
+      "detail": "22,608 on one act, 3,327 on two or more; the most is 59, Francesco Tempi and Benedetto Tempi, entries 11308 and 11311, 1670–1720",
+      "definition": "Two entries on one act make a pair; a pair counts once however many acts it shares.",
+      "as_of": "Last edit logged to what it counts: 16 September 2026."
+    },
+    {
+      "key": "body",
+      "label": "One body and the islands",
+      "value": "5,075 entries in one body",
+      "detail": "48.2% of the 10,535; the rest stand in 1,627 islands, 770 of them one pair, 244 of five or more entries",
+      "definition": "Two entries are in one body when a chain of shared acts joins them.",
+      "as_of": "Last edit logged to what it counts: 16 September 2026."
+    },
+    {
+      "key": "recurring",
+      "label": "Entries with a recurring co-signer",
+      "value": "657 of 1,307",
+      "detail": "entries on three or more dated acts with a co-signer on three or more of them; three co-signers in four are met on one act; 216 entries meet every co-signer on one act",
+      "definition": "Dated acts only.",
+      "as_of": "Last edit logged to what it counts: 16 September 2026."
+    }
+  ],
+  "chart": {
+    "title": "Entries active by decade",
+    "subtitle": "Entries on that decade's acts, by registration date.",
+    "periods": [
+      1440,
+      1450,
+      1460,
+      1470,
+      1480,
+      1490,
+      1500,
+      1510,
+      1520,
+      1530,
+      1540,
+      1550,
+      1560,
+      1570,
+      1580,
+      1590,
+      1600,
+      1610,
+      1620,
+      1630,
+      1640,
+      1650,
+      1660,
+      1670,
+      1680,
+      1690,
+      1700,
+      1710,
+      1720,
+      1730,
+      1740,
+      1750,
+      1760,
+      1770,
+      1780,
+      1790,
+      1800
+    ],
+    "active": [
+      42,
+      96,
+      148,
+      172,
+      190,
+      205,
+      221,
+      236,
+      252,
+      268,
+      283,
+      275,
+      266,
+      258,
+      281,
+      302,
+      324,
+      347,
+      331,
+      356,
+      380,
+      395,
+      403,
+      418,
+      410,
+      425,
+      440,
+      455,
+      430,
+      402,
+      392,
+      379,
+      368,
+      361,
+      376,
+      462,
+      471
+    ],
+    "acts": [
+      15,
+      38,
+      61,
+      72,
+      80,
+      88,
+      94,
+      101,
+      110,
+      118,
+      126,
+      121,
+      114,
+      108,
+      117,
+      123,
+      131,
+      140,
+      128,
+      136,
+      144,
+      152,
+      160,
+      158,
+      165,
+      171,
+      176,
+      182,
+      168,
+      150,
+      139,
+      131,
+      124,
+      118,
+      122,
+      129,
+      133
+    ],
+    "new_entries": [
+      42,
+      88,
+      131,
+      149,
+      160,
+      171,
+      184,
+      196,
+      209,
+      220,
+      231,
+      222,
+      214,
+      206,
+      229,
+      246,
+      262,
+      281,
+      266,
+      288,
+      309,
+      321,
+      327,
+      342,
+      333,
+      348,
+      361,
+      374,
+      352,
+      329,
+      320,
+      309,
+      300,
+      294,
+      307,
+      390,
+      511
+    ],
+    "cosigners_each": [
+      2.0,
+      2.1,
+      2.2,
+      2.3,
+      2.4,
+      2.5,
+      2.6,
+      2.7,
+      2.8,
+      2.9,
+      2.9,
+      2.8,
+      3.3,
+      3.6,
+      3.9,
+      4.1,
+      4.3,
+      4.4,
+      4.2,
+      4.6,
+      5.0,
+      5.4,
+      5.8,
+      6.1,
+      6.3,
+      6.5,
+      6.8,
+      6.4,
+      5.2,
+      4.4,
+      3.9,
+      3.6,
+      3.4,
+      3.3,
+      3.2,
+      3.5,
+      3.7
+    ],
+    "caption": [
+      "Before the 1560s an act carries fewer than three signers and under a tenth of a decade's active entries are joined by that decade's acts.",
+      "From the 1560s to the 1730s the signers per act rise to 4.4 and the largest body joined within a decade reaches 55% of the active entries (1730s).",
+      "From the 1740s the signers per act fall back to 3.2–3.7 and the largest body to between 5% and 23%.",
+      "An entry that first signed in the 1680s ends with 5 co-signers on the median; one that first signed in the 1800s, with 2."
+    ],
+    "note": "7 acts with no registration date are not on the axis.",
+    "as_of": "Last edit logged to what it counts: 16 September 2026.",
+    "partial": {
+      "first": "1445–1449",
+      "last": "1800–1808"
+    }
+  },
+  "widest": {
+    "heading": "The widest circles",
+    "definition": "Co-signers over all of an entry's acts; the 20-act column marks the entries the drawing stops at, a readability cut.",
+    "note": "Where one act brings more than half of a row's co-signers, it is named.",
+    "rows": [
+      {
+        "id": 11308,
+        "name": "Francesco Tempi",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 160,
+        "acts": 60,
+        "first_year": 1670,
+        "last_year": 1720,
+        "hub": true,
+        "largest_act": null
+      },
+      {
+        "id": 11311,
+        "name": "Benedetto Tempi",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 160,
+        "acts": 58,
+        "first_year": 1670,
+        "last_year": 1720,
+        "hub": true,
+        "largest_act": null
+      },
+      {
+        "id": 6745,
+        "name": "Giovanni Vincenzio Torrigiani",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 105,
+        "acts": 20,
+        "first_year": 1690,
+        "last_year": 1740,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 5155,
+        "name": "Gabbriello Riccardi",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 88,
+        "acts": 42,
+        "first_year": 1669,
+        "last_year": 1699,
+        "hub": true,
+        "largest_act": null
+      },
+      {
+        "id": 11477,
+        "name": "Francesco Riccardi",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 71,
+        "acts": 42,
+        "first_year": 1690,
+        "last_year": 1726,
+        "hub": true,
+        "largest_act": null
+      },
+      {
+        "id": 5035,
+        "name": "Carlo Rinuccini",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 57,
+        "acts": 10,
+        "first_year": 1622,
+        "last_year": 1657,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 6612,
+        "name": "Giovanni Taddei",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 56,
+        "acts": 14,
+        "first_year": 1650,
+        "last_year": 1689,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 6465,
+        "name": "Marco Martelli",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 55,
+        "acts": 17,
+        "first_year": 1640,
+        "last_year": 1677,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 3004,
+        "name": "Redolfo Gianni",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 52,
+        "acts": 23,
+        "first_year": 1600,
+        "last_year": 1636,
+        "hub": true,
+        "largest_act": null
+      },
+      {
+        "id": 4848,
+        "name": "Tommaso Gaetano de' Medici",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 49,
+        "acts": 9,
+        "first_year": 1700,
+        "last_year": 1731,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 12319,
+        "name": "Francesco Riccardi",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 47,
+        "acts": 20,
+        "first_year": 1669,
+        "last_year": 1671,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 2509,
+        "name": "Giuliano Ricci",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 46,
+        "acts": 4,
+        "first_year": 1748,
+        "last_year": 1792,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 12254,
+        "name": "MOLTEPLICI AZIONARI",
+        "father_mother": null,
+        "kind": "placeholder",
+        "cosigners": 44,
+        "acts": 6,
+        "first_year": 1780,
+        "last_year": 1806,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 5269,
+        "name": "Filippo Corsini",
+        "father_mother": "Neri",
+        "kind": "person",
+        "cosigners": 41,
+        "acts": 22,
+        "first_year": 1660,
+        "last_year": 1702,
+        "hub": true,
+        "largest_act": null
+      },
+      {
+        "id": 4166,
+        "name": "Leonardo Tempi",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 37,
+        "acts": 4,
+        "first_year": 1600,
+        "last_year": 1677,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 11292,
+        "name": "Filippo Corsini",
+        "father_mother": "Lorenzo",
+        "kind": "person",
+        "cosigners": 36,
+        "acts": 12,
+        "first_year": 1680,
+        "last_year": 1712,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 9994,
+        "name": "Cesare Lampronti",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 34,
+        "acts": 3,
+        "first_year": 1789,
+        "last_year": 1806,
+        "hub": false,
+        "largest_act": {
+          "id": 4769,
+          "year": 1806,
+          "firm_name": "Borri, Mazzerelli e compagni",
+          "brings": 28
+        }
+      },
+      {
+        "id": 3585,
+        "name": "Geremia Firidolfi",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 33,
+        "acts": 11,
+        "first_year": 1700,
+        "last_year": 1739,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 888,
+        "name": "Giovanni Mannelli",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 31,
+        "acts": 26,
+        "first_year": 1501,
+        "last_year": 1561,
+        "hub": true,
+        "largest_act": null
+      },
+      {
+        "id": 7812,
+        "name": "Piero Niccolini",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 29,
+        "acts": 9,
+        "first_year": 1660,
+        "last_year": 1669,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 7516,
+        "name": "Carlo Taddei",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 27,
+        "acts": 6,
+        "first_year": 1669,
+        "last_year": 1669,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 6736,
+        "name": "Carlo Rinuccini",
+        "father_mother": "Pier Francesco",
+        "kind": "person",
+        "cosigners": 26,
+        "acts": 11,
+        "first_year": 1622,
+        "last_year": 1657,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 6737,
+        "name": "Giovanni Rinuccini",
+        "father_mother": "Pier Francesco",
+        "kind": "person",
+        "cosigners": 26,
+        "acts": 11,
+        "first_year": 1622,
+        "last_year": 1657,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 5800,
+        "name": "Maria Bianca Ricasoli Capponi",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 22,
+        "acts": 6,
+        "first_year": 1689,
+        "last_year": 1725,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 8089,
+        "name": "Lorenzo Niccolini",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 21,
+        "acts": 4,
+        "first_year": 1669,
+        "last_year": 1669,
+        "hub": false,
+        "largest_act": {
+          "id": 2444,
+          "year": 1737,
+          "firm_name": "Moris, Martellucci e Cancellieri",
+          "brings": 20
+        }
+      },
+      {
+        "id": 7945,
+        "name": "Francesco Buonaccorsi Pinadori",
+        "father_mother": "Ottaviano",
+        "kind": "person",
+        "cosigners": 20,
+        "acts": 4,
+        "first_year": 1665,
+        "last_year": 1706,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 7946,
+        "name": "Alessandro Buonaccorsi Pinadori",
+        "father_mother": "Ottaviano",
+        "kind": "person",
+        "cosigners": 20,
+        "acts": 4,
+        "first_year": 1665,
+        "last_year": 1706,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 11303,
+        "name": "Francesco Buonaventura Feducci",
+        "father_mother": null,
+        "kind": "person",
+        "cosigners": 19,
+        "acts": 1,
+        "first_year": 1669,
+        "last_year": 1669,
+        "hub": false,
+        "largest_act": {
+          "id": 4017,
+          "year": 1789,
+          "firm_name": "Luigi Formigli e compagni",
+          "brings": 19
+        }
+      },
+      {
+        "id": 8278,
+        "name": "Matteo da Romena",
+        "father_mother": "Paolo",
+        "kind": "person",
+        "cosigners": 19,
+        "acts": 1,
+        "first_year": null,
+        "last_year": null,
+        "hub": false,
+        "largest_act": null
+      },
+      {
+        "id": 5308,
+        "name": "Giuseppe Frescobaldi",
+        "father_mother": "Lorenzo",
+        "kind": "person",
+        "cosigners": 8,
+        "acts": 3,
+        "first_year": 1669,
+        "last_year": 1690,
+        "hub": false,
+        "largest_act": null
+      }
+    ]
+  },
+  "pairs": {
+    "heading": "Pairs on the most acts together",
+    "definition": "Acts the two entries both stand on.",
+    "note": "6 of these pairs stand on the same acts only.",
+    "rows": [
+      {
+        "a": {
+          "id": 11308,
+          "name": "Francesco Tempi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 11311,
+          "name": "Benedetto Tempi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 59,
+        "first_year": 1670,
+        "last_year": 1720,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 6736,
+          "name": "Carlo Rinuccini",
+          "father_mother": "Pier Francesco",
+          "kind": "person"
+        },
+        "b": {
+          "id": 6737,
+          "name": "Giovanni Rinuccini",
+          "father_mother": "Pier Francesco",
+          "kind": "person"
+        },
+        "acts": 11,
+        "first_year": 1622,
+        "last_year": 1657,
+        "same_acts": true
+      },
+      {
+        "a": {
+          "id": 11308,
+          "name": "Francesco Tempi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 6745,
+          "name": "Giovanni Vincenzio Torrigiani",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 10,
+        "first_year": 1690,
+        "last_year": 1720,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 5155,
+          "name": "Gabbriello Riccardi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 11477,
+          "name": "Francesco Riccardi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 9,
+        "first_year": 1690,
+        "last_year": 1699,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 11311,
+          "name": "Benedetto Tempi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 6745,
+          "name": "Giovanni Vincenzio Torrigiani",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 9,
+        "first_year": 1690,
+        "last_year": 1720,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 3004,
+          "name": "Redolfo Gianni",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 6612,
+          "name": "Giovanni Taddei",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 8,
+        "first_year": 1650,
+        "last_year": 1689,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 5155,
+          "name": "Gabbriello Riccardi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 12319,
+          "name": "Francesco Riccardi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 7,
+        "first_year": 1669,
+        "last_year": 1671,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 6465,
+          "name": "Marco Martelli",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 6612,
+          "name": "Giovanni Taddei",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 7,
+        "first_year": 1650,
+        "last_year": 1677,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 5269,
+          "name": "Filippo Corsini",
+          "father_mother": "Neri",
+          "kind": "person"
+        },
+        "b": {
+          "id": 11292,
+          "name": "Filippo Corsini",
+          "father_mother": "Lorenzo",
+          "kind": "person"
+        },
+        "acts": 6,
+        "first_year": 1680,
+        "last_year": 1702,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 4166,
+          "name": "Leonardo Tempi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 6465,
+          "name": "Marco Martelli",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 6,
+        "first_year": 1640,
+        "last_year": 1677,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 888,
+          "name": "Giovanni Mannelli",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 3004,
+          "name": "Redolfo Gianni",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 5,
+        "first_year": 1600,
+        "last_year": 1636,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 5155,
+          "name": "Gabbriello Riccardi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 7812,
+          "name": "Piero Niccolini",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 5,
+        "first_year": 1669,
+        "last_year": 1669,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 9994,
+          "name": "Cesare Lampronti",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 12254,
+          "name": "MOLTEPLICI AZIONARI",
+          "father_mother": null,
+          "kind": "placeholder"
+        },
+        "acts": 5,
+        "first_year": 1789,
+        "last_year": 1806,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 2509,
+          "name": "Giuliano Ricci",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 5800,
+          "name": "Maria Bianca Ricasoli Capponi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 4,
+        "first_year": 1748,
+        "last_year": 1792,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 7945,
+          "name": "Francesco Buonaccorsi Pinadori",
+          "father_mother": "Ottaviano",
+          "kind": "person"
+        },
+        "b": {
+          "id": 7946,
+          "name": "Alessandro Buonaccorsi Pinadori",
+          "father_mother": "Ottaviano",
+          "kind": "person"
+        },
+        "acts": 4,
+        "first_year": 1665,
+        "last_year": 1706,
+        "same_acts": true
+      },
+      {
+        "a": {
+          "id": 3585,
+          "name": "Geremia Firidolfi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 4848,
+          "name": "Tommaso Gaetano de' Medici",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 4,
+        "first_year": 1700,
+        "last_year": 1731,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 11308,
+          "name": "Francesco Tempi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 5269,
+          "name": "Filippo Corsini",
+          "father_mother": "Neri",
+          "kind": "person"
+        },
+        "acts": 4,
+        "first_year": 1670,
+        "last_year": 1702,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 12319,
+          "name": "Francesco Riccardi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 7812,
+          "name": "Piero Niccolini",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 4,
+        "first_year": 1669,
+        "last_year": 1669,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 5035,
+          "name": "Carlo Rinuccini",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 6736,
+          "name": "Carlo Rinuccini",
+          "father_mother": "Pier Francesco",
+          "kind": "person"
+        },
+        "acts": 3,
+        "first_year": 1622,
+        "last_year": 1657,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 2463,
+          "name": "Tommaso Corsi",
+          "father_mother": "Giorgio",
+          "kind": "person"
+        },
+        "b": {
+          "id": 2464,
+          "name": "Zanobi degli Albizzi",
+          "father_mother": "Luca Antonio",
+          "kind": "person"
+        },
+        "acts": 3,
+        "first_year": 1509,
+        "last_year": 1515,
+        "same_acts": true
+      },
+      {
+        "a": {
+          "id": 6612,
+          "name": "Giovanni Taddei",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 6745,
+          "name": "Giovanni Vincenzio Torrigiani",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 3,
+        "first_year": 1690,
+        "last_year": 1740,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 7516,
+          "name": "Carlo Taddei",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 7812,
+          "name": "Piero Niccolini",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 3,
+        "first_year": 1669,
+        "last_year": 1669,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 5308,
+          "name": "Giuseppe Frescobaldi",
+          "father_mother": "Lorenzo",
+          "kind": "person"
+        },
+        "b": {
+          "id": 5155,
+          "name": "Gabbriello Riccardi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 3,
+        "first_year": 1669,
+        "last_year": 1690,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 8089,
+          "name": "Lorenzo Niccolini",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 7516,
+          "name": "Carlo Taddei",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 3,
+        "first_year": 1669,
+        "last_year": 1669,
+        "same_acts": true
+      },
+      {
+        "a": {
+          "id": 888,
+          "name": "Giovanni Mannelli",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 5035,
+          "name": "Carlo Rinuccini",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 2,
+        "first_year": 1622,
+        "last_year": 1636,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 11477,
+          "name": "Francesco Riccardi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 12319,
+          "name": "Francesco Riccardi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 2,
+        "first_year": 1690,
+        "last_year": 1690,
+        "same_acts": true
+      },
+      {
+        "a": {
+          "id": 4848,
+          "name": "Tommaso Gaetano de' Medici",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 5800,
+          "name": "Maria Bianca Ricasoli Capponi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 2,
+        "first_year": 1700,
+        "last_year": 1725,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 9994,
+          "name": "Cesare Lampronti",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "b": {
+          "id": 11303,
+          "name": "Francesco Buonaventura Feducci",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 2,
+        "first_year": 1789,
+        "last_year": 1806,
+        "same_acts": false
+      },
+      {
+        "a": {
+          "id": 8278,
+          "name": "Matteo da Romena",
+          "father_mother": "Paolo",
+          "kind": "person"
+        },
+        "b": {
+          "id": 11303,
+          "name": "Francesco Buonaventura Feducci",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 2,
+        "first_year": null,
+        "last_year": null,
+        "same_acts": true
+      },
+      {
+        "a": {
+          "id": 5308,
+          "name": "Giuseppe Frescobaldi",
+          "father_mother": "Lorenzo",
+          "kind": "person"
+        },
+        "b": {
+          "id": 12319,
+          "name": "Francesco Riccardi",
+          "father_mother": null,
+          "kind": "person"
+        },
+        "acts": 2,
+        "first_year": 1669,
+        "last_year": 1671,
+        "same_acts": false
+      }
+    ]
+  },
+  "as_of": "Last edit logged to what these figures count: 16 September 2026."
+}

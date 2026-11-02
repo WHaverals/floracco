@@ -1552,3 +1552,169 @@ export type NetworkCircle = {
   answer: string;
   how: string[];
 };
+
+// --- Network landing (docs/network/step2b_contract.md §2) ----------------------
+
+/** A standing figure of the corpus's network (GET /api/network/landing): every
+ * word the server's, plain text; the "One body" value opens nothing yet. */
+export type NetworkLandingFigure = {
+  key: string;
+  label: string;
+  value: string;
+  detail: string;
+  definition: string;
+  /** the last edit logged to what it counts */
+  as_of: string;
+};
+
+/** Entries active by decade on the house axis; the undated acts are named in `note`. */
+export type NetworkLandingChart = {
+  title: string;
+  subtitle: string;
+  periods: number[];
+  /** entries with an act in the decade */
+  active: number[];
+  acts: number[];
+  /** entries whose first dated act is in the decade */
+  new_entries: number[];
+  /** mean co-signers per active entry on that decade's acts, one decimal */
+  cosigners_each: number[];
+  /** the four sentences under the chart, every figure computed */
+  caption: string[];
+  /** null when every act is dated */
+  note: string | null;
+  as_of: string;
+  /** Find's partial-period marks ("1445–1449", "1800–1808"), when the server sends them */
+  partial?: { first?: string; last?: string };
+};
+
+/** One entry in a landing row: the name as stored, the patronymic for the namesake rule. */
+export type NetworkLandingEntry = {
+  id: number;
+  name: string;
+  father_mother: string | null;
+  kind: NetworkKind;
+};
+
+/** One of the 30 entries with the most distinct co-signers over all their acts. */
+export type NetworkLandingWidestRow = NetworkLandingEntry & {
+  cosigners: number;
+  acts: number;
+  first_year: number | null;
+  last_year: number | null;
+  /** on more than 20 distinct acts: the drawing stops at it */
+  hub: boolean;
+  /** the one act that brings the most co-signers, present only when it brings more than half */
+  largest_act: { id: number; year: number; firm_name: string | null; brings: number } | null;
+};
+
+/** One of the 30 pairs with the most shared acts. */
+export type NetworkLandingPairRow = {
+  a: NetworkLandingEntry;
+  b: NetworkLandingEntry;
+  acts: number;
+  first_year: number | null;
+  last_year: number | null;
+  /** the two entries' act sets are identical */
+  same_acts: boolean;
+};
+
+export type NetworkLandingList<Row> = {
+  heading: string;
+  definition: string;
+  /** the widest list's note is sent only when a row carries a `largest_act` */
+  note: string | null;
+  rows: Row[];
+};
+
+/** The corpus on the Network page before an entry is chosen. */
+export type NetworkLanding = {
+  answer: string[];
+  figures: NetworkLandingFigure[];
+  chart: NetworkLandingChart;
+  widest: NetworkLandingList<NetworkLandingWidestRow>;
+  pairs: NetworkLandingList<NetworkLandingPairRow>;
+  as_of: string;
+};
+
+// --- Network firm view (docs/network/step3_contract.md §3) ---------------------
+
+/** A later act on a registration (termination, variation, balance, renewal; a
+ * blank stored type reads "later act"); it carries no partners. */
+export type NetworkFirmLater = {
+  id: number;
+  kind: string;
+  /** as stored; "0000-00-00" is a later act with no registration date */
+  date: string;
+};
+
+/** One registration carrying the firm name: the act with at least one live appearance. */
+export type NetworkFirmAct = {
+  id: number;
+  /** as stored; "0000-00-00" is an act with no registration date */
+  date: string;
+  year: number | null;
+  firm_name: string;
+  places: string[];
+  places_inferred: boolean;
+  activity: string | null;
+  total: number | null;
+  currency: string | null;
+  /** live signers on the act */
+  signers: number;
+  /** the live later acts of the registration, in date order */
+  later: NetworkFirmLater[];
+};
+
+/** One entry's cell on one registration, as the circle's appearances carry it. */
+export type NetworkFirmCell = {
+  /** "gp", "lp", "both" (two rows with different roles), or null with no live stake */
+  role: string | null;
+  cash: number | null;
+  non_cash: string | null;
+  heirs_of: boolean;
+  proxy: boolean;
+  joint: boolean;
+  jewish: "stated" | "attributed" | null;
+  /** the entry's live rows on the act */
+  rows: number;
+};
+
+/** One entry on the firm's registrations: a row of the figure. */
+export type NetworkFirmRow = {
+  id: number;
+  name: string;
+  name_fields: NetworkNode["name_fields"];
+  kind: NetworkKind;
+  woman: boolean;
+  hub: boolean;
+  acts_total: number;
+  /** keyed by act id as a string */
+  cells: Record<string, NetworkFirmCell>;
+};
+
+/** Between two consecutive dated registrations: the entries on both, on the first only, on the second only. */
+export type NetworkFirmChange = { from: number; to: number; stayed: number; left: number; joined: number };
+
+export type NetworkFirm = {
+  name: string;
+  spellings: string[];
+  /** in date order, undated last */
+  acts: NetworkFirmAct[];
+  /** by first registration, then acts on the firm (most first), then id */
+  rows: NetworkFirmRow[];
+  changes: NetworkFirmChange[];
+  counts: {
+    acts: number;
+    entries: number;
+    later: number;
+    undated: number;
+    /** acts carrying the name with no live appearance, when there are any */
+    empty?: number;
+  };
+  /** those acts, in date order, for the side column (sent only when there are any) */
+  empty?: { id: number; date: string; year: number | null; firm_name: string | null }[];
+  sentence: string;
+  answer: string;
+  how: string[];
+};

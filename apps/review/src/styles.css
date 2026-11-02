@@ -12101,55 +12101,43 @@ a.find-rail-item {
   font-weight: 600;
 }
 
-/* The house dark balloon, as the business circle's, placed outward from the
-   mark: its left/top is the anchor point beside, above or below the mark, and
-   the side class turns it away from the circle's interior. */
-.nw-tip {
-  background: #302720;
-  border-radius: 9px;
-  box-shadow: 0 3px 14px rgba(40, 25, 15, 0.25);
-  color: #efe4d5;
-  display: flex;
-  flex-direction: column;
-  font-size: 0.74rem;
-  gap: 3px;
-  line-height: 1.4;
-  max-width: 280px;
-  padding: 9px 11px;
+/* The reading card (step 2c, docs/network/step2c_contract.md §2): a fixed
+   slot across the stage's top, on the stage's own surface; the figure
+   inscribes the circle in the stage below the card's band, so what the hover
+   lights on the drawing is read here and nothing floats over a mark. The
+   pointer passes through it; its content swaps at once. The head is the side
+   column's row dress: the name in Georgia, the entry number as .nw-side-id;
+   the sentences run together under it. */
+.nw-card {
+  background: #fffdf9;
+  border: 1px solid #eadfcc;
+  border-radius: 8px;
+  color: #2e2620;
+  font-size: 0.78rem;
+  left: 12px;
+  line-height: 1.45;
+  padding: 8px 11px 9px;
   pointer-events: none;
   position: absolute;
-  width: max-content;
-  z-index: 30;
+  right: 12px;
+  top: 12px;
+  z-index: 2;
 }
 
-.nw-tip.is-right {
-  transform: translate(0, -50%);
+.nw-card p {
+  margin: 0;
 }
 
-.nw-tip.is-left {
-  transform: translate(-100%, -50%);
-}
-
-.nw-tip.is-above {
-  transform: translate(-50%, -100%);
-}
-
-.nw-tip.is-below {
-  transform: translate(-50%, 0);
-}
-
-.nw-tip strong {
-  color: #fff;
+.nw-card-head {
+  color: #241d18;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 0.86rem;
+  font-size: 0.9rem;
   font-weight: 500;
+  line-height: 21px;
 }
 
-.nw-tip-id {
-  color: #d6aa7d;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-size: 0.72rem;
-  font-weight: 600;
+.nw-card-lines {
+  margin-top: 3px;
 }
 
 .nw-key {
@@ -12351,9 +12339,41 @@ a.find-rail-item {
   cursor: ew-resize;
 }
 
-/* The strip's balloon, the figure's dark one, stands above the hovered bar. */
-.nw-strip-tip {
-  white-space: nowrap;
+/* The strip's key, one line under it in the figure key's dress. */
+.nw-strip-key {
+  color: #6f6052;
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  gap: 4px 16px;
+  margin: -4px 4px 0;
+}
+
+.nw-strip-key span {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.nw-strip-key-bar {
+  display: inline-block;
+  flex: none;
+  height: 12px;
+  width: 7px;
+}
+
+.nw-strip-key-bar.is-centre {
+  background: #7a4a26;
+}
+
+.nw-strip-key-bar.is-other {
+  background: #b07a47;
+}
+
+.nw-strip-key-bar.is-outside {
+  border: 1px solid #7a4a26;
+  box-sizing: border-box;
 }
 
 /* The side column, never empty: the co-signers at rest, the selected entry,
@@ -12636,4 +12656,347 @@ li.is-lit > .nw-cosigner {
   .nw-side {
     padding: 16px 14px 24px;
   }
+}
+
+/* The landing, step 2b (docs/network/step2b_contract.md §4): the corpus in
+   Find's landing form in the figure column. The block takes the column's
+   height and scrolls inside it; the lists stand side by side from 1200 px. */
+.nw-landing.nw-landing-wide {
+  flex: 1 1 auto;
+  margin: 0;
+  max-width: 1180px;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 2px 24px 0;
+}
+
+.nw-landing-corpus {
+  max-width: none;
+}
+
+.nw-landing-chart {
+  max-width: 980px;
+}
+
+.nw-landing-caption {
+  color: #3d332b;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 10px 0 0;
+  max-width: 820px;
+}
+
+.nw-landing-ways {
+  margin: 28px 0 8px;
+}
+
+.nw-landing-lists {
+  display: grid;
+  gap: 24px 36px;
+  grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+  margin-bottom: 14px;
+}
+
+.nw-landing-list h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.15rem;
+  font-weight: 500;
+  margin: 0 0 4px;
+}
+
+.nw-landing-list > .find-standing-note {
+  margin: 0 0 8px;
+}
+
+.nw-landing-table .num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.nw-landing-table td:last-child,
+.nw-landing-table th:last-child {
+  padding-right: 0;
+}
+
+.nw-landing-row {
+  cursor: pointer;
+}
+
+.nw-landing-row:hover td {
+  background: #fbf6ee;
+}
+
+.nw-landing-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.nw-landing-row:hover .nw-landing-link {
+  color: #9a5a2a;
+}
+
+.nw-landing-kind {
+  color: #7d7064;
+  font-size: 0.8rem;
+}
+
+.nw-landing-largest {
+  color: #3d332b;
+  font-weight: 400;
+  white-space: normal;
+}
+
+.nw-landing-more {
+  margin: 2px 0 6px;
+}
+
+.nw-landing-more > .an-table-wrap {
+  margin-top: 4px;
+}
+
+/* The firm view, step 3 (docs/network/step3_contract.md §4;
+   components/FirmFigure.tsx): the registrations carrying one stored firm name
+   as columns, the entries as rows, in the stage's place. The stage is a
+   column: the card's band at the top, fixed per width as the circle's, then
+   the drawing in a box that scrolls when the rows outgrow it. */
+.nw-stage.nw-firm-stage {
+  display: flex;
+  flex-direction: column;
+}
+
+.nw-firm-band {
+  flex: none;
+  position: relative;
+}
+
+.nw-firm-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+
+.nw-firm-stage svg.nw-firm-svg {
+  display: block;
+  height: auto;
+  inset: auto;
+  position: relative;
+}
+
+/* The rail while the firm view is up: the way back under the answer, and the
+   circle's controls dimmed, since they do not apply. */
+.nw-firm-back {
+  font-size: 0.82rem;
+  margin: -4px 0 0;
+}
+
+.nw-firm-back .link-like {
+  color: #e2b98c;
+  text-decoration: none;
+}
+
+.nw-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.nw-firm-dim {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* The entry point on act rows and in the act block's head. */
+.nw-firm-follow {
+  color: #7e5c44;
+  white-space: nowrap;
+}
+
+/* The heads: the year in the label dress, the act number in amber under it. */
+.nw-firm-head {
+  cursor: pointer;
+}
+
+.nw-firm-year {
+  fill: #241d18;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 11.5px;
+  user-select: none;
+}
+
+.nw-firm-year.is-undated {
+  fill: #6f6052;
+}
+
+.nw-firm-act {
+  fill: #a57a4b;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.nw-firm-head.is-selected .nw-firm-year {
+  font-weight: 600;
+}
+
+/* A later act: a 6 px tick under its registration's head. */
+.nw-firm-tick {
+  stroke: #7a4a26;
+  stroke-linecap: round;
+  stroke-width: 1.6;
+}
+
+.nw-firm-tick-group.is-lit .nw-firm-tick {
+  stroke: #241d18;
+  stroke-width: 2.2;
+}
+
+/* The change between consecutive dated registrations, in words, muted. */
+.nw-firm-change {
+  fill: #6f6052;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  user-select: none;
+}
+
+/* A row's label: the name as the circle writes it, the entry number in amber. */
+.nw-firm-label-group {
+  cursor: pointer;
+}
+
+.nw-firm-label {
+  fill: #241d18;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 11.5px;
+  user-select: none;
+}
+
+.nw-firm-entry {
+  fill: #a57a4b;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.nw-firm-row.is-selected .nw-firm-label {
+  font-weight: 600;
+}
+
+/* The faint line from a row's first to its last cell. */
+.nw-firm-span {
+  stroke: #ddcfbb;
+  stroke-width: 1;
+}
+
+/* The cell marks, in the circle's dot colour. */
+.nw-firm-cell {
+  cursor: pointer;
+}
+
+.nw-firm-mark.is-dot {
+  fill: #7a4a26;
+  fill-opacity: 0.85;
+}
+
+.nw-firm-mark.is-ring {
+  fill: #fffdf9;
+  stroke: #7a4a26;
+  stroke-width: 1.4;
+}
+
+.nw-firm-mark.is-heirs {
+  fill: #fffdf9;
+  stroke: #7a4a26;
+  stroke-width: 1.4;
+}
+
+.nw-firm-mark.is-square {
+  fill: #7a4a26;
+  fill-opacity: 0.85;
+}
+
+.nw-firm-mark.is-none {
+  fill: #7a4a26;
+  fill-opacity: 0.3;
+}
+
+.nw-firm-cell.is-hover .nw-firm-mark.is-dot,
+.nw-firm-cell.is-hover .nw-firm-mark.is-square {
+  fill-opacity: 1;
+}
+
+.nw-firm-cell.is-hover .nw-firm-mark.is-ring,
+.nw-firm-cell.is-hover .nw-firm-mark.is-heirs {
+  stroke: #241d18;
+  stroke-width: 2;
+}
+
+.nw-firm-row.is-selected .nw-firm-mark.is-dot,
+.nw-firm-row.is-selected .nw-firm-mark.is-square {
+  fill: #d6aa7d;
+  fill-opacity: 1;
+  stroke: #241d18;
+  stroke-width: 1.2;
+}
+
+.nw-firm-row.is-selected .nw-firm-mark.is-ring,
+.nw-firm-row.is-selected .nw-firm-mark.is-heirs {
+  stroke: #241d18;
+  stroke-width: 1.8;
+}
+
+.nw-firm-hit {
+  fill: transparent;
+}
+
+/* The lit row or column, a faint band under the marks; stronger for a selection. */
+.nw-firm-band-row,
+.nw-firm-band-col {
+  fill: #9d7355;
+  opacity: 0.09;
+  pointer-events: none;
+}
+
+.nw-firm-band-row.is-selected,
+.nw-firm-band-col.is-selected {
+  opacity: 0.16;
+}
+
+/* The key: the hollow ring and the tick, beside the circle's own marks. */
+.nw-firm-key-ring {
+  border: 1.4px solid #7a4a26;
+  border-radius: 50%;
+  box-sizing: border-box;
+  display: inline-block;
+  flex: none;
+  height: 11px;
+  width: 11px;
+}
+
+.nw-firm-key-tick {
+  background: #7a4a26;
+  border-radius: 1px;
+  display: inline-block;
+  flex: none;
+  height: 8px;
+  width: 2px;
+}
+
+/* The side column at rest: the registrations, each with its later acts on a
+   muted line, and the change between consecutive ones as a line of its own. */
+.nw-firm-acts li.nw-firm-change-row {
+  border-top: none;
+  display: block;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  padding: 2px 8px 4px 24px;
+}
+
+.nw-firm-acts li.nw-firm-change-row + li {
+  border-top: 1px solid #efe5d6;
+}
+
+.nw-firm-empty {
+  margin-top: 10px;
 }

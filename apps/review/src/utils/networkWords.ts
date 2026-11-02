@@ -22,7 +22,7 @@ export type Cosigner = { node: NetworkNode; acts: number[] };
 /** One of the centre's acts in the career order: dated acts by date, then the
  * undated ones; `earlier` and `fresh` are the co-signers on it who were, or were
  * not, on an earlier dated act of the centre. */
-export type ActRow = { act: NetworkAct; cosigners: number[]; earlier: number[]; fresh: number[] };
+export type ActRow = { act: NetworkAct; cosigners: number[]; earlier: number[]; fresh: number[]; heirs: boolean };
 
 function sortableDate(act: NetworkAct | undefined): string {
   const date = act?.date ?? "";
@@ -135,9 +135,11 @@ export function gapLine(data: NetworkCircle): string | null {
 }
 
 /** The centre's acts as rows, in the career order, each with the co-signers on
- * it split into those met on an earlier dated act of the centre and the new. */
+ * it split into those met on an earlier dated act of the centre and the new;
+ * `heirs` when the centre stands on the act through heirs. */
 export function actRows(data: NetworkCircle): ActRow[] {
   const acts = centreActs(data);
+  const heirs = new Set(data.appearances.filter((a) => a.person === data.centre && a.heirs_of).map((a) => a.act));
   const onAct = new Map<number, number[]>();
   for (const a of data.appearances) {
     if (a.person === data.centre) continue;
@@ -151,7 +153,7 @@ export function actRows(data: NetworkCircle): ActRow[] {
     const cosigners = [...(onAct.get(act.id) ?? [])].sort((p, q) => p - q);
     const earlier = cosigners.filter((id) => met.has(id));
     const fresh = cosigners.filter((id) => !met.has(id));
-    rows.push({ act, cosigners, earlier, fresh });
+    rows.push({ act, cosigners, earlier, fresh, heirs: heirs.has(act.id) });
     // only a dated act counts as "earlier"; the undated acts stand last
     if (act.year !== null) for (const id of cosigners) met.add(id);
   }
@@ -161,45 +163,51 @@ export function actRows(data: NetworkCircle): ActRow[] {
 /** One act row's words, for the centre's acts only (null for any other act):
  * "10 co-signers, the first act." / "7 co-signers: 2 from earlier acts, 5 new." /
  * "4 co-signers, all from earlier acts." / "3 co-signers, all new." / "One
- * co-signer, new."
+ * co-signer, new." An act the centre stands on through heirs keeps its line (the
+ * row's "through heirs" says how the entry stood on it) but is never "the first
+ * act": the estate's act does not open a career, so it reads "all new".
  *
  * Checked against the API on 1 November 2026, 4166 at one step: act 2614 "10
  * co-signers, the first act."; 3223 "7 co-signers: 2 from earlier acts, 5 new.";
- * 3550 "4 co-signers, all from earlier acts."; 3698 "3 co-signers, all new." */
+ * 3550 "4 co-signers, all from earlier acts."; 3698 "3 co-signers, all new."
+ * The dev fixture (5308) with its first act 3990 marked through heirs reads "7
+ * co-signers, all new." there, and the later rows are unchanged. */
 export function actRowLine(data: NetworkCircle, actId: number): string | null {
   const rows = actRows(data);
   const index = rows.findIndex((row) => row.act.id === actId);
   if (index < 0) return null;
-  const { cosigners, earlier, fresh } = rows[index];
+  const { cosigners, earlier, fresh, heirs } = rows[index];
   const n = cosigners.length;
   const head = `${lead(n)} ${plural(n, "co-signer", "co-signers")}`;
-  if (index === 0) return `${head}, the first act.`;
+  if (index === 0 && !heirs) return `${head}, the first act.`;
   if (n === 0) return `${head}.`;
   if (earlier.length === 0) return `${head}, ${n === 1 ? "new" : "all new"}.`;
   if (fresh.length === 0) return `${head}, ${n === 1 ? "from earlier acts" : "all from earlier acts"}.`;
   return `${head}: ${few(earlier.length)} from earlier acts, ${few(fresh.length)} new.`;
 }
 
-/** The co-signers the centre met in each of its two roles, counted per role the
- * centre held on the shared act (an entry counts under each role it met the
- * centre in); null when the centre held one role on every act, since the career
- * line and the answer already say the count.
+/** The co-signers the centre met in each of its two roles, with the acts it
+ * held each role on: co-signers counted per role the centre held on the shared
+ * act (an entry counts under each role it met the centre in); an appearance
+ * with both roles counts on both sides. Null when the centre held one role on
+ * every act, since the career line and the answer already say the count.
  *
  * Checked against the API on 1 November 2026: 4166 at one step, "As general
- * partner, Leonardo Tempi signed with 6 co-signers; as external investor
- * (accomandante), with 34." (general partner on act 2599 alone; 3 entries met
- * him in both roles, so 6 + 34 exceeds the 37); 11298, "As general partner,
- * Inghilese Lotti signed with 2 co-signers; as external investor (accomandante),
+ * partner on one act, Leonardo Tempi signed with 6 co-signers; as external
+ * investor (accomandante) on 8 acts, with 34." (3 entries met him in both roles,
+ * so 6 + 34 exceeds the 37); 11298, "As general partner on one act, Inghilese
+ * Lotti signed with 2 co-signers; as external investor (accomandante) on 2 acts,
  * with 10."; null for 5308, 11311 and 5732, one role throughout. */
 export function roleLine(data: NetworkCircle, centreName: string): string | null {
   const roleOn = new Map<number, string | null>();
   for (const a of data.appearances) if (a.person === data.centre) roleOn.set(a.act, a.role);
-  const held = new Set<string>();
+  let gpActs = 0;
+  let lpActs = 0;
   for (const role of roleOn.values()) {
-    if (role === "gp" || role === "lp") held.add(role);
-    else if (role === "both") held.add("gp").add("lp");
+    if (role === "gp" || role === "both") gpActs += 1;
+    if (role === "lp" || role === "both") lpActs += 1;
   }
-  if (held.size < 2) return null;
+  if (gpActs === 0 || lpActs === 0) return null;
   const asGp = new Set<number>();
   const asLp = new Set<number>();
   for (const [entry, acts] of sharedWithCentre(data)) {
@@ -211,9 +219,13 @@ export function roleLine(data: NetworkCircle, centreName: string): string | null
   }
   const n = asGp.size;
   const m = asLp.size;
+  const acts = (k: number) => `${few(k)} ${plural(k, "act", "acts")}`;
   const withN = n === 0 ? "none" : `${few(n)} ${plural(n, "co-signer", "co-signers")}`;
   const withM = m === 0 ? "none" : few(m);
-  return `As general partner, ${centreName} signed with ${withN}; as external investor (accomandante), with ${withM}.`;
+  return (
+    `As general partner on ${acts(gpActs)}, ${centreName} signed with ${withN}; ` +
+    `as external investor (accomandante) on ${acts(lpActs)}, with ${withM}.`
+  );
 }
 
 /** The Jewish marks in the Database page's own words, trimmed to a row's muted

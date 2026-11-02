@@ -1,0 +1,174 @@
+{
+  "_source": "Hand-written for ?fixture=1 in development (docs/network/step3_contract.md §4). The acts, later acts, rows and cells were read from data/sqlite/main.db read-only on 1 November 2026 (the eight Mario Morelli e compagni registrations, scope §3.11); the sentence, answer and How lines are the contract's templates filled by hand. Nothing here is served by the API.",
+  "name": "Mario Morelli e compagni",
+  "spellings": ["Mario Morelli e compagni", "Mario Morelli e Compagni"],
+  "acts": [
+    {"id": 3694, "date": "1659-09-04", "year": 1659, "firm_name": "Mario Morelli e compagni",
+     "places": ["Firenze"], "places_inferred": false, "activity": "negozio d’arte di seta",
+     "total": 24000, "currency": "ducati di lire 7 per ducato", "signers": 5,
+     "later": [{"id": 2434, "kind": "termination", "date": "1664-12-15"}]},
+    {"id": 3833, "date": "1664-12-15", "year": 1664, "firm_name": "Mario Morelli e compagni",
+     "places": ["Firenze"], "places_inferred": false, "activity": "negozio d’arte di seta",
+     "total": 24000, "currency": "scudi", "signers": 5,
+     "later": [{"id": 2573, "kind": "termination", "date": "1667-01-21"}, {"id": 2574, "kind": "balance", "date": "1667-01-21"}]},
+    {"id": 3928, "date": "1667-09-22", "year": 1667, "firm_name": "Mario Morelli e compagni",
+     "places": ["Firenze"], "places_inferred": false, "activity": "negozio di arte di seta",
+     "total": 24000, "currency": "ducati di lire 7 per ducato", "signers": 8,
+     "later": [{"id": 2603, "kind": "termination", "date": "1669-10-03"}]},
+    {"id": 3990, "date": "1669-10-03", "year": 1669, "firm_name": "Mario Morelli e compagni",
+     "places": ["Firenze"], "places_inferred": false, "activity": "negozio di arte di seta",
+     "total": 24000, "currency": "ducati di lire 7 per ducato", "signers": 8,
+     "later": [{"id": 2663, "kind": "termination", "date": "1671-10-12"}]},
+    {"id": 3278, "date": "1671-10-12", "year": 1671, "firm_name": "Mario Morelli e compagni",
+     "places": ["Firenze"], "places_inferred": false, "activity": "negozio di arte di seta",
+     "total": 24000, "currency": "ducati di moneta di lire 7 per ducato", "signers": 3,
+     "later": [{"id": 2168, "kind": "termination", "date": "1678-11-03"}, {"id": 2169, "kind": "variation", "date": "1678-11-03"}, {"id": 2170, "kind": "termination", "date": "1687-09-17"}]},
+    {"id": 4247, "date": "1687-09-17", "year": 1687, "firm_name": "Mario Morelli e compagni",
+     "places": ["Firenze"], "places_inferred": false, "activity": "negozio di arte di seta",
+     "total": 50000, "currency": "ducati di lire 7 per ducato", "signers": 2,
+     "later": [{"id": 2877, "kind": "termination", "date": "1690-09-18"}]},
+    {"id": 4364, "date": "1690-09-18", "year": 1690, "firm_name": "Mario Morelli e compagni",
+     "places": ["Firenze"], "places_inferred": false, "activity": "negozio di arte di seta",
+     "total": 50000, "currency": "ducati di lire 7 per ducato", "signers": 2,
+     "later": [{"id": 2996, "kind": "termination", "date": "1693-09-11"}]},
+    {"id": 4480, "date": "1693-09-11", "year": 1693, "firm_name": "Mario Morelli e Compagni",
+     "places": ["Firenze"], "places_inferred": false, "activity": "negozio di arte di seta",
+     "total": 70000, "currency": "ducati di lire 7 per ducato", "signers": 2,
+     "later": [{"id": 3148, "kind": "termination", "date": "1696-09-01"}]}
+  ],
+  "rows": [
+    {"id": 5155, "name": "Gabbriello Riccardi",
+     "name_fields": {"first_name": "Gabbriello", "father_mother": null, "grandfather": null, "last_name": "Riccardi", "nickname": null},
+     "kind": "person", "woman": false, "hub": true, "acts_total": 42,
+     "cells": {
+       "3694": {"role": "lp", "cash": 18000, "non_cash": null, "heirs_of": false, "proxy": true, "joint": true, "jewish": null, "rows": 1},
+       "3833": {"role": "lp", "cash": 18000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1},
+       "3928": {"role": "lp", "cash": 18000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1},
+       "3990": {"role": "lp", "cash": 18000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1},
+       "3278": {"role": "lp", "cash": 19500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1}
+     }},
+    {"id": 12319, "name": "Francesco Riccardi",
+     "name_fields": {"first_name": "Francesco", "father_mother": null, "grandfather": null, "last_name": "Riccardi", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 20,
+     "cells": {
+       "3694": {"role": "lp", "cash": 18000, "non_cash": null, "heirs_of": false, "proxy": true, "joint": true, "jewish": null, "rows": 1},
+       "3833": {"role": "lp", "cash": 18000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1},
+       "3928": {"role": "lp", "cash": 18000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1},
+       "3990": {"role": "lp", "cash": 18000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1},
+       "3278": {"role": "lp", "cash": 19500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1}
+     }},
+    {"id": 7516, "name": "Carlo Taddei",
+     "name_fields": {"first_name": "Carlo", "father_mother": null, "grandfather": null, "last_name": "Taddei", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 6,
+     "cells": {
+       "3694": {"role": "lp", "cash": 1500, "non_cash": null, "heirs_of": false, "proxy": true, "joint": true, "jewish": null, "rows": 1},
+       "3833": {"role": "lp", "cash": 1500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1},
+       "3928": {"role": "lp", "cash": 4000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1},
+       "3990": {"role": "lp", "cash": 1500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1}
+     }},
+    {"id": 7515, "name": "Mario Morelli",
+     "name_fields": {"first_name": "Mario", "father_mother": "Poggio", "grandfather": null, "last_name": "Morelli", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 5,
+     "cells": {
+       "3694": {"role": "gp", "cash": 2000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1},
+       "3833": {"role": "gp", "cash": 2000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1}
+     }},
+    {"id": 6613, "name": "Matteo Niccolini",
+     "name_fields": {"first_name": "Matteo", "father_mother": null, "grandfather": null, "last_name": "Niccolini", "nickname": null},
+     "kind": "person", "woman": false, "hub": true, "acts_total": 28,
+     "cells": {
+       "3694": {"role": "lp", "cash": 2500, "non_cash": null, "heirs_of": false, "proxy": true, "joint": true, "jewish": null, "rows": 1}
+     }},
+    {"id": 8089, "name": "Lorenzo Niccolini",
+     "name_fields": {"first_name": "Lorenzo", "father_mother": null, "grandfather": null, "last_name": "Niccolini", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 4,
+     "cells": {
+       "3833": {"role": "lp", "cash": 2500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1},
+       "3928": {"role": "lp", "cash": 4000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1},
+       "3990": {"role": "lp", "cash": 2500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1}
+     }},
+    {"id": 8277, "name": "Francesco Maria Frescobaldi",
+     "name_fields": {"first_name": "Francesco Maria", "father_mother": "Lorenzo", "grandfather": null, "last_name": "Frescobaldi", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 1,
+     "cells": {
+       "3928": {"role": "gp", "cash": 2000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1}
+     }},
+    {"id": 8279, "name": "Buonaventura Feducci",
+     "name_fields": {"first_name": "Buonaventura", "father_mother": null, "grandfather": null, "last_name": "Feducci", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 1,
+     "cells": {
+       "3928": {"role": "gp", "cash": 0, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1}
+     }},
+    {"id": 8280, "name": "Pietro Niccolini",
+     "name_fields": {"first_name": "Pietro", "father_mother": null, "grandfather": null, "last_name": "Niccolini", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 6,
+     "cells": {
+       "3928": {"role": "lp", "cash": 4000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1}
+     }},
+    {"id": 11247, "name": "Matteo da Romena",
+     "name_fields": {"first_name": "Matteo", "father_mother": null, "grandfather": null, "last_name": "da Romena", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 1,
+     "cells": {
+       "3928": {"role": "gp", "cash": 0, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1}
+     }},
+    {"id": 5308, "name": "Giuseppe Frescobaldi",
+     "name_fields": {"first_name": "Giuseppe", "father_mother": "Lorenzo", "grandfather": null, "last_name": "Frescobaldi", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 3,
+     "cells": {
+       "3990": {"role": "gp", "cash": 2000, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1},
+       "3278": {"role": "gp", "cash": 4500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1},
+       "4364": {"role": "gp", "cash": 9365, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1}
+     }},
+    {"id": 7812, "name": "Piero Niccolini",
+     "name_fields": {"first_name": "Piero", "father_mother": null, "grandfather": null, "last_name": "Niccolini", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 9,
+     "cells": {
+       "3990": {"role": "lp", "cash": 2500, "non_cash": null, "heirs_of": false, "proxy": false, "joint": true, "jewish": null, "rows": 1}
+     }},
+    {"id": 8278, "name": "Matteo da Romena",
+     "name_fields": {"first_name": "Matteo", "father_mother": "Paolo", "grandfather": null, "last_name": "da Romena", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 1,
+     "cells": {
+       "3990": {"role": "gp", "cash": 0, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1}
+     }},
+    {"id": 11303, "name": "Francesco Buonaventura Feducci",
+     "name_fields": {"first_name": "Francesco Buonaventura", "father_mother": null, "grandfather": null, "last_name": "Feducci", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 1,
+     "cells": {
+       "3990": {"role": "gp", "cash": 0, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1}
+     }},
+    {"id": 11477, "name": "Francesco Riccardi",
+     "name_fields": {"first_name": "Francesco", "father_mother": null, "grandfather": null, "last_name": "Riccardi", "nickname": null},
+     "kind": "person", "woman": false, "hub": true, "acts_total": 42,
+     "cells": {
+       "4247": {"role": "lp", "cash": 40625, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1},
+       "4364": {"role": "lp", "cash": 40725, "non_cash": null, "heirs_of": false, "proxy": true, "joint": false, "jewish": null, "rows": 1},
+       "4480": {"role": "lp", "cash": 56875, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1}
+     }},
+    {"id": 6844, "name": "Giuseppe Frescobaldi",
+     "name_fields": {"first_name": "Giuseppe", "father_mother": null, "grandfather": null, "last_name": "Frescobaldi", "nickname": null},
+     "kind": "person", "woman": false, "hub": false, "acts_total": 15,
+     "cells": {
+       "4247": {"role": "gp", "cash": 9375, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1},
+       "4480": {"role": "gp", "cash": 13125, "non_cash": null, "heirs_of": false, "proxy": false, "joint": false, "jewish": null, "rows": 1}
+     }}
+  ],
+  "changes": [
+    {"from": 3694, "to": 3833, "stayed": 4, "left": 1, "joined": 1},
+    {"from": 3833, "to": 3928, "stayed": 4, "left": 1, "joined": 4},
+    {"from": 3928, "to": 3990, "stayed": 4, "left": 4, "joined": 4},
+    {"from": 3990, "to": 3278, "stayed": 3, "left": 5, "joined": 0},
+    {"from": 3278, "to": 4247, "stayed": 0, "left": 3, "joined": 2},
+    {"from": 4247, "to": 4364, "stayed": 1, "left": 1, "joined": 1},
+    {"from": 4364, "to": 4480, "stayed": 1, "left": 1, "joined": 1}
+  ],
+  "counts": {"acts": 8, "entries": 16, "later": 11, "undated": 0},
+  "sentence": "The firm name Mario Morelli e compagni, on 8 registrations, 1659–1693.",
+  "answer": "16 entries on 8 registrations, 1659–1693; 11 later acts. Person entries are counted as entered; one person may have several.",
+  "how": [
+    "Registrations whose stored firm name reads Mario Morelli e compagni after trimming and case-folding, in 2 spellings: 3694, 3833, 3928, 3990, 3278, 4247, 4364 and 4480.",
+    "Later acts (termination, variation, balance, renewal) carry no partners; they are drawn as ticks on their registration.",
+    "Hidden entries, appearances and acts are left out.",
+    "Rows stand in the order of their first registration; columns in date order, undated last."
+  ]
+}
