@@ -14,20 +14,20 @@ import type {
 import { periodLabel } from "../utils/findView";
 
 /* The corpus before an entry is chosen (docs/network/next_2026-11-01.md §4.3;
- * the build contract in docs/network/step2b_contract.md §4), in the form of
- * Find's landing: the answer line, the five standing figures with their
- * definition and the last edit logged to what they count, the entries active
- * by decade on the house axis, and two lists a row of which opens a circle.
- * Every word and number is the server's (GET /api/network/landing); the page
- * composes only the row cells and the hover rows. In development, `?fixture=1`
- * reads the hand-written fixture instead of asking the server. */
+ * the build contract in docs/network/step2b_contract.md §4; cut to WH's review
+ * of 1 November, docs/ui_review/2026-11-01_network_landing.md), in the form of
+ * Find's landing: the answer line, four figures of a value and one clause, the
+ * entries active by decade on the house axis with a two-sentence caption, two
+ * lists a row of which opens a circle, and one as-of line at the foot. Every
+ * word and number is the server's (GET /api/network/landing); the page composes
+ * only the row cells and the hover rows. In development, `?fixture=1` reads the
+ * hand-written fixture instead of asking the server. */
 
 // The first of the validated series colours (FindViews.tsx), on the chart surface.
 const BAR = "#2a78d6";
 // The hover rows that are not drawn carry no key.
 const NO_KEY = "transparent";
-const WAYS_IN = "Ways in";
-const ALL_ROWS = "All 30";
+const SHOW_ALL = (n: number) => `Show all ${n}`;
 const TABLE_FOLD = "The figures as a table";
 const UNDATED = "no registration date";
 /** The rows shown before the fold. */
@@ -63,8 +63,6 @@ function Figure({ figure }: { figure: NetworkLandingFigure }) {
       <span className="find-standing-label">{figure.label}</span>
       <span className="find-standing-value">{figure.value}</span>
       {figure.detail && <span className="find-standing-detail">{figure.detail}</span>}
-      <span className="find-standing-note">{figure.definition}</span>
-      <span className="find-standing-note">{figure.as_of}</span>
     </li>
   );
 }
@@ -123,11 +121,11 @@ function WidestTable({ rows, duplicates }: { rows: NetworkLandingWidestRow[]; du
                 {row.cosigners.toLocaleString("en-US")}
                 {row.largest_act && (
                   <span className="nw-landing-largest">
-                    , {row.largest_act.brings.toLocaleString("en-US")} of them on act {row.largest_act.id}, {row.largest_act.year}
+                    , {row.largest_act.brings.toLocaleString("en-US")} of them on one {row.largest_act.year === null ? "undated act" : `act of ${row.largest_act.year}`}
                   </span>
                 )}
               </td>
-              <td className="num">{row.hub ? `on ${row.acts.toLocaleString("en-US")} acts` : row.acts.toLocaleString("en-US")}</td>
+              <td className="num">{row.acts.toLocaleString("en-US")}</td>
               <td className={row.first_year === null ? "muted" : undefined}>{yearsCell(row.first_year, row.last_year)}</td>
             </tr>
           ))}
@@ -232,7 +230,6 @@ function CorpusChart({ chart }: { chart: Landing["chart"] }) {
           </table>
         </div>
         {chart.note && <p className="find-standing-note">{chart.note}</p>}
-        <p className="find-standing-note">{chart.as_of}</p>
       </details>
       <p className="nw-landing-caption">{chart.caption.join(" ")}</p>
     </div>
@@ -250,11 +247,10 @@ function List<Row>({
   return (
     <section className="nw-landing-list">
       <h3>{list.heading}</h3>
-      <p className="find-standing-note">{list.definition}</p>
       {table(list.rows.slice(0, SHOWN))}
       {rest.length > 0 && (
         <details className="find-figures nw-landing-more">
-          <summary>{ALL_ROWS}</summary>
+          <summary>{SHOW_ALL(list.rows.length)}</summary>
           {table(rest)}
         </details>
       )}
@@ -307,7 +303,6 @@ export default function NetworkLanding({ fixture }: { fixture: boolean }) {
         ))}
       </ul>
       <CorpusChart chart={landing.chart} />
-      <p className="eyebrow nw-landing-ways">{WAYS_IN}</p>
       <div className="nw-landing-lists">
         <List list={landing.widest} table={(rows) => <WidestTable rows={rows} duplicates={widestNames} />} />
         <List list={landing.pairs} table={(rows) => <PairsTable rows={rows} duplicates={pairNames} />} />

@@ -684,3 +684,10 @@ export function loadNetworkLanding(): Promise<import("./types").NetworkLanding> 
 export function loadNetworkFirm(name: string): Promise<import("./types").NetworkFirm> {
   return request(`/api/network/firm?${new URLSearchParams({ name }).toString()}`);
 }
+
+/** The chain between two person entries: the fewest shared acts joining them,
+ * forward in time when such a chain exists, and through any acts in any order
+ * (docs/network/step4_contract.md §3). The centre of the circle is `a`. */
+export function loadNetworkChain(a: number, b: number): Promise<import("./types").NetworkChain> {
+  return request(`/api/network/chain/${a}/${b}`);
+}

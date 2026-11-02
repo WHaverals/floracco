@@ -9,6 +9,11 @@
  * name URL-encoded, beside the circle's keys; while set the page shows the
  * firm view and the circle's keys stay, so removing it returns the circle.
  *
+ * Step 4 (docs/network/step4_contract.md §4): `to={id}`, the second entry of
+ * the chain (the circle's centre is the first), and `chain=any` when the reader
+ * asks for the untimed chain while a forward one exists. Both left out of
+ * circleKey: the chain is fetched on its own while `to` is set.
+ *
  * Kept free of React and of other imports so it can run under Node. The server
  * checks every value again. */
 
@@ -61,11 +66,16 @@ export type NetworkState = {
   /** the firm view (step 3): the stored firm name followed from an act, `firm=Mario+Morelli+e+compagni`;
    * null = the circle. Not part of circleKey: the circle is kept while it is set. */
   firm: string | null;
+  /** the chain's second entry (step 4), `to=3188`; null = no chain. Not part of circleKey. */
+  to: number | null;
+  /** "any" when the reader asks for the untimed chain while a forward one exists
+   * (`chain=any`); null = the forward chain when it exists, else the untimed one */
+  chain: "any" | null;
 };
 
 export const CAP_MIN = 50;
 export const CAP_MAX = 600;
-export const DEFAULT_NETWORK: NetworkState = { steps: 2, hubs: "stop", others: "on", widen: [], cap: 300, select: null, years: null, firm: null };
+export const DEFAULT_NETWORK: NetworkState = { steps: 2, hubs: "stop", others: "on", widen: [], cap: 300, select: null, years: null, firm: null, to: null, chain: null };
 export const YEAR_MIN = 1400;
 export const YEAR_MAX = 1810;
 
@@ -92,6 +102,8 @@ export function networkSearch(state: NetworkState): string {
   if (state.cap !== DEFAULT_NETWORK.cap) query.set("cap", String(state.cap));
   if (state.years) query.set("years", `${state.years[0]}-${state.years[1]}`);
   if (state.firm) query.set("firm", state.firm);
+  if (state.to !== null) query.set("to", String(state.to));
+  if (state.chain) query.set("chain", state.chain);
   if (state.select) {
     query.set("select", state.select.kind === "pair" ? `pair:${state.select.a}.${state.select.b}` : `${state.select.kind}:${state.select.id}`);
   }
@@ -134,6 +146,12 @@ export function parseNetworkSearch(search: string, ignore: string[] = []): { sta
       const name = raw.replace(/^[\s\u00a0]+|[\s\u00a0]+$/g, "");
       if (name) state.firm = name;
       else dropped.push(`firm “${raw}”`);
+    } else if (key === "to") {
+      if (ID.test(raw)) state.to = Number(raw);
+      else dropped.push(`to “${raw}”`);
+    } else if (key === "chain") {
+      if (raw === "any") state.chain = raw;
+      else dropped.push(`chain “${raw}”`);
     } else if (key === "select") {
       const match = /^(person|contract):(\d{1,10})$/.exec(raw);
       const pair = /^pair:(\d{1,10})\.(\d{1,10})$/.exec(raw);

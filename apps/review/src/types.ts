@@ -1555,16 +1555,13 @@ export type NetworkCircle = {
 
 // --- Network landing (docs/network/step2b_contract.md §2) ----------------------
 
-/** A standing figure of the corpus's network (GET /api/network/landing): every
- * word the server's, plain text; the "One body" value opens nothing yet. */
+/** A standing figure of the corpus's network (GET /api/network/landing): a
+ * label, a value and one clause, every word the server's, plain text. */
 export type NetworkLandingFigure = {
   key: string;
   label: string;
   value: string;
   detail: string;
-  definition: string;
-  /** the last edit logged to what it counts */
-  as_of: string;
 };
 
 /** Entries active by decade on the house axis; the undated acts are named in `note`. */
@@ -1579,11 +1576,10 @@ export type NetworkLandingChart = {
   new_entries: number[];
   /** mean co-signers per active entry on that decade's acts, one decimal */
   cosigners_each: number[];
-  /** the four sentences under the chart, every figure computed */
+  /** the two sentences under the chart, every figure computed */
   caption: string[];
   /** null when every act is dated */
   note: string | null;
-  as_of: string;
   /** Find's partial-period marks ("1445–1449", "1800–1808"), when the server sends them */
   partial?: { first?: string; last?: string };
 };
@@ -1621,8 +1617,7 @@ export type NetworkLandingPairRow = {
 
 export type NetworkLandingList<Row> = {
   heading: string;
-  definition: string;
-  /** the widest list's note is sent only when a row carries a `largest_act` */
+  /** the pairs list's "never signed apart" line; null on the widest list */
   note: string | null;
   rows: Row[];
 };
@@ -1714,6 +1709,62 @@ export type NetworkFirm = {
   };
   /** those acts, in date order, for the side column (sent only when there are any) */
   empty?: { id: number; date: string; year: number | null; firm_name: string | null }[];
+  sentence: string;
+  answer: string;
+  how: string[];
+};
+
+// --- Network chain (docs/network/step4_contract.md §3) -------------------------
+
+/** One entry on a chain, as the circle's node reads it minus the view's fields. */
+export type NetworkChainEntry = {
+  id: number;
+  name: string;
+  name_fields: NetworkNode["name_fields"];
+  kind: NetworkKind;
+  first_year: number | null;
+  last_year: number | null;
+  acts_total: number;
+};
+
+/** The act shown on a hop: the earliest dated act the two entries share, undated last, then the lowest id. */
+export type NetworkChainAct = {
+  id: number;
+  /** as stored; "0000-00-00" is an act with no registration date */
+  date: string;
+  year: number | null;
+  firm_name: string | null;
+};
+
+/** One hop: one act both entries stand on. */
+export type NetworkChainHop = { from: number; to: number; act: NetworkChainAct };
+
+/** A chain with the fewest hops: the hops in order, the number of equally short
+ * chains (over entry sequences), whether the shown one passes through an entry
+ * on more than 20 acts, and the length of the shortest chain through none
+ * (null when none exists). */
+export type NetworkChainRun = {
+  hops: NetworkChainHop[];
+  equal: number;
+  touches_hubs: boolean;
+  avoiding_hubs: number | null;
+};
+
+/** The hop-minimal chain whose acts are registered in non-decreasing date order,
+ * tried from `a` and from `b`; `from` and `to` say which way it runs. */
+export type NetworkChainForward = NetworkChainRun & { from: number; to: number };
+
+export type NetworkChain = {
+  a: NetworkChainEntry;
+  b: NetworkChainEntry;
+  connected: boolean;
+  /** null when no chain runs forward in time */
+  forward: NetworkChainForward | null;
+  /** the fewest hops through any acts in any order; null when not connected */
+  any: NetworkChainRun | null;
+  /** every entry on either chain, `a` and `b` included (the strip names the
+   * marks from it; an entry missing here reads as its number alone) */
+  entries?: NetworkChainEntry[];
   sentence: string;
   answer: string;
   how: string[];

@@ -1,0 +1,370 @@
+{
+  "_source": "Hand-written for ?fixture=1 in development (docs/network/step4_contract.md §4). The two entries, the hops and the entries list were computed on 1 November 2026 by a read-only shortest-chain search over data/sqlite/main.db (live person entries only, the contract's §3 rules) in the page session, while the API was not yet served; its figures agree with the measurement of next_2026-11-01.md §2.4 (7 acts forward, 6 through any acts). The hop ids are to be replaced by the API's once it is up. The sentence, answer and How lines are the contract's templates filled by hand. Nothing here is served by the API.",
+  "a": {
+    "id": 11230,
+    "name": "Alfonso Altoviti",
+    "name_fields": {
+      "first_name": "Alfonso",
+      "father_mother": "Guglielmo",
+      "grandfather": null,
+      "last_name": "Altoviti",
+      "nickname": null
+    },
+    "kind": "person",
+    "first_year": 1676,
+    "last_year": 1676,
+    "acts_total": 1
+  },
+  "b": {
+    "id": 3188,
+    "name": "Settimia Capponi Torrigiani",
+    "name_fields": {
+      "first_name": "Settimia",
+      "father_mother": null,
+      "grandfather": null,
+      "last_name": "Capponi Torrigiani",
+      "nickname": null
+    },
+    "kind": "person",
+    "first_year": 1772,
+    "last_year": 1778,
+    "acts_total": 2
+  },
+  "connected": true,
+  "forward": {
+    "from": 11230,
+    "to": 3188,
+    "hops": [
+      {
+        "from": 11230,
+        "to": 4747,
+        "act": {
+          "id": 4254,
+          "date": "1676-02-22",
+          "year": 1676,
+          "firm_name": "Alfonso Altoviti, Antonio Antinori e compagni"
+        }
+      },
+      {
+        "from": 4747,
+        "to": 6920,
+        "act": {
+          "id": 3235,
+          "date": "1678-02-28",
+          "year": 1678,
+          "firm_name": "Bastiano Pampaloni, Vincenzo Brancaccini e compagni"
+        }
+      },
+      {
+        "from": 6920,
+        "to": 9791,
+        "act": {
+          "id": 4571,
+          "date": "1698-10-07",
+          "year": 1698,
+          "firm_name": "Giamberti e Calamai e compagni"
+        }
+      },
+      {
+        "from": 9791,
+        "to": 3615,
+        "act": {
+          "id": 2981,
+          "date": "1705-04-04",
+          "year": 1705,
+          "firm_name": "Bini, Ubaldini e Gaddi"
+        }
+      },
+      {
+        "from": 3615,
+        "to": 3588,
+        "act": {
+          "id": 1686,
+          "date": "1739-02-14",
+          "year": 1739,
+          "firm_name": "Cosimo Alessandro Batistoni"
+        }
+      },
+      {
+        "from": 3588,
+        "to": 5540,
+        "act": {
+          "id": 1681,
+          "date": "1740-04-09",
+          "year": 1740,
+          "firm_name": "Antonio Liborio e Roberto Cedri"
+        }
+      },
+      {
+        "from": 5540,
+        "to": 3188,
+        "act": {
+          "id": 2678,
+          "date": "1778-08-14",
+          "year": 1778,
+          "firm_name": "Antonio Morandini e compagni"
+        }
+      }
+    ],
+    "equal": 132,
+    "touches_hubs": false,
+    "avoiding_hubs": 7
+  },
+  "any": {
+    "hops": [
+      {
+        "from": 11230,
+        "to": 4747,
+        "act": {
+          "id": 4254,
+          "date": "1676-02-22",
+          "year": 1676,
+          "firm_name": "Alfonso Altoviti, Antonio Antinori e compagni"
+        }
+      },
+      {
+        "from": 4747,
+        "to": 7037,
+        "act": {
+          "id": 3671,
+          "date": "1659-03-31",
+          "year": 1659,
+          "firm_name": "Giovanni da Bagnano e compagni"
+        }
+      },
+      {
+        "from": 7037,
+        "to": 11426,
+        "act": {
+          "id": 3279,
+          "date": "1678-11-16",
+          "year": 1678,
+          "firm_name": "Giacinto Bernardi, Giovanni Filippo Mati e compagni"
+        }
+      },
+      {
+        "from": 11426,
+        "to": 3575,
+        "act": {
+          "id": 4610,
+          "date": "1701-04-28",
+          "year": 1701,
+          "firm_name": null
+        }
+      },
+      {
+        "from": 3575,
+        "to": 3189,
+        "act": {
+          "id": 1771,
+          "date": "1743-10-02",
+          "year": 1743,
+          "firm_name": "Antonio Liborio e Roberto Cedri"
+        }
+      },
+      {
+        "from": 3189,
+        "to": 3188,
+        "act": {
+          "id": 1579,
+          "date": "1772-01-07",
+          "year": 1772,
+          "firm_name": "Libri e Carcherelli "
+        }
+      }
+    ],
+    "equal": 6,
+    "touches_hubs": true,
+    "avoiding_hubs": 6
+  },
+  "entries": [
+    {
+      "id": 3188,
+      "name": "Settimia Capponi Torrigiani",
+      "name_fields": {
+        "first_name": "Settimia",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Capponi Torrigiani",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1772,
+      "last_year": 1778,
+      "acts_total": 2
+    },
+    {
+      "id": 3189,
+      "name": "Carlo Rinuccini",
+      "name_fields": {
+        "first_name": "Carlo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Rinuccini",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1743,
+      "last_year": 1784,
+      "acts_total": 5
+    },
+    {
+      "id": 3575,
+      "name": "Domenico Cantucci",
+      "name_fields": {
+        "first_name": "Domenico",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Cantucci",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1701,
+      "last_year": 1746,
+      "acts_total": 10
+    },
+    {
+      "id": 3588,
+      "name": "Filippo Corboli",
+      "name_fields": {
+        "first_name": "Filippo",
+        "father_mother": "Lorenzo",
+        "grandfather": null,
+        "last_name": "Corboli",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1735,
+      "last_year": 1748,
+      "acts_total": 9
+    },
+    {
+      "id": 3615,
+      "name": "Filippo Ubaldini",
+      "name_fields": {
+        "first_name": "Filippo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Ubaldini",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1705,
+      "last_year": 1744,
+      "acts_total": 5
+    },
+    {
+      "id": 4747,
+      "name": "Tommaso Guadagni",
+      "name_fields": {
+        "first_name": "Tommaso",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Guadagni",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1655,
+      "last_year": 1678,
+      "acts_total": 12
+    },
+    {
+      "id": 5540,
+      "name": "Niccolò Martelli",
+      "name_fields": {
+        "first_name": "Niccolò",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Martelli",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1739,
+      "last_year": 1781,
+      "acts_total": 8
+    },
+    {
+      "id": 6920,
+      "name": "Alfonso Altoviti",
+      "name_fields": {
+        "first_name": "Alfonso",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Altoviti",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1674,
+      "last_year": 1703,
+      "acts_total": 7
+    },
+    {
+      "id": 7037,
+      "name": "Giacinto Bernardi",
+      "name_fields": {
+        "first_name": "Giacinto",
+        "father_mother": "Tommaso",
+        "grandfather": null,
+        "last_name": "Bernardi",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1659,
+      "last_year": 1678,
+      "acts_total": 5
+    },
+    {
+      "id": 9791,
+      "name": "Giovanni Battista Guadagni",
+      "name_fields": {
+        "first_name": "Giovanni Battista",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Guadagni",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1652,
+      "last_year": 1705,
+      "acts_total": 13
+    },
+    {
+      "id": 11230,
+      "name": "Alfonso Altoviti",
+      "name_fields": {
+        "first_name": "Alfonso",
+        "father_mother": "Guglielmo",
+        "grandfather": null,
+        "last_name": "Altoviti",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1676,
+      "last_year": 1676,
+      "acts_total": 1
+    },
+    {
+      "id": 11426,
+      "name": "Pier Antonio Gerini",
+      "name_fields": {
+        "first_name": "Pier Antonio",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Gerini",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1676,
+      "last_year": 1720,
+      "acts_total": 29
+    }
+  ],
+  "sentence": "How are Alfonso Altoviti, entry 11230, and Settimia Capponi Torrigiani, entry 3188, connected?",
+  "answer": "From Alfonso Altoviti, 1676, forward in time to Settimia Capponi Torrigiani, 1772: 7 acts, one of 132 equally short chains. Person entries are counted as entered; one person may have several.",
+  "how": [
+    "A hop is one act both entries stand on; the chain shown has the fewest hops, and of the equally short chains the one through the lowest entry numbers.",
+    "Forward in time: each hop's act is registered no earlier than the hop before.",
+    "Institutions, estates, shareholder groups and placeholders are left out of chains.",
+    "Hidden entries, appearances and acts are left out."
+  ]
+}

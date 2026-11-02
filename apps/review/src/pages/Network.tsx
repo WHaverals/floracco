@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { loadNetworkCircle, loadNetworkFirm, searchPersonsRich } from "../api";
+import { loadNetworkChain, loadNetworkCircle, loadNetworkFirm, searchPersonsRich } from "../api";
+import ChainStrip, { chainOrder, type ChainHover } from "../components/ChainStrip";
 import ContractDrawer, { ContractLink, drawerOrder, drawerRow } from "../components/ContractDrawer";
 import FirmFigure, { FirmKey } from "../components/FirmFigure";
 import NetworkFigure, { KIND_WORDS, NetworkKey, appearanceNotes, roleWords, type YearCard } from "../components/NetworkFigure";
@@ -9,6 +10,8 @@ import NetworkStrip, { type StripHover } from "../components/NetworkStrip";
 import type {
   NetworkAct,
   NetworkAppearance,
+  NetworkChain,
+  NetworkChainRun,
   NetworkCircle,
   NetworkFirm,
   NetworkFirmAct,
@@ -68,9 +71,21 @@ import { roleLabel } from "../utils/roles";
  * rail the firm's sentence and answer with "‹ Back to the circle", and the
  * side column the registrations at rest, or the selected entry or act over
  * the firm's rows. The circle's keys stay in the address, so Back returns the
- * circle as it was; a link with `firm=` and no entry shows the firm alone. */
+ * circle as it was; a link with `firm=` and no entry shows the firm alone.
+ *
+ * Step 4 (docs/network/step4_contract.md §4): the chain between the centre and
+ * a second entry chosen in the rail's second search box, `to=` in the address
+ * (components/ChainStrip.tsx, from GET /api/network/chain/{a}/{b}). While it is
+ * set the rail carries the chain's sentence and answer in the circle's place,
+ * the pills "Forward in time" · "Any order" when both chains exist (`chain=any`)
+ * and "× No chain"; the strip stands between the stage and the time strip; the
+ * chain's entries are lit on the circle; the How card adds the chain's lines.
+ * The circle's keys stay as they are, so the chain reads over the circle. */
 
 const FIXTURE_KEY = "fixture";
+/** The landing's heading and its one instruction (docs/ui_review/2026-11-01_network_landing.md L1, L2). */
+const LANDING_HEADING = "Who signed with whom";
+const LANDING_LINE = "Search for a person entry to draw its circle, or start from a name in the lists below.";
 const DROPPED_LINE = "Part of this link asks for a setting this page does not offer; it was left out.";
 const OPEN_TITLE = "The full record, where it can be edited, in a new tab";
 const ALL_YEARS = "All years";
@@ -81,6 +96,13 @@ const HOW_DRAG = "Drag the end earlier to see the circle as it stood in that yea
 /** The firm view's entry point on act rows and in the act block's head, and its way back. */
 const FOLLOW_FIRM = "Follow this firm name";
 const BACK_TO_CIRCLE = "‹ Back to the circle";
+/** The chain's rail (step 4): the second box, the two pills and the way out. */
+const CHAIN_PLACEHOLDER = "A second entry, for the chain";
+const FORWARD_PILL = "Forward in time";
+const ANY_PILL = "Any order";
+const NO_CHAIN = "× No chain";
+/** The standing line every Network answer ends with (step1b_contract.md §2). */
+const STANDING_LINE = "Person entries are counted as entered; one person may have several.";
 /** Under 1400 px the side column stands under the figure and the How card folds. */
 const NARROW = "(max-width: 1399px)";
 
@@ -204,6 +226,46 @@ function sortActs(ids: Iterable<number>, actsById: Map<number, NetworkAct>): Net
     .sort((p, q) => (date(p) < date(q) ? -1 : date(p) > date(q) ? 1 : p.id - q.id));
 }
 
+/** The untimed chain's answer while a forward one exists and the reader asks
+ * for "Any order": the contract's second sentence for a pair with no forward
+ * chain, then the standing line. The server's answer describes the forward one. */
+function anyAnswer(run: NetworkChainRun): string {
+  const n = run.hops.length;
+  const acts = n === 1 ? "one act" : `${n.toLocaleString("en-US")} acts`;
+  const equal = run.equal > 1 ? `, one of ${run.equal.toLocaleString("en-US")} equally short chains` : "";
+  const hubs = !run.touches_hubs
+    ? ""
+    : run.avoiding_hubs === n
+      ? "; one of them avoids the entries on more than 20 acts"
+      : "; every one of them passes through an entry on more than 20 acts";
+  return `Through any acts, in any order: ${acts}${equal}${hubs}. ${STANDING_LINE}`;
+}
+
+/** The person search behind a rail box: the hits for a term of two or more
+ * characters, 250 ms after the last keystroke; null with no term. */
+function usePersonSearch(query: string): { hits: PersonHit[] | null; failed: boolean } {
+  const [hits, setHits] = useState<PersonHit[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const begin = useLatest();
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2) {
+      setHits(null);
+      setFailed(false);
+      begin();
+      return;
+    }
+    const fresh = begin();
+    const handle = window.setTimeout(() => {
+      searchPersonsRich(term, 12)
+        .then((res) => fresh() && setHits(res.results))
+        .catch(() => fresh() && setFailed(true));
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [query, begin]);
+  return { hits, failed };
+}
+
 function useMedia(query: string): boolean {
   const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
   useEffect(() => {
@@ -245,30 +307,37 @@ export default function Network() {
   const [firmLoading, setFirmLoading] = useState(false);
   const [firmError, setFirmError] = useState("");
   const [firmAttempt, setFirmAttempt] = useState(0);
+  /** the chain's data while `to=` is set beside an entry */
+  const [chainData, setChainData] = useState<NetworkChain | null>(null);
+  const [chainLoading, setChainLoading] = useState(false);
+  const [chainError, setChainError] = useState("");
+  const [chainAttempt, setChainAttempt] = useState(0);
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<PersonHit[] | null>(null);
-  const [searchFailed, setSearchFailed] = useState(false);
+  const [chainQuery, setChainQuery] = useState("");
+  const search = usePersonSearch(query);
+  const chainSearch = usePersonSearch(chainQuery);
   const written = useRef<string | null>(null);
   const loadedFor = useRef<number | null>(null);
   const side = useRef<HTMLElement | null>(null);
   const beginLoad = useLatest();
-  const beginSearch = useLatest();
   const beginFirm = useLatest();
+  const beginChain = useLatest();
   const firmFor = useRef<string | null>(null);
+  const chainFor = useRef<string | null>(null);
   const narrow = useMedia(NARROW);
 
   // Read a link (or Back/Forward) into the state; our own writes never re-read.
-  const search = location.search.replace(/^\?/, "");
+  const address = location.search.replace(/^\?/, "");
   useEffect(() => {
-    if (search === written.current) return;
-    const parsed = parseNetworkSearch(search, [FIXTURE_KEY]);
-    const useFixture = Boolean(import.meta.env.DEV) && new URLSearchParams(search).get(FIXTURE_KEY) === "1";
-    if (!import.meta.env.DEV && new URLSearchParams(search).has(FIXTURE_KEY)) parsed.dropped.push(`“${FIXTURE_KEY}”`);
+    if (address === written.current) return;
+    const parsed = parseNetworkSearch(address, [FIXTURE_KEY]);
+    const useFixture = Boolean(import.meta.env.DEV) && new URLSearchParams(address).get(FIXTURE_KEY) === "1";
+    if (!import.meta.env.DEV && new URLSearchParams(address).has(FIXTURE_KEY)) parsed.dropped.push(`“${FIXTURE_KEY}”`);
     setState(parsed.state);
     setDropped(parsed.dropped);
     setFixture(useFixture);
     written.current = withFixture(networkSearch(parsed.state), useFixture);
-  }, [search]);
+  }, [address]);
 
   // The address follows the state, 350 ms after a change, in place.
   const current = withFixture(networkSearch(state), fixture);
@@ -353,23 +422,42 @@ export default function Network() {
       });
   }, [state.firm, fixture, firmAttempt, beginFirm]);
 
-  // The person search in the rail.
+  // The chain, from the server (or the fixture in development), while `to=` is
+  // set beside an entry; another pair starts from nothing, a retry keeps the strip.
+  const chainPair = personId !== null && state.to !== null ? `${personId}.${state.to}` : null;
   useEffect(() => {
-    const term = query.trim();
-    if (term.length < 2) {
-      setHits(null);
-      setSearchFailed(false);
-      beginSearch();
+    if (chainPair === null) {
+      setChainData(null);
+      setChainError("");
+      setChainLoading(false);
+      chainFor.current = null;
+      beginChain();
       return;
     }
-    const fresh = beginSearch();
-    const handle = window.setTimeout(() => {
-      searchPersonsRich(term, 12)
-        .then((res) => fresh() && setHits(res.results))
-        .catch(() => fresh() && setSearchFailed(true));
-    }, 250);
-    return () => window.clearTimeout(handle);
-  }, [query, beginSearch]);
+    if (chainFor.current !== chainPair) {
+      setChainData(null);
+      chainFor.current = chainPair;
+    }
+    const [a, b] = chainPair.split(".").map(Number);
+    const fresh = beginChain();
+    setChainLoading(true);
+    setChainError("");
+    const request = fixture
+      ? import("../dev/network-chain-fixture.json").then((module) => module.default as unknown as NetworkChain)
+      : loadNetworkChain(a, b);
+    request
+      .then((data) => {
+        if (!fresh()) return;
+        setChainData(data);
+        setChainLoading(false);
+      })
+      .catch((e: Error) => {
+        if (!fresh()) return;
+        setChainError(e.message);
+        setChainData(null);
+        setChainLoading(false);
+      });
+  }, [chainPair, fixture, chainAttempt, beginChain]);
 
   const actsById = useMemo(() => new Map((circle?.acts ?? []).map((act) => [act.id, act])), [circle]);
   const nodesById = useMemo(() => new Map((circle?.nodes ?? []).map((node) => [node.id, node])), [circle]);
@@ -388,6 +476,11 @@ export default function Network() {
     setHighlight(hover ? hover.ids : null);
     setYearCard(hover ? { head: hover.head, line: hover.line } : null);
   };
+  /** a mark or a hop under the pointer on the chain strip: its entries lit, its words on the card */
+  const hoverChain = (hover: ChainHover | null) => {
+    setHighlight(hover ? hover.ids : null);
+    setYearCard(hover ? { head: hover.head, line: hover.line } : null);
+  };
 
   const setSelect = (select: NetworkSelect | null) => {
     setBackTo(null);
@@ -396,13 +489,16 @@ export default function Network() {
   const update = (next: Partial<NetworkState>) => setState((s) => ({ ...s, ...next }));
   useEscapeLayer(state.select !== null && drawer === null, () => setSelect(null));
 
-  // Opening another entry's circle keeps the controls and drops the selection,
-  // the window (another entry's acts lie in other years) and the firm; it is
-  // pushed, so Back returns to this circle.
+  // Opening another entry's circle keeps the controls and the chain's second
+  // entry (the chain then reads from the new centre; opening the second entry
+  // itself turns the chain round) and drops the selection, the window (another
+  // entry's acts lie in other years) and the firm; it is pushed, so Back
+  // returns to this circle.
   const openEntry = (entryId: number) => {
-    const controls = withFixture(networkSearch({ ...state, select: null, years: null, firm: null }), fixture);
+    const to = entryId === state.to ? personId : state.to;
+    const controls = withFixture(networkSearch({ ...state, select: null, years: null, firm: null, to }), fixture);
     setQuery("");
-    setHits(null);
+    setChainQuery("");
     navigate(`/network/person/${entryId}${controls ? `?${controls}` : ""}`);
   };
 
@@ -444,6 +540,22 @@ export default function Network() {
   };
   /** the firm's data while the firm view is up; the circle's otherwise */
   const shownData = firm ? firmData : circle;
+
+  // The chain (step 4) over the circle: the run shown is the forward one when
+  // it exists, the untimed one when none does or when the reader asks for it;
+  // its entries are lit on the circle while nothing else is.
+  const chainOn = !firm && personId !== null && state.to !== null;
+  const chainRun: NetworkChainRun | null = chainData ? (state.chain === "any" && chainData.any ? chainData.any : (chainData.forward ?? chainData.any)) : null;
+  const chainForward = chainRun !== null && chainRun === chainData?.forward;
+  const chainIds = useMemo(() => new Set(chainRun ? chainOrder(chainRun) : []), [chainRun]);
+  const chainAnswer = chainData && chainRun ? (chainForward || !chainData.forward ? chainData.answer : anyAnswer(chainRun)) : chainData?.answer ?? "";
+  const drawnIds = useMemo(() => new Set(nodesById.keys()), [nodesById]);
+  const figureHighlight = highlight ?? (chainOn && chainIds.size > 0 ? chainIds : null);
+  /** a mark on the strip: selected when the circle draws it, else its circle opens with the chain kept */
+  const clickChainMark = (id: number) => {
+    if (nodesById.has(id)) setSelect({ kind: "person", id });
+    else openEntry(id);
+  };
 
   const cosigners = useMemo(() => (circle ? sortCosigners(circle, cosignerOrder, order).map((row) => row.node) : []), [circle, cosignerOrder, order]);
   // The sentences over the loaded data (utils/networkWords.ts): who recurs, the
@@ -491,9 +603,13 @@ export default function Network() {
             ? [selectedAct.id]
             : selectedPair
               ? pairActs.map((row) => row.act.id)
-              : nodeAppearances.map((row) => row.act.id),
+              : selectedNode
+                ? nodeAppearances.map((row) => row.act.id)
+                : chainOn && chainRun
+                  ? chainRun.hops.map((hop) => hop.act.id)
+                  : [],
       ),
-    [firm, firmAct, firmRow, firmRowActs, firmData, selectedAct, selectedPair, pairActs, nodeAppearances],
+    [firm, firmAct, firmRow, firmRowActs, firmData, selectedAct, selectedPair, pairActs, selectedNode, nodeAppearances, chainOn, chainRun],
   );
 
   // Previous / Next through the drawn entries in ring order.
@@ -534,7 +650,15 @@ export default function Network() {
       ? { label: "Draw it", apply: () => update({ others: "on" }) }
       : null;
 
-  const howLines = firm ? (firmData?.how ?? []) : circle ? (state.years ? [...circle.how, HOW_WINDOW(windowWords(state.years)), HOW_DRAG] : circle.how) : [];
+  const howLines = firm
+    ? (firmData?.how ?? [])
+    : circle
+      ? [
+          ...(state.years ? [...circle.how, HOW_WINDOW(windowWords(state.years)), HOW_DRAG] : circle.how),
+          // the chain's lines after the circle's; a line the circle already carries (the hidden-rows line) once
+          ...(chainOn && chainData ? chainData.how.filter((line) => !circle.how.includes(line)) : []),
+        ]
+      : [];
   const howCard = shownData && (
     narrow ? (
       <details className="find-how nw-how">
@@ -636,6 +760,27 @@ export default function Network() {
     </li>
   );
 
+  /** The hits under a rail box, the same list for both boxes. */
+  const hitsList = (hits: PersonHit[], onPick: (id: number) => void) => (
+    <ul className="db-results nw-hits">
+      {hits.map((hit) => (
+        <li key={hit.person_id}>
+          <button type="button" className="db-result" onClick={() => onPick(Number(hit.person_id))}>
+            <span className="db-result-title">
+              {hit.display_name}
+              {hit.father_mother ? ` di ${hit.father_mother}` : ""}
+            </span>
+            <span className="db-result-meta">
+              entry {hit.person_id} · on {hit.appearances.toLocaleString("en-US")} act{hit.appearances === 1 ? "" : "s"}
+              {hit.residences ? ` · ${hit.residences}` : ""}
+            </span>
+          </button>
+        </li>
+      ))}
+      {hits.length === 0 && <li className="db-empty muted">No person entry matches.</li>}
+    </ul>
+  );
+
   const browserClass = ["db-browser", "nw-browser", shownData ? "" : "is-bare", (firm ? firmDrawn : drawn) ? "has-selection" : ""].filter(Boolean).join(" ");
 
   return (
@@ -651,25 +796,25 @@ export default function Network() {
             placeholder="A person entry: a name or an entry number"
             aria-label="Search person entries"
           />
-          {searchFailed && <p className="db-count error-text">The search did not run.</p>}
-          {hits && (
-            <ul className="db-results nw-hits">
-              {hits.map((hit) => (
-                <li key={hit.person_id}>
-                  <button type="button" className="db-result" onClick={() => openEntry(Number(hit.person_id))}>
-                    <span className="db-result-title">
-                      {hit.display_name}
-                      {hit.father_mother ? ` di ${hit.father_mother}` : ""}
-                    </span>
-                    <span className="db-result-meta">
-                      entry {hit.person_id} · on {hit.appearances.toLocaleString("en-US")} act{hit.appearances === 1 ? "" : "s"}
-                      {hit.residences ? ` · ${hit.residences}` : ""}
-                    </span>
-                  </button>
-                </li>
-              ))}
-              {hits.length === 0 && <li className="db-empty muted">No person entry matches.</li>}
-            </ul>
+          {search.failed && <p className="db-count error-text">The search did not run.</p>}
+          {search.hits && hitsList(search.hits, (hitId) => openEntry(hitId))}
+          {personId !== null && (
+            <>
+              <input
+                className="db-search nw-chain-search"
+                type="search"
+                value={chainQuery}
+                onChange={(event) => setChainQuery(event.target.value)}
+                placeholder={CHAIN_PLACEHOLDER}
+                aria-label="Search a second person entry, for the chain"
+              />
+              {chainSearch.failed && <p className="db-count error-text">The search did not run.</p>}
+              {chainSearch.hits &&
+                hitsList(chainSearch.hits, (hitId) => {
+                  setChainQuery("");
+                  update({ to: hitId, chain: null });
+                })}
+            </>
           )}
         </div>
         {(personId !== null || firm) && (
@@ -694,8 +839,45 @@ export default function Network() {
               </>
             ) : circle ? (
               <>
-                <p className="nw-sentence">{circle.sentence}</p>
-                <p className="nw-answer">{circle.answer}</p>
+                {chainOn && chainData ? (
+                  <>
+                    <p className="nw-sentence">{chainData.sentence}</p>
+                    <p className="nw-answer">{chainAnswer}</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="nw-sentence">{circle.sentence}</p>
+                    {chainOn && chainError ? (
+                      <p className="nw-answer nw-chain-error">
+                        {chainError}{" "}
+                        <button type="button" className="link-like" onClick={() => setChainAttempt((n) => n + 1)}>
+                          Try again
+                        </button>
+                      </p>
+                    ) : chainOn && chainLoading ? (
+                      <p className="nw-answer">Loading…</p>
+                    ) : (
+                      <p className="nw-answer">{circle.answer}</p>
+                    )}
+                  </>
+                )}
+                {chainOn && (
+                  <div className="nw-chain-rail">
+                    {chainData?.forward && chainData.any && (
+                      <div className="db-tabs nw-chain-pills">
+                        <button type="button" className={state.chain === "any" ? "db-tab" : "db-tab is-active"} onClick={() => update({ chain: null })}>
+                          {FORWARD_PILL}
+                        </button>
+                        <button type="button" className={state.chain === "any" ? "db-tab is-active" : "db-tab"} onClick={() => update({ chain: "any" })}>
+                          {ANY_PILL}
+                        </button>
+                      </div>
+                    )}
+                    <button type="button" className="link-like nw-chain-clear" onClick={() => update({ to: null, chain: null })}>
+                      {NO_CHAIN}
+                    </button>
+                  </div>
+                )}
                 {windowLine}
               </>
             ) : loading ? (
@@ -781,13 +963,14 @@ export default function Network() {
         ) : personId === null ? (
           <div className="nw-landing nw-landing-wide">
             <p className="eyebrow">Network</p>
-            <h2>The circle of one person entry</h2>
+            <h2>{LANDING_HEADING}</h2>
+            <p>{LANDING_LINE}</p>
             {dropped.length > 0 && (
               <p className="muted" title={dropped.join(", ")}>
                 {DROPPED_LINE}
               </p>
             )}
-            <NetworkLanding fixture={fixture || (Boolean(import.meta.env.DEV) && new URLSearchParams(search).get(FIXTURE_KEY) === "1")} />
+            <NetworkLanding fixture={fixture || (Boolean(import.meta.env.DEV) && new URLSearchParams(address).get(FIXTURE_KEY) === "1")} />
           </div>
         ) : error ? (
           <p className="error-text nw-error">
@@ -810,13 +993,25 @@ export default function Network() {
               data={circle}
               hubs={state.hubs}
               selected={state.select}
-              highlight={highlight}
+              highlight={figureHighlight}
               years={state.years}
               yearCard={yearCard}
               labelAll={labelAll}
               onSelect={setSelect}
               onHover={setHovered}
             />
+            {chainOn && chainData && chainRun && (
+              <ChainStrip
+                data={chainData}
+                run={chainRun}
+                forward={chainForward}
+                drawn={drawnIds}
+                selected={state.select?.kind === "person" ? state.select.id : null}
+                onHover={hoverChain}
+                onMark={clickChainMark}
+                onHop={setDrawer}
+              />
+            )}
             <NetworkStrip
               data={circle}
               centreName={nodesById.has(circle.centre) ? label(nodesById.get(circle.centre)!) : `entry ${circle.centre}`}

@@ -1,49 +1,32 @@
 {
   "answer": [
-    "10,535 entries stand on an act with another entry: 10,491 person entries and 44 institutions, estates, shareholder groups and placeholders.",
-    "They make 25,935 pairs on 4,852 acts, 1445–1808; 7 of those acts have no registration date and are included.",
-    "Person entries are counted as entered; one person may have several."
+    "10,535 entries signed at least one act together with another entry, 10,491 of them persons.",
+    "Their 4,852 acts date from 1445–1808; 7 have no registration date."
   ],
   "figures": [
     {
       "key": "cosigners",
       "label": "Co-signers per entry",
       "value": "3",
-      "detail": "for the entry in the middle; 2,166 entries have one co-signer, 34 have more than 50, the most is 160",
-      "definition": "The entries that signed an act with the entry, over all its acts; an act with 29 signers gives each of them 28.",
-      "as_of": "Last edit logged to what it counts: 16 September 2026."
+      "detail": "half the entries have three or fewer; 2,166 have one; the most is 160"
     },
     {
       "key": "acts",
       "label": "Acts per entry",
       "value": "7,646 on one act",
-      "detail": "2,198 on two or three; 619 on four to ten; 72 on more than ten, 22 of them on more than 20",
-      "definition": "Every act the entry stands on.",
-      "as_of": "Last edit logged to what it counts: 16 September 2026."
+      "detail": "2,198 on two or three; 72 on more than ten"
     },
     {
       "key": "pairs",
       "label": "Pairs that signed together",
       "value": "25,935 pairs",
-      "detail": "22,608 on one act, 3,327 on two or more; the most is 59, Francesco Tempi and Benedetto Tempi, entries 11308 and 11311, 1670–1720",
-      "definition": "Two entries on one act make a pair; a pair counts once however many acts it shares.",
-      "as_of": "Last edit logged to what it counts: 16 September 2026."
+      "detail": "22,608 signed together once; the most, 59 acts, Francesco Tempi and Benedetto Tempi, 1670–1720"
     },
     {
       "key": "body",
       "label": "One body and the islands",
       "value": "5,075 entries in one body",
-      "detail": "48.2% of the 10,535; the rest stand in 1,627 islands, 770 of them one pair, 244 of five or more entries",
-      "definition": "Two entries are in one body when a chain of shared acts joins them.",
-      "as_of": "Last edit logged to what it counts: 16 September 2026."
-    },
-    {
-      "key": "recurring",
-      "label": "Entries with a recurring co-signer",
-      "value": "657 of 1,307",
-      "detail": "entries on three or more dated acts with a co-signer on three or more of them; three co-signers in four are met on one act; 216 entries meet every co-signer on one act",
-      "definition": "Dated acts only.",
-      "as_of": "Last edit logged to what it counts: 16 September 2026."
+      "detail": "joined by a chain of shared acts, 48% of all; the rest in 1,627 islands, 770 of them a single pair"
     }
   ],
   "chart": {
@@ -245,22 +228,18 @@
       3.7
     ],
     "caption": [
-      "Before the 1560s an act carries fewer than three signers and under a tenth of a decade's active entries are joined by that decade's acts.",
-      "From the 1560s to the 1730s the signers per act rise to 4.4 and the largest body joined within a decade reaches 55% of the active entries (1730s).",
-      "From the 1740s the signers per act fall back to 3.2–3.7 and the largest body to between 5% and 23%.",
+      "Acts carry the most signers between the 1560s and the 1730s, up to 4.4 on average; before and after, fewer than four.",
       "An entry that first signed in the 1680s ends with 5 co-signers on the median; one that first signed in the 1800s, with 2."
     ],
     "note": "7 acts with no registration date are not on the axis.",
-    "as_of": "Last edit logged to what it counts: 16 September 2026.",
     "partial": {
       "first": "1445–1449",
       "last": "1800–1808"
     }
   },
   "widest": {
-    "heading": "The widest circles",
-    "definition": "Co-signers over all of an entry's acts; the 20-act column marks the entries the drawing stops at, a readability cut.",
-    "note": "Where one act brings more than half of a row's co-signers, it is named.",
+    "heading": "Entries with the most co-signers",
+    "note": null,
     "rows": [
       {
         "id": 11308,
@@ -640,9 +619,8 @@
     ]
   },
   "pairs": {
-    "heading": "Pairs on the most acts together",
-    "definition": "Acts the two entries both stand on.",
-    "note": "6 of these pairs stand on the same acts only.",
+    "heading": "Pairs that signed together most often",
+    "note": "Six of these pairs never signed apart.",
     "rows": [
       {
         "a": {
@@ -1186,5 +1164,5 @@
       }
     ]
   },
-  "as_of": "Last edit logged to what these figures count: 16 September 2026."
+  "as_of": "Figures as of the last logged edit, 16 September 2026."
 }

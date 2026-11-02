@@ -10597,20 +10597,12 @@ NETWORK_LANDING_READS: dict[str, set[str | None]] = {
 NETWORK_LANDING_REGIMES = ((None, 1550), (1560, 1730), (1740, None))
 
 NETWORK_LANDING_WORDS: dict[str, Any] = {
-    "answer_entries": (
-        "{entries} entries stand on an act with another entry: {persons} person entries and "
-        "{others} institutions, estates, shareholder groups and placeholders."
-    ),
-    "answer_entries_one_other": (
-        "{entries} entries stand on an act with another entry: {persons} person entries and "
-        "one institution, estate, shareholder group or placeholder."
-    ),
-    "answer_entries_no_other": "{entries} entries stand on an act with another entry: {persons} person entries.",
-    "answer_acts": "They make {pairs} pairs on {acts} acts, {years}; {undated} of those acts have no registration date and are included.",
-    "answer_acts_one_undated": "They make {pairs} pairs on {acts} acts, {years}; one of those acts has no registration date and is included.",
-    "answer_acts_dated": "They make {pairs} pairs on {acts} acts, {years}.",
-    "answer_acts_undated": "They make {pairs} pairs on {acts} acts; none of them has a registration date.",
-    "standing": "Person entries are counted as entered; one person may have several.",
+    "answer_entries": "{entries} entries signed at least one act together with another entry, {persons} of them persons.",
+    "answer_entries_all_persons": "{entries} entries signed at least one act together with another entry, all of them persons.",
+    "answer_acts": "Their {acts} acts date from {years}; {undated} have no registration date.",
+    "answer_acts_one_undated": "Their {acts} acts date from {years}; one has no registration date.",
+    "answer_acts_dated": "Their {acts} acts date from {years}.",
+    "answer_acts_undated": "None of their {acts} acts has a registration date.",
     "years": "{first}–{last}",
     "year": "{year}",
     "no_years": "no registration date",
@@ -10618,72 +10610,52 @@ NETWORK_LANDING_WORDS: dict[str, Any] = {
         "cosigners": {
             "label": "Co-signers per entry",
             "value": "{median}",
-            "detail": "for the entry in the middle; {one} entries have one co-signer, {over_fifty} have more than 50, the most is {most}",
-            "definition": "The entries that signed an act with the entry, over all its acts; an act with 29 signers gives each of them 28.",
+            "detail": "half the entries have {median_words} or fewer; {one} have one; the most is {most}",
         },
         "acts": {
             "label": "Acts per entry",
             "value": "{one} on one act",
-            "detail": "{two_three} on two or three; {four_ten} on four to ten; {over_ten} on more than ten, {over_twenty} of them on more than 20",
-            "definition": "Every act the entry stands on.",
+            "detail": "{two_three} on two or three; {over_ten} on more than ten",
         },
         "pairs": {
             "label": "Pairs that signed together",
             "value": "{pairs} pairs",
-            "detail": "{one} on one act, {more} on two or more; the most is {most}, {a_name} and {b_name}, entries {a} and {b}, {years}",
-            "detail_no_pair": "{one} on one act, {more} on two or more",
-            "definition": "Two entries on one act make a pair; a pair counts once however many acts it shares.",
+            "detail": "{one} signed together once; the most, {most} acts, {a_name} and {b_name}, {years}",
+            "detail_no_pair": "{one} signed together once",
         },
         "body": {
             "label": "One body and the islands",
             "value": "{body} entries in one body",
-            "detail": "{share}% of the {entries}; the rest stand in {islands} islands, {pairs} of them one pair, {five} of five or more entries",
-            "definition": "Two entries are in one body when a chain of shared acts joins them.",
-        },
-        "recurring": {
-            "label": "Entries with a recurring co-signer",
-            "value": "{n} of {base}",
-            "detail": (
-                "entries on three or more dated acts with a co-signer on three or more of them; "
-                "{quarters} co-signers in four are met on one act; {every} entries meet every co-signer on one act"
-            ),
-            "detail_share": (
-                "entries on three or more dated acts with a co-signer on three or more of them; "
-                "{share}% of their co-signers are met on one act; {every} entries meet every co-signer on one act"
-            ),
-            "definition": "Dated acts only.",
+            "detail": "joined by a chain of shared acts, {share}% of all; the rest in {islands} islands, {pairs} of them a single pair",
         },
     },
-    "quarters": {1: "one", 2: "two", 3: "three"},
-    "numbers": {2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"},
+    "numbers": {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"},
     "chart": {
         "title": "Entries active by decade",
         "subtitle": "Entries on that decade's acts, by registration date.",
         "note": "{n} acts with no registration date are not on the axis.",
         "note_one": "One act with no registration date is not on the axis.",
-        "caption": [
-            "Before the 1560s an act carries fewer than {s} signers and under {t}% of a decade's active entries "
-            "are joined by that decade's acts.",
-            "From the 1560s to the 1730s the signers per act rise to {x} and the largest body joined within a decade "
-            "reaches {p}% of the active entries ({decade}s).",
-            "From the 1740s the signers per act fall back to {y}–{z} and the largest body to between {q}% and {r}%.",
+        # The caption (WH's review of 1 November, docs/ui_review/2026-11-01_network_landing.md L13):
+        # the shape over time in one sentence, the cohort fact in another.
+        "caption_shape": (
+            "Acts carry the most signers between the {from_}s and the {to}s, up to {x} on average; "
+            "before and after, fewer than {s}."
+        ),
+        "caption_shape_peak": "Acts carry up to {x} signers on average, in the {decade}s.",
+        "caption_shape_flat": "Acts carry fewer than {s} signers on average throughout.",
+        "caption_cohort": (
             "An entry that first signed in the {a}s ends with {m} co-signers on the median; "
-            "one that first signed in the {b}s, with {k}.",
-        ],
+            "one that first signed in the {b}s, with {k}."
+        ),
     },
-    "widest": {
-        "heading": "The widest circles",
-        "definition": "Co-signers over all of an entry's acts; the 20-act column marks the entries the drawing stops at, a readability cut.",
-        "note": "Where one act brings more than half of a row's co-signers, it is named.",
-    },
+    "widest": {"heading": "Entries with the most co-signers"},
     "pairs": {
-        "heading": "Pairs on the most acts together",
-        "definition": "Acts the two entries both stand on.",
-        "note": "{n} of these pairs stand on the same acts only.",
-        "note_one": "One of these pairs stands on the same acts only.",
-        "note_none": "None of these pairs stands on the same acts only.",
+        "heading": "Pairs that signed together most often",
+        "note": "{n} of these pairs never signed apart.",
+        "note_one": "One of these pairs never signed apart.",
+        "note_none": "Every pair here also signed apart.",
     },
-    "as_of": ("Last edit logged to what these figures count: {day}.", "No edit logged to what these figures count."),
+    "as_of": ("Figures as of the last logged edit, {day}.", "No edit logged to what these figures count."),
 }
 
 _NETWORK_LANDING_CACHE: dict[str, Any] = {}
@@ -10766,9 +10738,11 @@ def network_landing_bodies(acts: dict[int, set[int]], entries: Iterable[int]) ->
 
 
 def network_landing_data(connection: sqlite3.Connection) -> dict[str, Any]:
-    """The landing of /network (docs/network/step2b_contract.md §2): the three
-    answer sentences, the five figures, the decade chart, the widest 30 circles
-    and the 30 pairs on the most acts together, from the live rows."""
+    """The landing of /network (docs/network/step2b_contract.md §2, cut to WH's
+    review of 1 November, docs/ui_review/2026-11-01_network_landing.md): two
+    answer sentences, four figures of a value and one clause, the decade chart
+    with a two-sentence caption, the 30 entries with the most co-signers and
+    the 30 pairs that signed together most often, from the live rows."""
     from workflows.person_features import HUB_CONTRACT_THRESHOLD, classify_entity_kind
 
     words = NETWORK_LANDING_WORDS
@@ -10837,20 +10811,16 @@ def network_landing_data(connection: sqlite3.Connection) -> dict[str, Any]:
     persons = sum(1 for entry in entries if kinds.get(entry, "person") == "person")
     others = len(entries) - persons
     undated_acts = sum(1 for act in acts if year_of[act] is None)
-    entries_key = "answer_entries" if others > 1 else ("answer_entries_one_other" if others == 1 else "answer_entries_no_other")
+    entries_key = "answer_entries" if others else "answer_entries_all_persons"
     span = network_landing_years(year_of[act] for act in acts)
     if undated_acts == len(acts):
-        acts_line = words["answer_acts_undated"].format(pairs=fmt(len(pair_acts)), acts=fmt(len(acts)))
+        acts_line = words["answer_acts_undated"].format(acts=fmt(len(acts)))
     else:
         acts_key = "answer_acts" if undated_acts > 1 else ("answer_acts_one_undated" if undated_acts == 1 else "answer_acts_dated")
-        acts_line = words[acts_key].format(pairs=fmt(len(pair_acts)), acts=fmt(len(acts)), years=span, undated=fmt(undated_acts))
-    answer = [
-        words[entries_key].format(entries=fmt(len(entries)), persons=fmt(persons), others=fmt(others)),
-        acts_line,
-        words["standing"],
-    ]
+        acts_line = words[acts_key].format(acts=fmt(len(acts)), years=span, undated=fmt(undated_acts))
+    answer = [words[entries_key].format(entries=fmt(len(entries)), persons=fmt(persons)), acts_line]
 
-    # The figures.
+    # The figures: a label, a value and one clause.
     def figure(key: str, values: dict[str, Any], detail: str | None = None) -> dict[str, Any]:
         entry = words["figures"][key]
         return {
@@ -10858,16 +10828,19 @@ def network_landing_data(connection: sqlite3.Connection) -> dict[str, Any]:
             "label": entry["label"],
             "value": entry["value"].format(**values),
             "detail": (detail if detail is not None else entry["detail"]).format(**values),
-            "definition": entry["definition"],
-            "as_of": network_landing_as_of(FIND_FIGURE_AS_OF),
         }
 
+    def number_words(text: str) -> str:
+        """A small whole number as a word ("three"); any other as written."""
+        return words["numbers"].get(int(text), text) if text.isdigit() else text
+
     degrees = [len(circle) for circle in cosigners.values()]
+    median = network_landing_median(degrees)
     figures = [
         figure("cosigners", {
-            "median": network_landing_median(degrees),
+            "median": median,
+            "median_words": number_words(median),
             "one": fmt(sum(1 for d in degrees if d == 1)),
-            "over_fifty": fmt(sum(1 for d in degrees if d > 50)),
             "most": fmt(max(degrees, default=0)),
         })
     ]
@@ -10875,9 +10848,7 @@ def network_landing_data(connection: sqlite3.Connection) -> dict[str, Any]:
     figures.append(figure("acts", {
         "one": fmt(sum(1 for n in counts if n == 1)),
         "two_three": fmt(sum(1 for n in counts if 2 <= n <= 3)),
-        "four_ten": fmt(sum(1 for n in counts if 4 <= n <= 10)),
         "over_ten": fmt(sum(1 for n in counts if n > 10)),
-        "over_twenty": fmt(sum(1 for n in counts if n > HUB_CONTRACT_THRESHOLD)),
     }))
     # the pairs by acts shared, most first, ties by the lower id
     ranked_pairs = sorted(pair_acts, key=lambda pair: (-len(pair_acts[pair]), pair))
@@ -10885,56 +10856,26 @@ def network_landing_data(connection: sqlite3.Connection) -> dict[str, Any]:
     pair_values: dict[str, Any] = {
         "pairs": fmt(len(pair_acts)),
         "one": fmt(sum(1 for shared in pair_acts.values() if len(shared) == 1)),
-        "more": fmt(sum(1 for shared in pair_acts.values() if len(shared) > 1)),
     }
-    if heaviest:
+    # the heaviest pair is named only when it shares more than one act
+    if heaviest and len(pair_acts[heaviest]) > 1:
         names = named(heaviest)
         pair_values.update({
             "most": fmt(len(pair_acts[heaviest])),
             "a_name": names[heaviest[0]]["name"], "b_name": names[heaviest[1]]["name"],
-            "a": heaviest[0], "b": heaviest[1],
             "years": network_landing_years(year_of[act] for act in pair_acts[heaviest]),
         })
-    figures.append(figure("pairs", pair_values, None if heaviest else words["figures"]["pairs"]["detail_no_pair"]))
+        figures.append(figure("pairs", pair_values))
+    else:
+        figures.append(figure("pairs", pair_values, words["figures"]["pairs"]["detail_no_pair"]))
     bodies = network_landing_bodies(acts, entries)
     largest = bodies[0] if bodies else 0
     figures.append(figure("body", {
         "body": fmt(largest),
-        "share": f"{100 * largest / len(entries):.1f}" if entries else "0.0",
-        "entries": fmt(len(entries)),
+        "share": f"{100 * largest / len(entries):.0f}" if entries else "0",
         "islands": fmt(max(len(bodies) - 1, 0)),
         "pairs": fmt(sum(1 for size in bodies[1:] if size == 2)),
-        "five": fmt(sum(1 for size in bodies[1:] if size >= 5)),
     }))
-    # Recurring co-signers, over dated acts only: among the entries on three or
-    # more dated acts, those with a co-signer on three or more of them; of all
-    # those entries' co-signers, the share met on one act; the entries meeting
-    # every co-signer on one act.
-    dated_acts_of = {entry: {act for act in mine if year_of[act] is not None} for entry, mine in acts_of.items()}
-    base = [entry for entry, mine in dated_acts_of.items() if len(mine) >= 3]
-    recurring = every_once = met = met_once = 0
-    for entry in base:
-        shared: dict[int, int] = {}
-        for act in dated_acts_of[entry]:
-            for other in acts.get(act, ()):
-                if other != entry:
-                    shared[other] = shared.get(other, 0) + 1
-        if any(n >= 3 for n in shared.values()):
-            recurring += 1
-        once = sum(1 for n in shared.values() if n == 1)
-        met += len(shared)
-        met_once += once
-        if shared and once == len(shared):
-            every_once += 1
-    quarters = round(4 * met_once / met) if met else 0
-    recurring_values = {
-        "n": fmt(recurring), "base": fmt(len(base)), "every": fmt(every_once),
-        "quarters": words["quarters"].get(quarters, ""), "share": f"{100 * met_once / met:.0f}" if met else "0",
-    }
-    figures.append(figure(
-        "recurring", recurring_values,
-        None if quarters in words["quarters"] else words["figures"]["recurring"]["detail_share"],
-    ))
 
     # The chart, on Find's axis: every decade from the first live registration to the last.
     all_query = _find_build_on(connection, [{}])[0]
@@ -10948,7 +10889,7 @@ def network_landing_data(connection: sqlite3.Connection) -> dict[str, Any]:
             by_decade[year // width * width][act] = who
     first_year = {entry: min((year_of[act] for act in mine if year_of[act] is not None), default=None)
                   for entry, mine in acts_of.items()}
-    active, acts_count, new_entries, cosigners_each, signers_per_act, body_share = ([] for _ in range(6))
+    active, acts_count, new_entries, cosigners_each, signers_per_act = ([] for _ in range(5))
     for period in periods:
         decade_acts = by_decade[period]
         here: dict[int, set[int]] = {}
@@ -10962,8 +10903,6 @@ def network_landing_data(connection: sqlite3.Connection) -> dict[str, Any]:
         new_entries.append(sum(1 for entry in here if first_year[entry] is not None and first_year[entry] // width * width == period))
         cosigners_each.append(round(sum(len(c) for c in here.values()) / len(here), 1) if here else 0.0)
         signers_per_act.append(sum(len(who) for who in decade_acts.values()) / len(decade_acts) if decade_acts else 0.0)
-        largest_here = network_landing_bodies(decade_acts, here)[0] if here else 0
-        body_share.append(100 * largest_here / len(here) if here else 0.0)
 
     def within(low: int | None, high: int | None) -> list[int]:
         """The axis positions of a regime's decades that carry an act."""
@@ -10981,26 +10920,26 @@ def network_landing_data(connection: sqlite3.Connection) -> dict[str, Any]:
     medians = {period: network_landing_median(values) for period, values in cohorts.items()}
     top_cohort = min(medians, key=lambda period: (-float(medians[period].replace(",", "")), period)) if medians else None
     last_cohort = periods[-1] if periods else None
-    caption_words = words["chart"]["caption"]
+    # The shape sentence: the decades of the middle regime that carry the most
+    # signers per act, against the ceiling (the next whole number above the
+    # highest mean) the decades before and after stay under.
+    outside = [*early, *fall]
     caption = []
-    if early:
-        # the ceilings the early decades stay under: the next whole number above the highest
-        signers = int(max(signers_per_act[k] for k in early)) + 1
-        caption.append(caption_words[0].format(
-            s=words["numbers"].get(signers, fmt(signers)), t=int(max(body_share[k] for k in early)) + 1,
-        ))
     if rise:
-        peak = max(rise, key=lambda k: (body_share[k], -k))
-        caption.append(caption_words[1].format(
-            x=f"{max(signers_per_act[k] for k in rise):.1f}", p=f"{body_share[peak]:.0f}", decade=periods[peak],
-        ))
-    if fall:
-        caption.append(caption_words[2].format(
-            y=f"{min(signers_per_act[k] for k in fall):.1f}", z=f"{max(signers_per_act[k] for k in fall):.1f}",
-            q=f"{min(body_share[k] for k in fall):.0f}", r=f"{max(body_share[k] for k in fall):.0f}",
-        ))
+        peak = max(rise, key=lambda k: (signers_per_act[k], -k))
+        x = f"{signers_per_act[peak]:.1f}"
+        if outside:
+            signers = int(max(signers_per_act[k] for k in outside)) + 1
+            caption.append(words["chart"]["caption_shape"].format(
+                from_=periods[rise[0]], to=periods[rise[-1]], x=x, s=words["numbers"].get(signers, fmt(signers)),
+            ))
+        else:
+            caption.append(words["chart"]["caption_shape_peak"].format(x=x, decade=periods[peak]))
+    elif outside:
+        signers = int(max(signers_per_act[k] for k in outside)) + 1
+        caption.append(words["chart"]["caption_shape_flat"].format(s=words["numbers"].get(signers, fmt(signers))))
     if top_cohort is not None and last_cohort in medians:
-        caption.append(caption_words[3].format(a=top_cohort, m=medians[top_cohort], b=last_cohort, k=medians[last_cohort]))
+        caption.append(words["chart"]["caption_cohort"].format(a=top_cohort, m=medians[top_cohort], b=last_cohort, k=medians[last_cohort]))
     chart = {
         "title": words["chart"]["title"],
         "subtitle": words["chart"]["subtitle"],
@@ -11015,7 +10954,6 @@ def network_landing_data(connection: sqlite3.Connection) -> dict[str, Any]:
             else words["chart"]["note_one"] if undated_acts == 1
             else words["chart"]["note"].format(n=fmt(undated_acts))
         ),
-        "as_of": network_landing_as_of(FIND_FIGURE_AS_OF),
     }
 
     # The widest circles: the entries with the most co-signers; ties by acts, most first, then by id.
@@ -11073,20 +11011,13 @@ def network_landing_data(connection: sqlite3.Connection) -> dict[str, Any]:
         "answer": answer,
         "figures": figures,
         "chart": chart,
-        "widest": {
-            "heading": words["widest"]["heading"],
-            "definition": words["widest"]["definition"],
-            # the note only when a row carries a named act (WH, 1 November)
-            "note": words["widest"]["note"] if any(row["largest_act"] for row in widest_rows) else None,
-            "rows": widest_rows,
-        },
+        "widest": {"heading": words["widest"]["heading"], "note": None, "rows": widest_rows},
         "pairs": {
             "heading": words["pairs"]["heading"],
-            "definition": words["pairs"]["definition"],
             "note": (
                 words["pairs"]["note_none"] if same == 0
                 else words["pairs"]["note_one"] if same == 1
-                else words["pairs"]["note"].format(n=fmt(same))
+                else words["pairs"]["note"].format(n=words["numbers"].get(same, fmt(same)).capitalize())
             ),
             "rows": pair_rows,
         },
@@ -11328,6 +11259,438 @@ def network_firm(name: str = "") -> dict[str, Any]:
     connection = _readonly_connection()
     try:
         return network_firm_data(connection, name)
+    except sqlite3.Error as exc:
+        raise _sql_error(exc) from exc
+    finally:
+        connection.close()
+
+
+# ---- The chain between two entries, with its direction in time (step 4) -------
+# docs/network/step4_contract.md §3, §5; the why in next_2026-11-01.md §2.4 and
+# §4.4, scope §3.4 and §4.1.7. The whole live co-signing graph over person
+# entries only (institutions, estates, shareholder groups and placeholders and
+# their incidences removed before any search) is read once into Python dicts
+# and kept under the landing's cache key. A hop is one act both entries stand
+# on. The untimed chain is the fewest hops through any acts; the forward chain
+# is the hop-minimal chain whose acts are registered in non-decreasing date
+# order, undated acts never taking part, tried from each end. The hubs (entries
+# on more than HUB_CONTRACT_THRESHOLD acts) count only between the two ends:
+# the ends are the reader's choice. Read-only; nothing asserts identity.
+
+NETWORK_CHAIN_WORDS: dict[str, Any] = {
+    "sentence": "How are {a_name}, entry {a}, and {b_name}, entry {b}, connected?",
+    "forward": "From {a_name}, {a_year}, forward in time to {b_name}, {b_year}: {chain}.",
+    "no_forward": (
+        "No chain of acts runs forward in time between these two entries. "
+        "Through any acts, in any order: {chain}."
+    ),
+    "not_connected": "No chain of shared acts joins these two entries.",
+    "standing": "Person entries are counted as entered; one person may have several.",
+    "equal": ", one of {k} equally short chains",
+    "hubs_avoided": "; one of them avoids the entries on more than {threshold} acts",
+    "hubs_all": "; every one of them passes through an entry on more than {threshold} acts",
+    # composed: the hub clause when the chain shown is the only one of its length
+    "hubs_one": "; it passes through an entry on more than {threshold} acts",
+    "act": ("act", "acts"),
+    "one": "one",
+    "how_hop": (
+        "A hop is one act both entries stand on; the chain shown has the fewest hops, "
+        "and of the equally short chains the one through the lowest entry numbers."
+    ),
+    "how_forward": "Forward in time: each hop's act is registered no earlier than the hop before.",
+    "how_others": "Institutions, estates, shareholder groups and placeholders are left out of chains.",
+    "how_hidden": "Hidden entries, appearances and acts are left out.",
+    "no_live_appearance": (
+        "Entry {id} has no acts to chain: there is no such entry, or the entry or its acts are hidden, "
+        "or it is an institution, estate, shareholder group or placeholder."
+    ),
+    "same_entry": "The two entries are the same.",
+    "bad_entry": "The entry id must be a whole number.",
+}
+
+# Dates compare as YYYY-MM-DD strings: "" is before every date, "9999-99-99" after.
+NETWORK_CHAIN_FIRST, NETWORK_CHAIN_LAST = "", "9999-99-99"
+
+_NETWORK_CHAIN_CACHE: dict[str, Any] = {}
+
+
+def network_chain_graph(connection: sqlite3.Connection) -> dict[str, Any]:
+    """The live co-signing graph over person entries: for each entry its
+    neighbours with the acts the two share, earliest first (undated last, then
+    the lowest id); each entry's live acts; each act's date (None when undated);
+    the hubs. An entry with a live appearance but no person co-signer is in
+    acts_of with no neighbour."""
+    from workflows.person_features import HUB_CONTRACT_THRESHOLD, classify_entity_kind
+
+    persons = {
+        int(person_id)
+        for person_id, first, father, grandfather, last in connection.execute(
+            "SELECT person_id, first_name, father_mother, grandfather, last_name FROM person WHERE is_deleted = 0"
+        )
+        if classify_entity_kind(first, father, grandfather, last) == "person"
+    }
+    on_act: dict[int, set[int]] = {}
+    acts_of: dict[int, set[int]] = {}
+    date_of: dict[int, str | None] = {}
+    for person, act, date in connection.execute(
+        """
+        SELECT DISTINCT i.person_id, i.contract_id, c.registration_date
+        FROM investor i
+        JOIN contract c ON c.contract_id = i.contract_id
+        JOIN person p ON p.person_id = i.person_id
+        WHERE i.is_deleted = 0 AND c.is_deleted = 0 AND p.is_deleted = 0
+        """
+    ):
+        person, act = int(person), int(act)
+        if person not in persons:
+            continue
+        on_act.setdefault(act, set()).add(person)
+        acts_of.setdefault(person, set()).add(act)
+        date_of[act] = str(date) if network_year(date) is not None else None
+    pair_acts: dict[tuple[int, int], list[int]] = {}
+    for act, who in on_act.items():
+        ordered = sorted(who)
+        for k, a in enumerate(ordered):
+            for b in ordered[k + 1 :]:
+                pair_acts.setdefault((a, b), []).append(act)
+    adjacent: dict[int, dict[int, list[int]]] = {entry: {} for entry in acts_of}
+    for (a, b), shared in pair_acts.items():
+        shared.sort(key=lambda act: (date_of[act] is None, date_of[act] or "", act))
+        adjacent[a][b] = shared
+        adjacent[b][a] = shared
+    return {
+        "adjacent": adjacent,
+        "acts_of": acts_of,
+        "date_of": date_of,
+        "hubs": {entry for entry, mine in acts_of.items() if len(mine) > HUB_CONTRACT_THRESHOLD},
+    }
+
+
+def network_chain_graph_cached(connection: sqlite3.Connection) -> dict[str, Any]:
+    """The graph for the current state of main.db and the change log, built once."""
+    key = network_landing_key()
+    if _NETWORK_CHAIN_CACHE.get("key") == key:
+        return _NETWORK_CHAIN_CACHE["graph"]
+    graph = network_chain_graph(connection)
+    _NETWORK_CHAIN_CACHE.update({"key": key, "graph": graph})
+    return graph
+
+
+def network_chain_bfs(
+    adjacent: dict[int, dict[int, list[int]]], source: int, target: int, blocked: set[int]
+) -> tuple[dict[int, int], dict[int, int]]:
+    """Hops from the source to every entry reached, with the number of shortest
+    chains to each counted over entry sequences. Entries in `blocked` are not
+    passed through; the target is reached whether blocked or not. Stops after
+    the target's layer."""
+    hops = {source: 0}
+    count = {source: 1}
+    layer = [source]
+    while layer and target not in hops:
+        following: list[int] = []
+        for u in layer:
+            for v in adjacent[u]:
+                if v in blocked and v != target:
+                    continue
+                if v not in hops:
+                    hops[v] = hops[u] + 1
+                    count[v] = count[u]
+                    following.append(v)
+                elif hops[v] == hops[u] + 1:
+                    count[v] += count[u]
+        layer = following
+    return hops, count
+
+
+def network_chain_untimed(graph: dict[str, Any], a: int, b: int) -> dict[str, Any] | None:
+    """The fewest hops from a to b through any acts: the chain through the
+    lowest entry numbers as (from, to, act) hops, the count of equally short
+    chains, whether the chain passes through a hub, and the hub-free length."""
+    adjacent, hubs = graph["adjacent"], graph["hubs"]
+    from_a, count = network_chain_bfs(adjacent, a, b, set())
+    if b not in from_a:
+        return None
+    length = from_a[b]
+    from_b, _ = network_chain_bfs(adjacent, b, a, set())
+    chain = [a]
+    while chain[-1] != b:
+        u = chain[-1]
+        chain.append(
+            min(v for v in adjacent[u] if from_a.get(v) == from_a[u] + 1 and from_b.get(v) == length - from_a[v])
+        )
+    return {
+        "hops": [(u, v, adjacent[u][v][0]) for u, v in zip(chain, chain[1:])],
+        "equal": count[b],
+        "touches_hubs": any(v in hubs for v in chain[1:-1]),
+        "avoiding_hubs": network_chain_bfs(adjacent, a, b, hubs)[0].get(b),
+    }
+
+
+def network_chain_forward_labels(
+    graph: dict[str, Any], source: int, target: int, blocked: set[int]
+) -> tuple[int | None, dict[int, list[tuple[int, str]]]]:
+    """The forward search from the source, layer by layer: for each entry its
+    non-dominated (hops, earliest arrival date) states, an arrival being the
+    date of the hop's act, which is the earliest dated act the two share on or
+    after the date arrived with. A state is dominated when an earlier layer
+    reached the entry on or before that date. Returns the fewest hops to the
+    target (None when no forward chain exists) and the states."""
+    adjacent, date_of = graph["adjacent"], graph["date_of"]
+    states: dict[int, list[tuple[int, str]]] = {source: [(0, NETWORK_CHAIN_FIRST)]}
+    layer: list[tuple[int, str]] = [(source, NETWORK_CHAIN_FIRST)]
+    hops = 0
+    while layer:
+        hops += 1
+        reached: dict[int, str] = {}
+        for u, since in layer:
+            for v, shared in adjacent[u].items():
+                if v in blocked and v != target:
+                    continue
+                arrival = network_chain_next_act(shared, date_of, since)
+                if arrival is None:
+                    continue
+                if v not in reached or date_of[arrival] < reached[v]:
+                    reached[v] = date_of[arrival]
+        if target in reached:
+            states.setdefault(target, []).append((hops, reached[target]))
+            return hops, states
+        layer = []
+        for v, date in reached.items():
+            if any(earlier <= date for _h, earlier in states.get(v, ())):
+                continue
+            states.setdefault(v, []).append((hops, date))
+            layer.append((v, date))
+    return None, states
+
+
+def network_chain_next_act(shared: list[int], date_of: dict[int, str | None], since: str) -> int | None:
+    """The earliest dated act of a sorted shared list registered on or after
+    `since`; None when there is none (undated acts never take part)."""
+    for act in shared:
+        date = date_of[act]
+        if date is None:
+            return None
+        if date >= since:
+            return act
+    return None
+
+
+def network_chain_last_act(shared: list[int], date_of: dict[int, str | None], until: str) -> int | None:
+    """The latest dated act of a sorted shared list registered on or before `until`."""
+    found = None
+    for act in shared:
+        date = date_of[act]
+        if date is None or date > until:
+            break
+        found = act
+    return found
+
+
+def network_chain_forward(graph: dict[str, Any], source: int, target: int) -> dict[str, Any] | None:
+    """The hop-minimal forward chain from the source to the target, exactly:
+    the chain through the lowest entry numbers as (from, to, act) hops with the
+    act of each hop the earliest the two share on or after the hop before, the
+    count of equally short forward chains over entry sequences, whether the
+    chain passes through a hub, and the hub-free forward length. None when no
+    forward chain exists."""
+    adjacent, date_of, hubs = graph["adjacent"], graph["date_of"], graph["hubs"]
+    length, forward = network_chain_forward_labels(graph, source, target, set())
+    if length is None:
+        return None
+    # Backward from the target: for each entry the latest date a forward chain
+    # of k hops to the target can leave it with, by the same layering.
+    backward: dict[int, list[tuple[int, str]]] = {target: [(0, NETWORK_CHAIN_LAST)]}
+    layer: list[tuple[int, str]] = [(target, NETWORK_CHAIN_LAST)]
+    for k in range(1, length + 1):
+        reached: dict[int, str] = {}
+        for w, until in layer:
+            for v, shared in adjacent[w].items():
+                act = network_chain_last_act(shared, date_of, until)
+                if act is None:
+                    continue
+                if v not in reached or date_of[act] > reached[v]:
+                    reached[v] = date_of[act]
+        layer = []
+        for v, date in reached.items():
+            if any(later >= date for _k, later in backward.get(v, ())):
+                continue
+            backward.setdefault(v, []).append((k, date))
+            layer.append((v, date))
+
+    at_layer = [set() for _ in range(length + 1)]
+    for v, mine in forward.items():
+        for h, _date in mine:
+            if h <= length:
+                at_layer[h].add(v)
+
+    def can_finish(v: int, h: int, arrived: str) -> bool:
+        return any(k <= length - h and later >= arrived for k, later in backward.get(v, ()))
+
+    # The count: every entry sequence of the chain's length that runs forward,
+    # each carried as the earliest date it can arrive with at each step.
+    counts: dict[tuple[int, str], int] = {(source, NETWORK_CHAIN_FIRST): 1}
+    for h in range(1, length + 1):
+        following: dict[tuple[int, str], int] = {}
+        for (u, since), n in counts.items():
+            for v, shared in adjacent[u].items():
+                if v not in at_layer[h]:
+                    continue
+                act = network_chain_next_act(shared, date_of, since)
+                if act is None or not can_finish(v, h, date_of[act]):
+                    continue
+                key = (v, date_of[act])
+                following[key] = following.get(key, 0) + n
+        counts = following
+    equal = sum(n for (v, _date), n in counts.items() if v == target)
+
+    # The chain shown: at each step the lowest entry that can still finish.
+    hops: list[tuple[int, int, int]] = []
+    u, since = source, NETWORK_CHAIN_FIRST
+    for h in range(1, length + 1):
+        for v in sorted(adjacent[u]):
+            if v not in at_layer[h]:
+                continue
+            act = network_chain_next_act(adjacent[u][v], date_of, since)
+            if act is not None and can_finish(v, h, date_of[act]):
+                hops.append((u, v, act))
+                u, since = v, date_of[act]
+                break
+    chain = [source, *(v for _u, v, _act in hops)]
+    return {
+        "hops": hops,
+        "equal": equal,
+        "touches_hubs": any(v in hubs for v in chain[1:-1]),
+        "avoiding_hubs": network_chain_forward_labels(graph, source, target, hubs)[0],
+    }
+
+
+def network_chain_count(words: dict[str, Any], n: int, k: int, touches_hubs: bool, avoiding: int | None) -> str:
+    """"{n} acts, one of {k} equally short chains; …": the acts, the equally
+    short chains when more than one, and the hub clause when the chain shown
+    passes through a hub."""
+    from workflows.person_features import HUB_CONTRACT_THRESHOLD
+
+    text = f"{words['one']} {words['act'][0]}" if n == 1 else f"{n:,} {words['act'][1]}"
+    if k > 1:
+        text += words["equal"].format(k=f"{k:,}")
+    if touches_hubs:
+        key = "hubs_avoided" if avoiding == n else ("hubs_all" if k > 1 else "hubs_one")
+        text += words[key].format(threshold=HUB_CONTRACT_THRESHOLD)
+    return text
+
+
+def network_chain_data(connection: sqlite3.Connection, a: int, b: int) -> dict[str, Any]:
+    """The chain between two person entries, as docs/network/step4_contract.md
+    §3 specifies it: the two entries, the untimed chain, the forward chain from
+    whichever end has one, and the words."""
+    words = NETWORK_CHAIN_WORDS
+    graph = network_chain_graph_cached(connection)
+    for entry in (a, b):
+        if entry not in graph["acts_of"]:
+            raise HTTPException(status_code=404, detail=words["no_live_appearance"].format(id=entry))
+    date_of = graph["date_of"]
+
+    untimed = network_chain_untimed(graph, a, b)
+    forward: dict[str, Any] | None = None
+    if untimed is not None:
+        # Tried from each end; the shorter wins, and from a when both are as short.
+        tries = [(source, target, network_chain_forward(graph, source, target)) for source, target in ((a, b), (b, a))]
+        found = [(source, target, chain) for source, target, chain in tries if chain is not None]
+        if found:
+            source, target, chain = min(found, key=lambda item: len(item[2]["hops"]))
+            forward = {"from": source, "to": target, **chain}
+
+    # Every entry on either chain, the two ends included, in the ends' shape: the
+    # page names each mark and draws its hub ring from these.
+    chain_ids = {a, b} | {entry for chain in (untimed, forward) if chain for u, v, _act in chain["hops"] for entry in (u, v)}
+    wanted = sorted(chain_ids)
+    ends: dict[int, dict[str, Any]] = {}
+    for person_id, first, father, grandfather, last, nickname in connection.execute(
+        f"SELECT person_id, first_name, father_mother, grandfather, last_name, nickname FROM person "
+        f"WHERE person_id IN ({network_marks(wanted)})",
+        wanted,
+    ):
+        entry = int(person_id)
+        years = [network_year(date_of[act]) for act in graph["acts_of"][entry]]
+        dated = [year for year in years if year is not None]
+        ends[entry] = {
+            "id": entry,
+            "name": person_display_name(first, last, nickname, father, grandfather),
+            "name_fields": {
+                "first_name": first,
+                "father_mother": father,
+                "grandfather": grandfather,
+                "last_name": last,
+                "nickname": nickname,
+            },
+            "kind": "person",
+            "first_year": min(dated) if dated else None,
+            "last_year": max(dated) if dated else None,
+            "acts_total": len(graph["acts_of"][entry]),
+        }
+
+    act_ids = sorted({act for chain in (untimed, forward) if chain for _u, _v, act in chain["hops"]})
+    acts: dict[int, dict[str, Any]] = {}
+    if act_ids:
+        acts = {
+            int(cid): {"id": int(cid), "date": date, "year": network_year(date), "firm_name": firm}
+            for cid, date, firm in connection.execute(
+                f"SELECT contract_id, registration_date, firm_name FROM contract "
+                f"WHERE contract_id IN ({network_marks(act_ids)})",
+                act_ids,
+            )
+        }
+
+    def hops_of(chain: dict[str, Any]) -> list[dict[str, Any]]:
+        return [{"from": u, "to": v, "act": acts[act]} for u, v, act in chain["hops"]]
+
+    if untimed is None:
+        answer = words["not_connected"]
+    elif forward is None:
+        answer = words["no_forward"].format(
+            chain=network_chain_count(
+                words, len(untimed["hops"]), untimed["equal"], untimed["touches_hubs"], untimed["avoiding_hubs"]
+            )
+        )
+    else:
+        # Each end with its first year, as the measurement writes the pair: an end on
+        # a forward chain has a dated act, so the year is never missing.
+        answer = words["forward"].format(
+            a_name=ends[forward["from"]]["name"],
+            a_year=ends[forward["from"]]["first_year"],
+            b_name=ends[forward["to"]]["name"],
+            b_year=ends[forward["to"]]["first_year"],
+            chain=network_chain_count(
+                words, len(forward["hops"]), forward["equal"], forward["touches_hubs"], forward["avoiding_hubs"]
+            ),
+        )
+    return {
+        "a": ends[a],
+        "b": ends[b],
+        "entries": [ends[entry] for entry in wanted],
+        "connected": untimed is not None,
+        "forward": {**forward, "hops": hops_of(forward)} if forward else None,
+        "any": {**untimed, "hops": hops_of(untimed)} if untimed else None,
+        "sentence": words["sentence"].format(a_name=ends[a]["name"], a=a, b_name=ends[b]["name"], b=b),
+        "answer": f"{answer} {words['standing']}",
+        "how": [words["how_hop"], words["how_forward"], words["how_others"], words["how_hidden"]],
+    }
+
+
+@app.get("/api/network/chain/{a}/{b}")
+def network_chain(a: str, b: str) -> dict[str, Any]:
+    """The shortest chain of shared acts between two person entries, with its
+    direction in time (docs/network/step4_contract.md §3). A GET, read-only,
+    one connection per request; the graph is kept in memory per state of the
+    database."""
+    for part in (a, b):
+        if not re.fullmatch(r"\d{1,9}", part.strip()):
+            raise HTTPException(status_code=400, detail=NETWORK_CHAIN_WORDS["bad_entry"])
+    if int(a) == int(b):
+        raise HTTPException(status_code=400, detail=NETWORK_CHAIN_WORDS["same_entry"])
+    connection = _readonly_connection()
+    try:
+        return network_chain_data(connection, int(a), int(b))
     except sqlite3.Error as exc:
         raise _sql_error(exc) from exc
     finally:
