@@ -1,0 +1,660 @@
+{
+  "_source": "GET /api/network/firm?name=Ferdinando%20Morelli%20e%20compagni",
+  "_as_of": "2026-11-02",
+  "name": "Ferdinando Morelli e compagni",
+  "spellings": [
+    "Ferdinando Morelli e compagni"
+  ],
+  "acts": [
+    {
+      "id": 3880,
+      "date": "1786-07-14",
+      "year": 1786,
+      "firm_name": "Ferdinando Morelli e compagni",
+      "signers": 7,
+      "later": [
+        {
+          "id": 3034,
+          "kind": "termination",
+          "date": "1794-12-31"
+        }
+      ]
+    },
+    {
+      "id": 4419,
+      "date": "1795-01-26",
+      "year": 1795,
+      "firm_name": "Ferdinando Morelli e compagni  ",
+      "signers": 6,
+      "later": [
+        {
+          "id": 3213,
+          "kind": "variation",
+          "date": "1799-12-31"
+        },
+        {
+          "id": 3286,
+          "kind": "termination",
+          "date": "1801-11-26"
+        },
+        {
+          "id": 3523,
+          "kind": "renewal",
+          "date": "1806-01-03"
+        }
+      ]
+    },
+    {
+      "id": 4666,
+      "date": "1801-12-18",
+      "year": 1801,
+      "firm_name": "Ferdinando Morelli e compagni ",
+      "signers": 7,
+      "later": [
+        {
+          "id": 3406,
+          "kind": "termination",
+          "date": "1803-07-12"
+        }
+      ]
+    },
+    {
+      "id": 4849,
+      "date": "1803-07-12",
+      "year": 1803,
+      "firm_name": "Ferdinando Morelli e compagni ",
+      "signers": 9,
+      "later": [
+        {
+          "id": 5012,
+          "kind": "variation",
+          "date": "1807-08-05"
+        }
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "id": 3283,
+      "name": "Giovanni Battista Altoviti",
+      "name_fields": {
+        "first_name": "Giovanni Battista",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Altoviti",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 11,
+      "cells": {
+        "3880": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        },
+        "4419": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        },
+        "4666": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        },
+        "4849": {
+          "role": "gp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 3102,
+      "name": "Lorenzo Vannuccini",
+      "name_fields": {
+        "first_name": "Lorenzo",
+        "father_mother": "Antonio Francesco",
+        "grandfather": null,
+        "last_name": "Vannuccini",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 6,
+      "cells": {
+        "3880": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        },
+        "4419": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 8185,
+      "name": "Ferdinando Morelli",
+      "name_fields": {
+        "first_name": "Ferdinando",
+        "father_mother": "Pietro",
+        "grandfather": null,
+        "last_name": "Morelli",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 2,
+      "cells": {
+        "3880": {
+          "role": "gp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        },
+        "4419": {
+          "role": "gp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 8188,
+      "name": "Bartolomeo Cioni",
+      "name_fields": {
+        "first_name": "Bartolomeo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Cioni",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 2,
+      "cells": {
+        "3880": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        },
+        "4419": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 3104,
+      "name": "Sebastiano Martini",
+      "name_fields": {
+        "first_name": "Sebastiano",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Martini",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 3,
+      "cells": {
+        "3880": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 8031,
+      "name": "Giovanni Angelo Del Verità",
+      "name_fields": {
+        "first_name": "Giovanni Angelo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Del Verità",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 2,
+      "cells": {
+        "3880": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 8189,
+      "name": "Gregorio Benucci",
+      "name_fields": {
+        "first_name": "Gregorio",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Benucci",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 1,
+      "cells": {
+        "3880": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 9389,
+      "name": "Giovanni Angiolo del Verità",
+      "name_fields": {
+        "first_name": "Giovanni Angiolo",
+        "father_mother": "Antonio",
+        "grandfather": null,
+        "last_name": "del Verità",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 2,
+      "cells": {
+        "4419": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 9411,
+      "name": "Cosimo Paradisi",
+      "name_fields": {
+        "first_name": "Cosimo",
+        "father_mother": "Vincenzio",
+        "grandfather": null,
+        "last_name": "Paradisi",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 1,
+      "cells": {
+        "4419": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 5562,
+      "name": "Bartolomeo Paradisi",
+      "name_fields": {
+        "first_name": "Bartolomeo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Paradisi",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 2,
+      "cells": {
+        "4666": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        },
+        "4849": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 9424,
+      "name": "Ferdinando Morelli",
+      "name_fields": {
+        "first_name": "Ferdinando",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Morelli",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 6,
+      "cells": {
+        "4666": {
+          "role": "gp",
+          "heirs_of": false,
+          "proxy": true,
+          "joint": false,
+          "rows": 1
+        },
+        "4849": {
+          "role": "gp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 10059,
+      "name": "Cosimo Paradisi",
+      "name_fields": {
+        "first_name": "Cosimo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Paradisi",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 3,
+      "cells": {
+        "4666": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        },
+        "4849": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 10056,
+      "name": "Lorenzo Vannucci",
+      "name_fields": {
+        "first_name": "Lorenzo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Vannucci",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 2,
+      "cells": {
+        "4666": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 10057,
+      "name": "Giovanni Angiolo Filippo Verità",
+      "name_fields": {
+        "first_name": "Giovanni Angiolo Filippo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Verità",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 1,
+      "cells": {
+        "4666": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 10058,
+      "name": "Benedetto Verità",
+      "name_fields": {
+        "first_name": "Benedetto",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Verità",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 1,
+      "cells": {
+        "4666": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 10537,
+      "name": "Domenico Filippo Maria Bambi",
+      "name_fields": {
+        "first_name": "Domenico Filippo Maria",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Bambi",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 1,
+      "cells": {
+        "4849": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 10538,
+      "name": "Francesco Marrocchi",
+      "name_fields": {
+        "first_name": "Francesco",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Marrocchi",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 1,
+      "cells": {
+        "4849": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 10539,
+      "name": "Giovanni Angelo Verità",
+      "name_fields": {
+        "first_name": "Giovanni Angelo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Verità",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 1,
+      "cells": {
+        "4849": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 10540,
+      "name": "Filippo Verità",
+      "name_fields": {
+        "first_name": "Filippo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Verità",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 1,
+      "cells": {
+        "4849": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    },
+    {
+      "id": 10541,
+      "name": "Bernardo Verità",
+      "name_fields": {
+        "first_name": "Bernardo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Verità",
+        "nickname": null
+      },
+      "kind": "person",
+      "woman": false,
+      "hub": false,
+      "acts_total": 1,
+      "cells": {
+        "4849": {
+          "role": "lp",
+          "heirs_of": false,
+          "proxy": false,
+          "joint": false,
+          "rows": 1
+        }
+      }
+    }
+  ],
+  "changes": [
+    {
+      "from": 3880,
+      "to": 4419,
+      "stayed": 4,
+      "left": 3,
+      "joined": 2
+    },
+    {
+      "from": 4419,
+      "to": 4666,
+      "stayed": 1,
+      "left": 5,
+      "joined": 6
+    },
+    {
+      "from": 4666,
+      "to": 4849,
+      "stayed": 4,
+      "left": 3,
+      "joined": 5
+    }
+  ],
+  "counts": {
+    "acts": 4,
+    "entries": 20,
+    "later": 6,
+    "undated": 0,
+    "empty": 0
+  },
+  "empty": [],
+  "sentence": "The firm name Ferdinando Morelli e compagni, on 4 registrations, 1786–1803.",
+  "answer": "20 entries on 4 registrations, 1786–1803; 6 later acts. Person entries are counted as entered; one person may have several.",
+  "how": [
+    "Registrations whose stored firm name reads Ferdinando Morelli e compagni after trimming and case-folding: 3880, 4419, 4666 and 4849.",
+    "Later acts (termination, variation, balance, renewal) carry no partners; they are drawn as ticks on their registration.",
+    "Hidden entries, appearances and acts are left out.",
+    "Rows stand in the order of their first registration; columns in date order, undated last."
+  ]
+}

@@ -22,7 +22,15 @@ import { appearanceNotes, roleWords } from "./NetworkFigure";
  * tick or a row label fills it; a side-column row (`highlight`) and the
  * selection (while the pointer is over nothing) do the same. A click on a cell
  * or a row label selects the entry, on a head the act; the page keeps the
- * selection and fills the side column. */
+ * selection and fills the side column.
+ *
+ * Still (docs/network/explainer_contract.md §1): with `still` the figure is a
+ * picture in the explainer's prose. No reading card and no band reserved for
+ * it, no hover, no click, no selection, no hit targets; the marks, ticks,
+ * change words and labels as drawn. The frame is fixed: the caller may give
+ * the height; without one the frame is the drawing's own height, rows at
+ * ROW_PITCH, so nothing shrinks or scrolls. The label column may take a larger
+ * share of the width (LABEL_SHARE_STILL): no card gives a cut name in full. */
 
 const ROW_PITCH = 22;
 const ROW_PITCH_LEAST = 18;
@@ -31,6 +39,7 @@ const ROW_PITCH_LEAST = 18;
  * still pass the column is cut with an ellipsis */
 const LABEL_PAD = 14;
 const LABEL_SHARE = 0.42;
+const LABEL_SHARE_STILL = 0.5;
 const LABEL_LEAST = 120;
 const LABEL_ESTIMATE = 1.07;
 const RIGHT_PAD = 18;
@@ -141,22 +150,33 @@ function changeWords(change: { stayed: number; left: number; joined: number }, p
   return one.length * WORDS_CHAR_W <= pitch - 10 ? [one] : parts;
 }
 
+const NOOP = () => {};
+
 export default function FirmFigure({
   data,
-  selected,
-  highlight,
-  onSelect,
-  onHover,
+  selected: selectedProp,
+  highlight: highlightProp,
+  still = false,
+  height,
+  onSelect = NOOP,
+  onHover = NOOP,
 }: {
   data: NetworkFirm;
   selected: NetworkSelect | null;
   /** an entry lit from a side-column row, as hover lights it */
   highlight: number | null;
+  /** a picture: no card, no band, no hover, no click, no selection */
+  still?: boolean;
+  /** the stage's height in pixels while `still` is set; the drawing's own when left out */
+  height?: number;
   /** null clears: the selected cell or head clicked again, or empty stage */
-  onSelect: (select: NetworkSelect | null) => void;
+  onSelect?: (select: NetworkSelect | null) => void;
   /** the entry under the pointer, for the side column */
-  onHover: (id: number | null) => void;
+  onHover?: (id: number | null) => void;
 }) {
+  // A still figure has no selection and nothing lit from outside.
+  const selected = still ? null : selectedProp;
+  const highlight = still ? null : highlightProp;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [frame, setFrame] = useState({ width: 0, height: 0 });
   const [hover, setHover] = useState<Hover | null>(null);
@@ -182,7 +202,10 @@ export default function FirmFigure({
     return () => observer.disconnect();
   }, []);
 
-  const band = frame.width > 0 ? cardBand(frame.width) : 0;
+  const band = !still && frame.width > 0 ? cardBand(frame.width) : 0;
+  /** the height the layout fits: the measured box's; a still figure's is the
+   * caller's, or none, so the drawing takes its own and never feeds back */
+  const frameHeight = still ? (height ?? 0) : frame.height;
   const actsById = useMemo(() => new Map(data.acts.map((act) => [act.id, act])), [data]);
   const rowsById = useMemo(() => new Map(data.rows.map((row) => [row.id, row])), [data]);
   const duplicates = useMemo(() => duplicateNames(data.rows), [data]);
@@ -190,7 +213,7 @@ export default function FirmFigure({
   const estimate = (label: string, id: number) => (labelWidth(label) + ENTRY_LABEL_W * (7 + String(id).length)) * LABEL_ESTIMATE * labelScale;
   /** the label column's width and the labels, cut where the column cannot hold them */
   const { labelW, labels } = useMemo(() => {
-    const cap = Math.max(LABEL_LEAST, Math.round(frame.width * LABEL_SHARE));
+    const cap = Math.max(LABEL_LEAST, Math.round(frame.width * (still ? LABEL_SHARE_STILL : LABEL_SHARE)));
     const longest = Math.max(0, ...data.rows.map((row) => estimate(fullLabels.get(row.id) ?? row.name, row.id)));
     const labelW = Math.min(Math.round(longest) + LABEL_PAD, cap);
     const labels = new Map<number, string>();
@@ -200,7 +223,7 @@ export default function FirmFigure({
       labels.set(row.id, label);
     }
     return { labelW, labels };
-  }, [data, fullLabels, frame.width, labelScale]);
+  }, [data, fullLabels, frame.width, labelScale, still]);
   const changeByFrom = useMemo(() => new Map(data.changes.map((change) => [change.from, change])), [data]);
 
   // The layout in pixels.
@@ -215,12 +238,12 @@ export default function FirmFigure({
     const wordsTop = ticksTop + TICK_ROW_H;
     const rowsTop = wordsTop + wordsRows * WORDS_ROW_H + 6;
     const rows = data.rows.length;
-    const room = frame.height - rowsTop - BOTTOM_PAD;
-    const rowPitch = rows * ROW_PITCH <= room ? ROW_PITCH : Math.max(ROW_PITCH_LEAST, Math.floor(room / Math.max(1, rows)));
-    const height = Math.max(frame.height, rowsTop + rows * rowPitch + BOTTOM_PAD);
+    const room = frameHeight - rowsTop - BOTTOM_PAD;
+    const rowPitch = rows * ROW_PITCH <= room || (still && !frameHeight) ? ROW_PITCH : Math.max(ROW_PITCH_LEAST, Math.floor(room / Math.max(1, rows)));
+    const height = Math.max(frameHeight, rowsTop + rows * rowPitch + BOTTOM_PAD);
     const y = (r: number) => rowsTop + rowPitch * (r + 0.5);
     return { labelW, pitch, x, y, headsTop, ticksTop, wordsTop, wordsRows, rowsTop, rowPitch, height };
-  }, [frame, data, labelW]);
+  }, [frame.width, frameHeight, still, data, labelW]);
   useEffect(() => setHover(null), [layout]);
 
   // The labels as drawn against their estimate: the widest decides the column
@@ -293,18 +316,22 @@ export default function FirmFigure({
   })();
 
   const enter = (next: Hover) => {
+    if (still) return;
     setHover(next);
     onHover(next.kind === "cell" || next.kind === "row" ? next.row : null);
   };
   const leave = () => {
+    if (still) return;
     setHover(null);
     onHover(null);
   };
   const clickRow = (id: number) => {
+    if (still) return;
     const next: NetworkSelect = { kind: "person", id };
     onSelect(sameSelect(selected, next) ? null : next);
   };
   const clickAct = (id: number) => {
+    if (still) return;
     const next: NetworkSelect = { kind: "contract", id };
     onSelect(sameSelect(selected, next) ? null : next);
   };
@@ -332,13 +359,19 @@ export default function FirmFigure({
   };
 
   return (
-    <div className="nw-stage nw-firm-stage" onMouseLeave={leave}>
-      <div className="nw-firm-band" style={{ height: band }}>
-        <div className="nw-card nw-firm-card" data-state={card.state}>
-          <p className="nw-card-head">{card.head}</p>
-          {card.lines.length > 0 && <p className="nw-card-lines">{card.lines.join(" ")}</p>}
+    <div
+      className={still ? "nw-stage nw-firm-stage is-still" : "nw-stage nw-firm-stage"}
+      style={still && height ? { height } : undefined}
+      onMouseLeave={leave}
+    >
+      {!still && (
+        <div className="nw-firm-band" style={{ height: band }}>
+          <div className="nw-card nw-firm-card" data-state={card.state}>
+            <p className="nw-card-head">{card.head}</p>
+            {card.lines.length > 0 && <p className="nw-card-lines">{card.lines.join(" ")}</p>}
+          </div>
         </div>
-      </div>
+      )}
       <div ref={scrollRef} className="nw-firm-scroll">
         {layout && (
           <svg
@@ -353,8 +386,9 @@ export default function FirmFigure({
             data-pitch={layout.pitch.toFixed(1)}
             data-row-pitch={layout.rowPitch}
             data-band={band}
+            data-still={still ? "1" : undefined}
           >
-            <rect className="nw-stage-bg" x={0} y={0} width={frame.width} height={layout.height} onClick={() => onSelect(null)} />
+            <rect className="nw-stage-bg" x={0} y={0} width={frame.width} height={layout.height} onClick={still ? undefined : () => onSelect(null)} />
             {/* the lit column and row, as bands under everything */}
             {data.acts.map((act, i) => {
               const lit = litAct === act.id;
@@ -405,7 +439,7 @@ export default function FirmFigure({
                       onMouseLeave={leave}
                       onClick={() => clickAct(act.id)}
                     >
-                      <rect className="nw-firm-hit" x={cx - layout.pitch / 2} y={layout.headsTop - 4} width={layout.pitch} height={HEAD_YEAR_H + HEAD_ACT_H + 4} />
+                      {!still && <rect className="nw-firm-hit" x={cx - layout.pitch / 2} y={layout.headsTop - 4} width={layout.pitch} height={HEAD_YEAR_H + HEAD_ACT_H + 4} />}
                       <text className={act.year ? "nw-firm-year" : "nw-firm-year is-undated"} x={cx} y={layout.headsTop + 10} textAnchor="middle">
                         {act.year ? act.year : "no date"}
                       </text>
@@ -426,7 +460,7 @@ export default function FirmFigure({
                           onMouseLeave={leave}
                         >
                           <line className="nw-firm-tick" x1={tx} y1={ty} x2={tx} y2={ty + TICK_H} />
-                          <rect className="nw-firm-hit" x={tx - TICK_GAP / 2} y={ty - 3} width={TICK_GAP} height={TICK_H + 6} />
+                          {!still && <rect className="nw-firm-hit" x={tx - TICK_GAP / 2} y={ty - 3} width={TICK_GAP} height={TICK_H + 6} />}
                         </g>
                       );
                     })}
@@ -456,7 +490,7 @@ export default function FirmFigure({
                       onMouseLeave={leave}
                       onClick={() => clickRow(row.id)}
                     >
-                      <rect className="nw-firm-hit" x={0} y={cy - layout.rowPitch / 2} width={layout.labelW} height={layout.rowPitch} />
+                      {!still && <rect className="nw-firm-hit" x={0} y={cy - layout.rowPitch / 2} width={layout.labelW} height={layout.rowPitch} />}
                       <text className="nw-firm-label" data-id={row.id} x={layout.labelW - LABEL_PAD} y={cy + 4} textAnchor="end">
                         {labels.get(row.id)} <tspan className="nw-firm-entry">entry {row.id}</tspan>
                       </text>
@@ -477,13 +511,15 @@ export default function FirmFigure({
                           onClick={() => clickRow(row.id)}
                         >
                           {mark(row, cell, cx, cy)}
-                          <rect
-                            className="nw-firm-hit"
-                            x={cx - Math.min(layout.pitch, 28) / 2}
-                            y={cy - layout.rowPitch / 2}
-                            width={Math.min(layout.pitch, 28)}
-                            height={layout.rowPitch}
-                          />
+                          {!still && (
+                            <rect
+                              className="nw-firm-hit"
+                              x={cx - Math.min(layout.pitch, 28) / 2}
+                              y={cy - layout.rowPitch / 2}
+                              width={Math.min(layout.pitch, 28)}
+                              height={layout.rowPitch}
+                            />
+                          )}
                         </g>
                       );
                     })}

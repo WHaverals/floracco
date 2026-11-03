@@ -12751,6 +12751,159 @@ li.is-lit > .nw-cosigner {
   margin-top: 4px;
 }
 
+/* The explainer, "How to read a circle" (docs/network/explainer_contract.md §2;
+   components/NetworkExplainer.tsx): at the landing's foot under a hairline,
+   and with explain=1 in a circle's figure column, where it scrolls in its own
+   pane. The People primer's type: Georgia headings, prose at 1.0rem / 1.72 on
+   a 42rem measure, .term underlines; each figure one box with its caption
+   inside. The figures are drawn still: no band, no pointer. */
+.nw-explainer {
+  border-top: 1px solid #eadfcc;
+  margin-top: 26px;
+  padding-top: 22px;
+}
+
+.nw-explainer h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.35rem;
+  font-weight: 500;
+  margin: 0 0 12px;
+}
+
+.nw-explainer h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 24px 0 8px;
+}
+
+.nw-explainer > p {
+  color: #2e2620;
+  font-size: 1rem;
+  line-height: 1.72;
+  margin: 0 0 12px;
+  max-width: 42rem;
+}
+
+.nw-explainer a,
+.nw-explainer-link,
+.nw-explainer-how .link-like {
+  color: #7a4a26;
+  text-decoration-color: #d8b48a;
+  text-underline-offset: 3px;
+}
+
+.nw-explainer > .nw-explainer-closing {
+  border-top: 1px solid #efe5d6;
+  color: #4d4033;
+  font-size: 0.92rem;
+  margin-top: 18px;
+  padding-top: 12px;
+}
+
+.nw-explainer-figure {
+  background: #fffaf3;
+  border: 1px solid #eadfcc;
+  border-radius: 12px;
+  margin: 6px 0 16px;
+  max-width: 42rem;
+  padding: 14px 16px 10px;
+}
+
+.nw-explainer-figure.is-firm {
+  max-width: 52rem;
+}
+
+.nw-explainer-figure figcaption {
+  color: #6f6052;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  margin-top: 6px;
+}
+
+.nw-explainer-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 4px;
+}
+
+.nw-explainer-key > span {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.nw-explainer-data {
+  display: block;
+  margin-top: 2px;
+}
+
+.nw-explainer-figure .nw-key {
+  margin: 4px 0 0;
+}
+
+/* A figure's place while its data load in their own chunk: Figure A's frame
+   keeps its height, so the prose under it does not move when it draws. */
+.nw-explainer-wait {
+  align-items: center;
+  display: flex;
+  font-size: 0.86rem;
+  justify-content: center;
+  margin: 0;
+  padding: 12px 0;
+}
+
+/* A still figure sits on the box's own surface: no stage frame, no pointer. */
+.nw-explainer .nw-stage.is-still {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  flex: none;
+  min-height: 0;
+}
+
+.nw-explainer .nw-stage.is-still svg {
+  pointer-events: none;
+}
+
+.nw-explainer .nw-firm-stage.is-still .nw-firm-scroll {
+  flex: none;
+  overflow: visible;
+}
+
+/* With explain=1 the explainer takes the figure's place and scrolls inside
+   the figure column; the How card's link ends the card. */
+.nw-explainer-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 2px 24px 0;
+}
+
+.nw-explainer-pane > .nw-explainer {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 4px;
+}
+
+.nw-how .nw-explainer-how {
+  margin: 10px 0 0;
+}
+
+/* The stack: the prose and the figures take the column's width. */
+@media (max-width: 800px) {
+  .nw-explainer > p,
+  .nw-explainer-figure,
+  .nw-explainer-figure.is-firm {
+    max-width: none;
+  }
+
+  .nw-explainer-pane {
+    overflow: visible;
+  }
+}
+
 /* The firm view, step 3 (docs/network/step3_contract.md §4;
    components/FirmFigure.tsx): the registrations carrying one stored firm name
    as columns, the entries as rows, in the stage's place. The stage is a
@@ -13141,4 +13294,84 @@ li.is-lit > .nw-cosigner {
 
 .nw-chain-error {
   color: #e9b4a4;
+}
+
+/* The role, step 5 (docs/network/step5_contract.md §2). The colour: a mark's
+   fill by the role the entry held in this circle, in Find's series colours
+   (general partner, external investor, both on different acts); no role
+   recorded keeps the dot colour. The shapes stay: the square takes the fill,
+   the hollow diamond's stroke takes the colour, the hub ring and the lines
+   are unchanged; a selected mark keeps the selection dress. */
+.nw-node.is-role-gp .nw-mark {
+  fill: #eb6834;
+}
+
+.nw-node.is-role-lp .nw-mark {
+  fill: #2a78d6;
+}
+
+.nw-node.is-role-both .nw-mark {
+  fill: #1baf7a;
+}
+
+.nw-node.is-role-gp .nw-mark.is-heirs {
+  fill: #fffdf9;
+  stroke: #eb6834;
+}
+
+.nw-node.is-role-lp .nw-mark.is-heirs {
+  fill: #fffdf9;
+  stroke: #2a78d6;
+}
+
+.nw-node.is-role-both .nw-mark.is-heirs {
+  fill: #fffdf9;
+  stroke: #1baf7a;
+}
+
+.nw-node.is-selected .nw-mark,
+.nw-node.is-selected .nw-mark.is-heirs {
+  fill: #d6aa7d;
+  stroke: #241d18;
+}
+
+.nw-key-dot.is-role-gp {
+  background: #eb6834;
+}
+
+.nw-key-dot.is-role-lp {
+  background: #2a78d6;
+}
+
+.nw-key-dot.is-role-both {
+  background: #1baf7a;
+}
+
+/* The filter: an entry that held only the unticked role fades in place as the
+   window fades it (.nw-node.is-faded, .nw-label.is-faded, above); its ties
+   with it fade to the same degree, a chord from its lighter rest, and stay
+   faded under the pointer. */
+.nw-line.is-faded {
+  opacity: 0.3;
+}
+
+.nw-line.is-tie.is-faded {
+  opacity: 0.14;
+}
+
+.nw-line.is-faded.is-dim {
+  opacity: 0.08;
+}
+
+/* The rail: the role control's three boxes under their label, and the role
+   line under the answer in the window line's dress. */
+.nw-role .nw-check + .nw-check {
+  margin-top: 6px;
+}
+
+.nw-role-line {
+  color: #e9dfd0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 0;
 }

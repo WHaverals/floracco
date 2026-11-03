@@ -4,6 +4,7 @@ import { loadNetworkChain, loadNetworkCircle, loadNetworkFirm, searchPersonsRich
 import ChainStrip, { chainOrder, type ChainHover } from "../components/ChainStrip";
 import ContractDrawer, { ContractLink, drawerOrder, drawerRow } from "../components/ContractDrawer";
 import FirmFigure, { FirmKey } from "../components/FirmFigure";
+import NetworkExplainer, { EXPLAINER_ID } from "../components/NetworkExplainer";
 import NetworkFigure, { KIND_WORDS, NetworkKey, appearanceNotes, roleWords, type YearCard } from "../components/NetworkFigure";
 import NetworkLanding from "../components/NetworkLanding";
 import NetworkStrip, { type StripHover } from "../components/NetworkStrip";
@@ -35,7 +36,9 @@ import {
   networkSearch,
   nodeLabel,
   parseNetworkSearch,
+  roleFaded,
   type NetworkHubs,
+  type NetworkRole,
   type NetworkSelect,
   type NetworkState,
 } from "../utils/networkSpec";
@@ -80,7 +83,21 @@ import { roleLabel } from "../utils/roles";
  * the pills "Forward in time" · "Any order" when both chains exist (`chain=any`)
  * and "× No chain"; the strip stands between the stage and the time strip; the
  * chain's entries are lit on the circle; the How card adds the chain's lines.
- * The circle's keys stay as they are, so the chain reads over the circle. */
+ * The circle's keys stay as they are, so the chain reads over the circle.
+ *
+ * Step 5 (docs/network/step5_contract.md §2): the rail control "Role on the
+ * stake", `colour=role` and `roles=gp|lp` in the address, both client-side.
+ * The figure colours its marks and fades the entries that held only the
+ * unticked role; the rail carries the role line under the answer while one
+ * role is unticked, and the How card a line for each.
+ *
+ * The explainer (docs/network/explainer_contract.md §1): "How to read a
+ * circle" (components/NetworkExplainer.tsx) stands at the foot of the landing,
+ * after the as-of line, and the landing's instruction line ends with a link
+ * that scrolls to it. Every circle's How card ends with the same link, which
+ * sets `explain=1`: the figure column then shows the explainer in the figure's
+ * place, the rail "‹ Back to the circle" under the answer as the firm view has
+ * it, and the circle's keys stay, so Back returns the circle as it was. */
 
 const FIXTURE_KEY = "fixture";
 /** The landing's heading and its one instruction (docs/ui_review/2026-11-01_network_landing.md L1, L2). */
@@ -96,11 +113,29 @@ const HOW_DRAG = "Drag the end earlier to see the circle as it stood in that yea
 /** The firm view's entry point on act rows and in the act block's head, and its way back. */
 const FOLLOW_FIRM = "Follow this firm name";
 const BACK_TO_CIRCLE = "‹ Back to the circle";
+/** The explainer's link, at the end of the landing's instruction line and of every circle's How card. */
+const HOW_TO_READ = "How to read a circle";
 /** The chain's rail (step 4): the second box, the two pills and the way out. */
 const CHAIN_PLACEHOLDER = "A second entry, for the chain";
 const FORWARD_PILL = "Forward in time";
 const ANY_PILL = "Any order";
 const NO_CHAIN = "× No chain";
+/** The role control (step 5) and its lines: the rail's, under the answer while
+ * one role is unticked, and the How card's for the filter and for the colour. */
+const ROLE_LABEL = "Role on the stake";
+const COLOUR_BY_ROLE = "Colour by role";
+const ROLE_BOXES: { role: NetworkRole; label: string }[] = [
+  { role: "gp", label: "General partners" },
+  { role: "lp", label: "External investors (accomandanti)" },
+];
+const roleShown = (role: NetworkRole) => roleLabel(role).toLowerCase();
+const ROLE_LINE = (n: number, m: number, role: NetworkRole) =>
+  n === 0
+    ? `No co-signer held the role shown: ${roleShown(role)}.`
+    : `${n === 1 ? "One" : n.toLocaleString("en-US")} of ${count(m, "co-signer", "co-signers")} held the role shown: ${roleShown(role)}.`;
+const HOW_ROLES = (role: NetworkRole) =>
+  `Entries that held only the role of ${roleShown(role === "gp" ? "lp" : "gp")} in this circle are faded and keep their place; an entry with no role recorded stays.`;
+const HOW_COLOUR = "Colour is the role the entry held in this circle; an entry that held both on different acts has its own colour.";
 /** The standing line every Network answer ends with (step1b_contract.md §2). */
 const STANDING_LINE = "Person entries are counted as entered; one person may have several.";
 /** Under 1400 px the side column stands under the figure and the How card folds. */
@@ -467,6 +502,19 @@ export default function Network() {
   const label = (node: NetworkNode) => nodeLabel(node, duplicates);
   /** the window's counts for the rail line; the figure applies the same mask */
   const mask = useMemo(() => (circle && state.years ? windowTies(circle, state.years) : null), [circle, state.years]);
+  /** the role filter's counts for the rail line: the co-signers in view and
+   * those among them not faded for their role; the figure applies the same set */
+  const roleCounts = useMemo(() => {
+    if (!circle || !state.roles) return null;
+    const faded = roleFaded(circle.nodes, circle.centre, state.roles);
+    const cosigners = circle.ties.filter((tie) => tie.a === circle.centre || tie.b === circle.centre).map((tie) => (tie.a === circle.centre ? tie.b : tie.a));
+    return { m: cosigners.length, n: cosigners.filter((id) => !faded.has(id)).length, faded: faded.size };
+  }, [circle, state.roles]);
+  /** a role box: unticking the last ticked one is refused, it stays ticked */
+  const tickRole = (role: NetworkRole, ticked: boolean) => {
+    if (ticked) update({ roles: null });
+    else if (state.roles === null) update({ roles: role === "gp" ? "lp" : "gp" });
+  };
   // A circle drawn afresh carries no lit entries over.
   useEffect(() => {
     setHighlight(null);
@@ -496,7 +544,7 @@ export default function Network() {
   // returns to this circle.
   const openEntry = (entryId: number) => {
     const to = entryId === state.to ? personId : state.to;
-    const controls = withFixture(networkSearch({ ...state, select: null, years: null, firm: null, to }), fixture);
+    const controls = withFixture(networkSearch({ ...state, select: null, years: null, firm: null, to, explain: false }), fixture);
     setQuery("");
     setChainQuery("");
     navigate(`/network/person/${entryId}${controls ? `?${controls}` : ""}`);
@@ -536,10 +584,31 @@ export default function Network() {
   const firmChangeByFrom = useMemo(() => new Map((firmData?.changes ?? []).map((change) => [change.from, change])), [firmData]);
   const followFirm = (act: Pick<NetworkAct, "firm_name">) => {
     const name = firmNameOf(act);
-    if (name) update({ firm: name });
+    if (name) update({ firm: name, explain: false });
   };
   /** the firm's data while the firm view is up; the circle's otherwise */
   const shownData = firm ? firmData : circle;
+  /** the explainer in the figure column of a circle, while `explain=1` and no firm */
+  const explainOn = !firm && personId !== null && state.explain;
+  /** "How to read a circle": the explainer, scrolled to its heading when it is already up */
+  const showExplainer = () => {
+    if (explainOn) document.getElementById(EXPLAINER_ID)?.scrollIntoView({ behavior: "auto", block: "start" });
+    else update({ explain: true });
+  };
+  const explainLink = !firm && circle && (
+    <p className="nw-explainer-how">
+      <button type="button" className="link-like" onClick={showExplainer}>
+        {HOW_TO_READ}
+      </button>
+    </p>
+  );
+  const backFromExplainer = explainOn && (
+    <p className="nw-firm-back">
+      <button type="button" className="link-like" onClick={() => update({ explain: false })}>
+        {BACK_TO_CIRCLE}
+      </button>
+    </p>
+  );
 
   // The chain (step 4) over the circle: the run shown is the forward one when
   // it exists, the untimed one when none does or when the reader asks for it;
@@ -655,6 +724,8 @@ export default function Network() {
     : circle
       ? [
           ...(state.years ? [...circle.how, HOW_WINDOW(windowWords(state.years)), HOW_DRAG] : circle.how),
+          ...(state.roles ? [HOW_ROLES(state.roles)] : []),
+          ...(state.colour === "role" ? [HOW_COLOUR] : []),
           // the chain's lines after the circle's; a line the circle already carries (the hidden-rows line) once
           ...(chainOn && chainData ? chainData.how.filter((line) => !circle.how.includes(line)) : []),
         ]
@@ -666,6 +737,7 @@ export default function Network() {
         {howLines.map((line) => (
           <p key={line}>{line}</p>
         ))}
+        {explainLink}
       </details>
     ) : (
       <aside className="find-how nw-how">
@@ -673,6 +745,7 @@ export default function Network() {
         {howLines.map((line) => (
           <p key={line}>{line}</p>
         ))}
+        {explainLink}
       </aside>
     )
   );
@@ -686,6 +759,14 @@ export default function Network() {
       <button type="button" className="link-like" onClick={() => update({ years: null })}>
         {ALL_YEARS}
       </button>
+    </p>
+  );
+
+  // The rail's role line while one role is unticked: the co-signers in view
+  // that held the role shown, by the same set the figure fades.
+  const roleFilterLine = circle && state.roles && roleCounts && (
+    <p className="nw-role-line" data-role-faded={roleCounts.faded}>
+      {ROLE_LINE(roleCounts.n, roleCounts.m, state.roles)}
     </p>
   );
 
@@ -861,6 +942,7 @@ export default function Network() {
                     )}
                   </>
                 )}
+                {backFromExplainer}
                 {chainOn && (
                   <div className="nw-chain-rail">
                     {chainData?.forward && chainData.any && (
@@ -879,11 +961,17 @@ export default function Network() {
                   </div>
                 )}
                 {windowLine}
+                {roleFilterLine}
               </>
             ) : loading ? (
-              <p className="nw-answer">Loading…</p>
-            ) : null}
-            <div className={firm ? "nw-controls nw-firm-dim" : "nw-controls"}>
+              <>
+                <p className="nw-answer">Loading…</p>
+                {backFromExplainer}
+              </>
+            ) : (
+              backFromExplainer
+            )}
+            <div className={firm || explainOn ? "nw-controls nw-firm-dim" : "nw-controls"}>
             <div className="nw-control">
               <div className="db-tabs">
                 <button type="button" className={state.steps === 1 ? "db-tab is-active" : "db-tab"} onClick={() => update({ steps: 1 })}>
@@ -909,6 +997,22 @@ export default function Network() {
                 ))}
               </div>
             </div>
+            <div className="nw-control nw-role">
+              <p className="nw-control-label">{ROLE_LABEL}</p>
+              <label className="nw-check">
+                <input type="checkbox" checked={state.colour === "role"} onChange={(event) => update({ colour: event.target.checked ? "role" : null })} />
+                <span>{COLOUR_BY_ROLE}</span>
+              </label>
+              {ROLE_BOXES.map(({ role, label: boxLabel }) => {
+                const ticked = state.roles === null || state.roles === role;
+                return (
+                  <label className="nw-check" key={role}>
+                    <input type="checkbox" checked={ticked} onChange={() => tickRole(role, !ticked)} />
+                    <span>{boxLabel}</span>
+                  </label>
+                );
+              })}
+            </div>
             <label className="nw-check">
               <input type="checkbox" checked={state.others === "off"} onChange={(event) => update({ others: event.target.checked ? "off" : "on" })} />
               <span>Leave out {OTHERS_PHRASE}</span>
@@ -931,7 +1035,7 @@ export default function Network() {
         )}
       </aside>
 
-      <section className={(firm ? firmLoading && firmData : loading && circle) ? "nw-main is-updating" : "nw-main"}>
+      <section className={(firm ? firmLoading && firmData : !explainOn && loading && circle) ? "nw-main is-updating" : "nw-main"}>
         {firm ? (
           firmError ? (
             <p className="error-text nw-error">
@@ -964,13 +1068,27 @@ export default function Network() {
           <div className="nw-landing nw-landing-wide">
             <p className="eyebrow">Network</p>
             <h2>{LANDING_HEADING}</h2>
-            <p>{LANDING_LINE}</p>
+            <p>
+              {LANDING_LINE}{" "}
+              <button
+                type="button"
+                className="link-like nw-explainer-link"
+                onClick={() => document.getElementById(EXPLAINER_ID)?.scrollIntoView({ behavior: "auto", block: "start" })}
+              >
+                {HOW_TO_READ}
+              </button>
+            </p>
             {dropped.length > 0 && (
               <p className="muted" title={dropped.join(", ")}>
                 {DROPPED_LINE}
               </p>
             )}
             <NetworkLanding fixture={fixture || (Boolean(import.meta.env.DEV) && new URLSearchParams(address).get(FIXTURE_KEY) === "1")} />
+            <NetworkExplainer />
+          </div>
+        ) : explainOn ? (
+          <div className="nw-explainer-pane">
+            <NetworkExplainer />
           </div>
         ) : error ? (
           <p className="error-text nw-error">
@@ -996,6 +1114,8 @@ export default function Network() {
               highlight={figureHighlight}
               years={state.years}
               yearCard={yearCard}
+              colour={state.colour}
+              roles={state.roles}
               labelAll={labelAll}
               onSelect={setSelect}
               onHover={setHovered}
@@ -1019,7 +1139,7 @@ export default function Network() {
               onYears={(years) => update({ years })}
               onHoverYear={hoverYear}
             />
-            <NetworkKey data={circle} labelAll={labelAll} onLabelAll={setLabelAll} />
+            <NetworkKey data={circle} colour={state.colour} labelAll={labelAll} onLabelAll={setLabelAll} />
           </>
         )}
       </section>

@@ -14,6 +14,16 @@
  * asks for the untimed chain while a forward one exists. Both left out of
  * circleKey: the chain is fetched on its own while `to` is set.
  *
+ * Step 5 (docs/network/step5_contract.md §2): `colour=role` while the marks
+ * are coloured by the role the entry held in this circle, and `roles=gp` or
+ * `roles=lp` while one role is unticked (the entries that held only the other
+ * fade in place). Both client-side and left out of circleKey.
+ *
+ * The explainer (docs/network/explainer_contract.md §1): `explain=1` while a
+ * circle's figure column shows "How to read a circle" in the figure's place;
+ * the circle's keys stay, so removing it returns the circle. Left out of
+ * circleKey.
+ *
  * Kept free of React and of other imports so it can run under Node. The server
  * checks every value again. */
 
@@ -71,11 +81,38 @@ export type NetworkState = {
   /** "any" when the reader asks for the untimed chain while a forward one exists
    * (`chain=any`); null = the forward chain when it exists, else the untimed one */
   chain: "any" | null;
+  /** the marks coloured by role (step 5), `colour=role`; null = the warm monochrome */
+  colour: NetworkColour | null;
+  /** the one role still ticked while the other is unticked (step 5), `roles=gp`
+   * or `roles=lp`; null = both ticked, nothing faded for its role */
+  roles: NetworkRole | null;
+  /** the explainer in the figure column of a circle, `explain=1`; false = the
+   * figure. Not part of circleKey. */
+  explain: boolean;
 };
+
+/** What colour carries, one thing at a time (scope §4.3); only the role today. */
+export type NetworkColour = "role";
+/** The stored role codes a mark's colour and the role filter read. */
+export type NetworkRole = "gp" | "lp";
 
 export const CAP_MIN = 50;
 export const CAP_MAX = 600;
-export const DEFAULT_NETWORK: NetworkState = { steps: 2, hubs: "stop", others: "on", widen: [], cap: 300, select: null, years: null, firm: null, to: null, chain: null };
+export const DEFAULT_NETWORK: NetworkState = {
+  steps: 2,
+  hubs: "stop",
+  others: "on",
+  widen: [],
+  cap: 300,
+  select: null,
+  years: null,
+  firm: null,
+  to: null,
+  chain: null,
+  colour: null,
+  roles: null,
+  explain: false,
+};
 export const YEAR_MIN = 1400;
 export const YEAR_MAX = 1810;
 
@@ -92,6 +129,26 @@ export const OTHERS_PHRASE = "institutions, estates, shareholder groups and plac
 const HUBS: NetworkHubs[] = ["stop", "through", "off"];
 const ID = /^\d{1,10}$/;
 
+/** The roles an entry held in this circle, as the colour and the filter read
+ * them: "gp", "lp", "both" (on different acts), or null with no role recorded.
+ * `node.roles` lists the distinct stored codes of its live stakes in view. */
+export function heldRole(roles: readonly string[]): NetworkRole | "both" | null {
+  const gp = roles.includes("gp");
+  const lp = roles.includes("lp");
+  return gp && lp ? "both" : gp ? "gp" : lp ? "lp" : null;
+}
+
+/** The entries the role filter fades: those whose roles in this circle are
+ * only the unticked one. An entry with both roles, or with no role recorded,
+ * stays; the centre never fades. Empty while both roles are ticked. */
+export function roleFaded(nodes: readonly Pick<NetworkNode, "id" | "roles">[], centre: number, roles: NetworkRole | null): Set<number> {
+  const faded = new Set<number>();
+  if (!roles) return faded;
+  const unticked: NetworkRole = roles === "gp" ? "lp" : "gp";
+  for (const node of nodes) if (node.id !== centre && heldRole(node.roles) === unticked) faded.add(node.id);
+  return faded;
+}
+
 /** The address as the page writes it; every default is left out. */
 export function networkSearch(state: NetworkState): string {
   const query = new URLSearchParams();
@@ -104,6 +161,9 @@ export function networkSearch(state: NetworkState): string {
   if (state.firm) query.set("firm", state.firm);
   if (state.to !== null) query.set("to", String(state.to));
   if (state.chain) query.set("chain", state.chain);
+  if (state.colour) query.set("colour", state.colour);
+  if (state.roles) query.set("roles", state.roles);
+  if (state.explain) query.set("explain", "1");
   if (state.select) {
     query.set("select", state.select.kind === "pair" ? `pair:${state.select.a}.${state.select.b}` : `${state.select.kind}:${state.select.id}`);
   }
@@ -152,6 +212,15 @@ export function parseNetworkSearch(search: string, ignore: string[] = []): { sta
     } else if (key === "chain") {
       if (raw === "any") state.chain = raw;
       else dropped.push(`chain “${raw}”`);
+    } else if (key === "colour") {
+      if (raw === "role") state.colour = raw;
+      else dropped.push(`colour “${raw}”`);
+    } else if (key === "roles") {
+      if (raw === "gp" || raw === "lp") state.roles = raw;
+      else dropped.push(`roles “${raw}”`);
+    } else if (key === "explain") {
+      if (raw === "1") state.explain = true;
+      else dropped.push(`explain “${raw}”`);
     } else if (key === "select") {
       const match = /^(person|contract):(\d{1,10})$/.exec(raw);
       const pair = /^pair:(\d{1,10})\.(\d{1,10})$/.exec(raw);
@@ -165,7 +234,9 @@ export function parseNetworkSearch(search: string, ignore: string[] = []): { sta
   return { state, dropped };
 }
 
-/** The part of the state the server answers to: a change here refetches. */
+/** The part of the state the server answers to: a change here refetches. The
+ * window, the firm, the chain, the colour, the role filter and the explainer
+ * are left out. */
 export function circleKey(personId: number, state: NetworkState): string {
   return JSON.stringify([personId, state.steps, state.hubs, state.others, state.widen, state.cap]);
 }

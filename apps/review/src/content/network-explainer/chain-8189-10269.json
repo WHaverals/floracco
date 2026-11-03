@@ -1,0 +1,146 @@
+{
+  "_source": "GET /api/network/chain/8189/10269",
+  "_as_of": "2026-11-02",
+  "a": {
+    "id": 8189,
+    "name": "Gregorio Benucci",
+    "name_fields": {
+      "first_name": "Gregorio",
+      "father_mother": null,
+      "grandfather": null,
+      "last_name": "Benucci",
+      "nickname": null
+    },
+    "kind": "person",
+    "first_year": 1786,
+    "last_year": 1786,
+    "acts_total": 1
+  },
+  "b": {
+    "id": 10269,
+    "name": "Vincenzio Sestini",
+    "name_fields": {
+      "first_name": "Vincenzio",
+      "father_mother": null,
+      "grandfather": null,
+      "last_name": "Sestini",
+      "nickname": null
+    },
+    "kind": "person",
+    "first_year": 1805,
+    "last_year": 1805,
+    "acts_total": 1
+  },
+  "entries": [
+    {
+      "id": 3283,
+      "name": "Giovanni Battista Altoviti",
+      "name_fields": {
+        "first_name": "Giovanni Battista",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Altoviti",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1748,
+      "last_year": 1805,
+      "acts_total": 11
+    },
+    {
+      "id": 8189,
+      "name": "Gregorio Benucci",
+      "name_fields": {
+        "first_name": "Gregorio",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Benucci",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1786,
+      "last_year": 1786,
+      "acts_total": 1
+    },
+    {
+      "id": 10269,
+      "name": "Vincenzio Sestini",
+      "name_fields": {
+        "first_name": "Vincenzio",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Sestini",
+        "nickname": null
+      },
+      "kind": "person",
+      "first_year": 1805,
+      "last_year": 1805,
+      "acts_total": 1
+    }
+  ],
+  "connected": true,
+  "forward": {
+    "from": 8189,
+    "to": 10269,
+    "hops": [
+      {
+        "from": 8189,
+        "to": 3283,
+        "act": {
+          "id": 3880,
+          "date": "1786-07-14",
+          "year": 1786,
+          "firm_name": "Ferdinando Morelli e compagni"
+        }
+      },
+      {
+        "from": 3283,
+        "to": 10269,
+        "act": {
+          "id": 4753,
+          "date": "1805-11-21",
+          "year": 1805,
+          "firm_name": "fratelli Stefanini e compagni"
+        }
+      }
+    ],
+    "equal": 1,
+    "touches_hubs": false,
+    "avoiding_hubs": 2
+  },
+  "any": {
+    "hops": [
+      {
+        "from": 8189,
+        "to": 3283,
+        "act": {
+          "id": 3880,
+          "date": "1786-07-14",
+          "year": 1786,
+          "firm_name": "Ferdinando Morelli e compagni"
+        }
+      },
+      {
+        "from": 3283,
+        "to": 10269,
+        "act": {
+          "id": 4753,
+          "date": "1805-11-21",
+          "year": 1805,
+          "firm_name": "fratelli Stefanini e compagni"
+        }
+      }
+    ],
+    "equal": 1,
+    "touches_hubs": false,
+    "avoiding_hubs": 2
+  },
+  "sentence": "How are Gregorio Benucci, entry 8189, and Vincenzio Sestini, entry 10269, connected?",
+  "answer": "From Gregorio Benucci, 1786, forward in time to Vincenzio Sestini, 1805: 2 acts. Person entries are counted as entered; one person may have several.",
+  "how": [
+    "A hop is one act both entries stand on; the chain shown has the fewest hops, and of the equally short chains the one through the lowest entry numbers.",
+    "Forward in time: each hop's act is registered no earlier than the hop before.",
+    "Institutions, estates, shareholder groups and placeholders are left out of chains.",
+    "Hidden entries, appearances and acts are left out."
+  ]
+}

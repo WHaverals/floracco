@@ -1,0 +1,703 @@
+{
+  "_source": "GET /api/network/circle/8185?steps=1",
+  "_as_of": "2026-11-02",
+  "centre": 8185,
+  "steps": 1,
+  "cap": 300,
+  "hubs": "stop",
+  "others": "on",
+  "widen": [],
+  "nodes": [
+    {
+      "id": 8185,
+      "step": 0,
+      "name": "Ferdinando Morelli",
+      "name_fields": {
+        "first_name": "Ferdinando",
+        "father_mother": "Pietro",
+        "grandfather": null,
+        "last_name": "Morelli",
+        "nickname": null
+      },
+      "kind": "person",
+      "hub": false,
+      "woman": false,
+      "acts_in_view": 2,
+      "acts_total": 2,
+      "roles": [
+        "gp"
+      ],
+      "first_year": 1786,
+      "last_year": 1795,
+      "undated_acts": 0,
+      "parent": null,
+      "widened": false
+    },
+    {
+      "id": 3102,
+      "step": 1,
+      "name": "Lorenzo Vannuccini",
+      "name_fields": {
+        "first_name": "Lorenzo",
+        "father_mother": "Antonio Francesco",
+        "grandfather": null,
+        "last_name": "Vannuccini",
+        "nickname": null
+      },
+      "kind": "person",
+      "hub": false,
+      "woman": false,
+      "acts_in_view": 5,
+      "acts_total": 6,
+      "roles": [
+        "gp",
+        "lp"
+      ],
+      "first_year": 1771,
+      "last_year": 1795,
+      "undated_acts": 0,
+      "parent": 8185,
+      "widened": false
+    },
+    {
+      "id": 3283,
+      "step": 1,
+      "name": "Giovanni Battista Altoviti",
+      "name_fields": {
+        "first_name": "Giovanni Battista",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Altoviti",
+        "nickname": null
+      },
+      "kind": "person",
+      "hub": false,
+      "woman": false,
+      "acts_in_view": 5,
+      "acts_total": 11,
+      "roles": [
+        "lp"
+      ],
+      "first_year": 1771,
+      "last_year": 1795,
+      "undated_acts": 0,
+      "parent": 8185,
+      "widened": false
+    },
+    {
+      "id": 8188,
+      "step": 1,
+      "name": "Bartolomeo Cioni",
+      "name_fields": {
+        "first_name": "Bartolomeo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Cioni",
+        "nickname": null
+      },
+      "kind": "person",
+      "hub": false,
+      "woman": false,
+      "acts_in_view": 2,
+      "acts_total": 2,
+      "roles": [
+        "lp"
+      ],
+      "first_year": 1786,
+      "last_year": 1795,
+      "undated_acts": 0,
+      "parent": 8185,
+      "widened": false
+    },
+    {
+      "id": 3104,
+      "step": 1,
+      "name": "Sebastiano Martini",
+      "name_fields": {
+        "first_name": "Sebastiano",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Martini",
+        "nickname": null
+      },
+      "kind": "person",
+      "hub": false,
+      "woman": false,
+      "acts_in_view": 3,
+      "acts_total": 3,
+      "roles": [
+        "lp"
+      ],
+      "first_year": 1771,
+      "last_year": 1786,
+      "undated_acts": 0,
+      "parent": 8185,
+      "widened": false
+    },
+    {
+      "id": 8031,
+      "step": 1,
+      "name": "Giovanni Angelo Del Verità",
+      "name_fields": {
+        "first_name": "Giovanni Angelo",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Del Verità",
+        "nickname": null
+      },
+      "kind": "person",
+      "hub": false,
+      "woman": false,
+      "acts_in_view": 1,
+      "acts_total": 2,
+      "roles": [
+        "lp"
+      ],
+      "first_year": 1786,
+      "last_year": 1786,
+      "undated_acts": 0,
+      "parent": 8185,
+      "widened": false
+    },
+    {
+      "id": 8189,
+      "step": 1,
+      "name": "Gregorio Benucci",
+      "name_fields": {
+        "first_name": "Gregorio",
+        "father_mother": null,
+        "grandfather": null,
+        "last_name": "Benucci",
+        "nickname": null
+      },
+      "kind": "person",
+      "hub": false,
+      "woman": false,
+      "acts_in_view": 1,
+      "acts_total": 1,
+      "roles": [
+        "lp"
+      ],
+      "first_year": 1786,
+      "last_year": 1786,
+      "undated_acts": 0,
+      "parent": 8185,
+      "widened": false
+    },
+    {
+      "id": 9389,
+      "step": 1,
+      "name": "Giovanni Angiolo del Verità",
+      "name_fields": {
+        "first_name": "Giovanni Angiolo",
+        "father_mother": "Antonio",
+        "grandfather": null,
+        "last_name": "del Verità",
+        "nickname": null
+      },
+      "kind": "person",
+      "hub": false,
+      "woman": false,
+      "acts_in_view": 2,
+      "acts_total": 2,
+      "roles": [
+        "lp"
+      ],
+      "first_year": 1794,
+      "last_year": 1795,
+      "undated_acts": 0,
+      "parent": 8185,
+      "widened": false
+    },
+    {
+      "id": 9411,
+      "step": 1,
+      "name": "Cosimo Paradisi",
+      "name_fields": {
+        "first_name": "Cosimo",
+        "father_mother": "Vincenzio",
+        "grandfather": null,
+        "last_name": "Paradisi",
+        "nickname": null
+      },
+      "kind": "person",
+      "hub": false,
+      "woman": false,
+      "acts_in_view": 1,
+      "acts_total": 1,
+      "roles": [
+        "lp"
+      ],
+      "first_year": 1795,
+      "last_year": 1795,
+      "undated_acts": 0,
+      "parent": 8185,
+      "widened": false
+    }
+  ],
+  "ties": [
+    {
+      "a": 3102,
+      "b": 3104,
+      "acts": [
+        1540,
+        1624,
+        3880
+      ]
+    },
+    {
+      "a": 3102,
+      "b": 3283,
+      "acts": [
+        1540,
+        1624,
+        3880,
+        4409,
+        4419
+      ]
+    },
+    {
+      "a": 3102,
+      "b": 8031,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 3102,
+      "b": 8185,
+      "acts": [
+        3880,
+        4419
+      ]
+    },
+    {
+      "a": 3102,
+      "b": 8188,
+      "acts": [
+        3880,
+        4419
+      ]
+    },
+    {
+      "a": 3102,
+      "b": 8189,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 3102,
+      "b": 9389,
+      "acts": [
+        4409,
+        4419
+      ]
+    },
+    {
+      "a": 3102,
+      "b": 9411,
+      "acts": [
+        4419
+      ]
+    },
+    {
+      "a": 3104,
+      "b": 3283,
+      "acts": [
+        1540,
+        1624,
+        3880
+      ]
+    },
+    {
+      "a": 3104,
+      "b": 8031,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 3104,
+      "b": 8185,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 3104,
+      "b": 8188,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 3104,
+      "b": 8189,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 3283,
+      "b": 8031,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 3283,
+      "b": 8185,
+      "acts": [
+        3880,
+        4419
+      ]
+    },
+    {
+      "a": 3283,
+      "b": 8188,
+      "acts": [
+        3880,
+        4419
+      ]
+    },
+    {
+      "a": 3283,
+      "b": 8189,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 3283,
+      "b": 9389,
+      "acts": [
+        4409,
+        4419
+      ]
+    },
+    {
+      "a": 3283,
+      "b": 9411,
+      "acts": [
+        4419
+      ]
+    },
+    {
+      "a": 8031,
+      "b": 8185,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 8031,
+      "b": 8188,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 8031,
+      "b": 8189,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 8185,
+      "b": 8188,
+      "acts": [
+        3880,
+        4419
+      ]
+    },
+    {
+      "a": 8185,
+      "b": 8189,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 8185,
+      "b": 9389,
+      "acts": [
+        4419
+      ]
+    },
+    {
+      "a": 8185,
+      "b": 9411,
+      "acts": [
+        4419
+      ]
+    },
+    {
+      "a": 8188,
+      "b": 8189,
+      "acts": [
+        3880
+      ]
+    },
+    {
+      "a": 8188,
+      "b": 9389,
+      "acts": [
+        4419
+      ]
+    },
+    {
+      "a": 8188,
+      "b": 9411,
+      "acts": [
+        4419
+      ]
+    },
+    {
+      "a": 9389,
+      "b": 9411,
+      "acts": [
+        4419
+      ]
+    }
+  ],
+  "acts": [
+    {
+      "id": 1540,
+      "date": "1771-06-27",
+      "year": 1771,
+      "firm_name": "Giuseppe Martini e compagni",
+      "signers_live": 6,
+      "signers_in_view": 3
+    },
+    {
+      "id": 1624,
+      "date": "1774-04-20",
+      "year": 1774,
+      "firm_name": "Giuseppe Martire e compagni",
+      "signers_live": 5,
+      "signers_in_view": 3
+    },
+    {
+      "id": 3880,
+      "date": "1786-07-14",
+      "year": 1786,
+      "firm_name": "Ferdinando Morelli e compagni",
+      "signers_live": 7,
+      "signers_in_view": 7
+    },
+    {
+      "id": 4409,
+      "date": "1794-11-15",
+      "year": 1794,
+      "firm_name": "Giuseppe Martire e compagno ",
+      "signers_live": 3,
+      "signers_in_view": 3
+    },
+    {
+      "id": 4419,
+      "date": "1795-01-26",
+      "year": 1795,
+      "firm_name": "Ferdinando Morelli e compagni  ",
+      "signers_live": 6,
+      "signers_in_view": 6
+    }
+  ],
+  "appearances": [
+    {
+      "person": 3102,
+      "act": 1540,
+      "role": "gp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 3102,
+      "act": 1624,
+      "role": "gp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 3102,
+      "act": 3880,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 3102,
+      "act": 4409,
+      "role": "gp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 3102,
+      "act": 4419,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 3104,
+      "act": 1540,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": true
+    },
+    {
+      "person": 3104,
+      "act": 1624,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": true
+    },
+    {
+      "person": 3104,
+      "act": 3880,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 3283,
+      "act": 1540,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 3283,
+      "act": 1624,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 3283,
+      "act": 3880,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 3283,
+      "act": 4409,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 3283,
+      "act": 4419,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 8031,
+      "act": 3880,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 8185,
+      "act": 3880,
+      "role": "gp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 8185,
+      "act": 4419,
+      "role": "gp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 8188,
+      "act": 3880,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 8188,
+      "act": 4419,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 8189,
+      "act": 3880,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 9389,
+      "act": 4409,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 9389,
+      "act": 4419,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    },
+    {
+      "person": 9411,
+      "act": 4419,
+      "role": "lp",
+      "heirs_of": false,
+      "proxy": false,
+      "joint": false
+    }
+  ],
+  "counts": {
+    "reached": 9,
+    "drawn": 9,
+    "persons": 9,
+    "others": 0,
+    "kinds": {},
+    "hubs": 0,
+    "acts": 5,
+    "ties": 30
+  },
+  "cut": null,
+  "sentence": "Who signed acts with Ferdinando Morelli, entry 8185?",
+  "answer": "8 co-signers on 2 acts, 1786–1795; 9 entries within one step. Person entries are counted as entered; one person may have several.",
+  "how": [
+    "Ferdinando Morelli, entry 8185, is on 2 acts; 8 co-signers are drawn. Among the 9, 30 pairs signed an act together.",
+    "Hidden entries, appearances and acts are left out.",
+    "Clockwise from the top, the co-signers stand in the order of their first act with Ferdinando Morelli."
+  ]
+}

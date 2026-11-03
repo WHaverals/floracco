@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { NetworkAct, NetworkAppearance, NetworkCircle, NetworkKind } from "../types";
 import { labelWidth, layoutCircle, pairKey, tieWidth, windowTies, type NetworkLayout, type PlacedLine, type PlacedNode } from "../utils/networkLayout";
-import { duplicateNames, pairSelect, sameSelect, type NetworkHubs, type NetworkSelect } from "../utils/networkSpec";
+import { duplicateNames, heldRole, pairSelect, roleFaded, sameSelect, type NetworkColour, type NetworkHubs, type NetworkRole, type NetworkSelect } from "../utils/networkSpec";
 import { roleLabel } from "../utils/roles";
 
 /* The circle of one entry as a figure (docs/network/step1_contract.md §3,
@@ -33,7 +33,21 @@ import { roleLabel } from "../utils/roles";
  * (windowTies) decides which lines are drawn and how wide; nothing moves. An
  * entry left with no tie inside is faded to 30% and keeps its place and its
  * label rule; the card's tie line adds the acts inside the window. With no
- * window the figure is the full picture. */
+ * window the figure is the full picture.
+ *
+ * The role (step 5, docs/network/step5_contract.md §2): with `colour` set to
+ * "role" each mark's fill is the role the entry held in this circle (Find's
+ * series colours, through the `is-role-*` classes; the shapes, the hub ring
+ * and the lines unchanged, the centre's dark stroke kept) and the key gains
+ * the three colours. With `roles` set to one role, the entries that held only
+ * the other fade in place as the window fades them, their ties with them;
+ * either fade is enough.
+ *
+ * Still (docs/network/explainer_contract.md §1): with `still` the figure is a
+ * picture in the explainer's prose. No reading card and no band reserved for
+ * it, no hover, no click, no selection, no hit targets; the marks, lines,
+ * labels and colours as drawn. The frame is fixed: the caller gives the
+ * height, the stage's width is measured as always. */
 
 export const KIND_WORDS: Record<NetworkKind, string> = {
   person: "person entry",
@@ -215,16 +229,22 @@ function actsLine(placed: PlacedNode, appearances: NetworkAppearance[]): string 
   return `${num(total)} acts in view, ${span}${undated}; ${roles}.`;
 }
 
+const NOOP = () => {};
+
 export default function NetworkFigure({
   data,
   hubs,
-  selected,
-  highlight,
+  selected: selectedProp,
+  highlight: highlightProp,
   years = null,
-  yearCard = null,
+  yearCard: yearCardProp = null,
+  colour = null,
+  roles = null,
   labelAll,
-  onSelect,
-  onHover,
+  still = false,
+  height,
+  onSelect = NOOP,
+  onHover = NOOP,
 }: {
   data: NetworkCircle;
   /** the hub state in force; nothing in the card reads it now, the key may */
@@ -237,13 +257,25 @@ export default function NetworkFigure({
   years?: [number, number] | null;
   /** the hovered strip year's facts, read by the card while the strip lights its signers */
   yearCard?: YearCard | null;
+  /** what the marks' colour carries; null for the warm monochrome */
+  colour?: NetworkColour | null;
+  /** the one role still ticked while the other is unticked; null for both */
+  roles?: NetworkRole | null;
   labelAll: boolean;
+  /** a picture: no card, no band, no hover, no click, no selection */
+  still?: boolean;
+  /** the stage's height in pixels while `still` is set */
+  height?: number;
   /** null clears: the selected mark clicked again, or empty stage */
-  onSelect: (select: NetworkSelect | null) => void;
+  onSelect?: (select: NetworkSelect | null) => void;
   /** the entry under the pointer, for the side column */
-  onHover: (id: number | null) => void;
+  onHover?: (id: number | null) => void;
 }) {
   void hubs;
+  // A still figure has no selection and nothing lit from outside.
+  const selected = still ? null : selectedProp;
+  const highlight = still ? null : highlightProp;
+  const yearCard = still ? null : yearCardProp;
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [frame, setFrame] = useState({ width: 0, height: 0 });
   const [hover, setHover] = useState<Hover | null>(null);
@@ -271,7 +303,7 @@ export default function NetworkFigure({
   // The card's band at the stage's top is reserved: the circle is inscribed
   // in the stage below it, so the card never covers a mark, and the band's
   // height follows the stage's width only, never the card's content.
-  const band = frame.width > 0 ? cardBand(frame.width) : 0;
+  const band = !still && frame.width > 0 ? cardBand(frame.width) : 0;
   const layout: NetworkLayout | null = useMemo(
     () => (frame.width > 0 && frame.height - band > 0 ? layoutCircle(data, { width: frame.width, height: frame.height - band }) : null),
     [data, frame, band],
@@ -294,6 +326,15 @@ export default function NetworkFigure({
   // The window's mask: the lines drawn are those with an act inside, their
   // width by the acts inside; the acts listed stay the full shared list.
   const mask = useMemo(() => windowTies(data, years), [data, years]);
+  // The role filter's fade; an entry faded by either mask is faded.
+  const roleMask = useMemo(() => roleFaded(data.nodes, data.centre, roles), [data, roles]);
+  const faded = (id: number) => mask.faded.has(id) || roleMask.has(id);
+  /** the role class of a mark while the colour is on; "" for no role recorded */
+  const roleClass = (node: { roles: string[] }) => {
+    if (colour !== "role") return "";
+    const held = heldRole(node.roles);
+    return held ? `is-role-${held}` : "";
+  };
   const insideByKey = useMemo(() => new Map(mask.ties.map((tie) => [pairKey(tie.a, tie.b), tie.acts])), [mask]);
   const lines = useMemo<PlacedLine[]>(() => {
     if (!layout) return [];
@@ -476,7 +517,7 @@ export default function NetworkFigure({
   // pointer; the side-column row under it; the strip year under it; the
   // selection, while the pointer is over nothing; the centre.
   const card = ((): Card | null => {
-    if (!layout) return null;
+    if (still || !layout) return null;
     if (hover?.kind === "node") {
       const placed = layout.byId.get(hover.id);
       if (placed) return entryCard(placed, "entry");
@@ -506,14 +547,17 @@ export default function NetworkFigure({
   })();
 
   const enterNode = (id: number) => {
+    if (still) return;
     setHover({ kind: "node", id });
     onHover(id);
   };
   const leaveNode = () => {
+    if (still) return;
     setHover(null);
     onHover(null);
   };
   const clickNode = (id: number) => {
+    if (still) return;
     const next: NetworkSelect = { kind: "person", id };
     onSelect(sameSelect(selected, next) ? null : next);
   };
@@ -539,7 +583,7 @@ export default function NetworkFigure({
     return (
       <text
         key={id}
-        className={[ring === 0 ? "nw-label is-centre" : node.hub ? "nw-label is-hub" : "nw-label", mask.faded.has(id) ? "is-faded" : ""].filter(Boolean).join(" ")}
+        className={[ring === 0 ? "nw-label is-centre" : node.hub ? "nw-label is-hub" : "nw-label", faded(id) ? "is-faded" : ""].filter(Boolean).join(" ")}
         data-id={id}
         x={at.x}
         y={at.y}
@@ -557,7 +601,7 @@ export default function NetworkFigure({
   const isSelectedNode = (id: number) => id === selectedPerson || (selectedPair !== null && (id === selectedPair.a || id === selectedPair.b));
 
   return (
-    <div ref={stageRef} className="nw-stage" onMouseLeave={leaveNode}>
+    <div ref={stageRef} className={still ? "nw-stage is-still" : "nw-stage"} style={still ? { height } : undefined} onMouseLeave={leaveNode}>
       {layout && (
         <svg
           viewBox={`0 0 ${frame.width} ${frame.height}`}
@@ -569,10 +613,13 @@ export default function NetworkFigure({
           data-labels-edge={rest.yielded.edge}
           data-labels-overlap={rest.yielded.overlap}
           data-faded={mask.faded.size}
+          data-role-faded={roleMask.size}
+          data-colour={colour ?? "none"}
           data-lines={lines.length}
           data-band={band}
+          data-still={still ? "1" : undefined}
         >
-          <rect className="nw-stage-bg" x={0} y={0} width={frame.width} height={frame.height} onClick={() => onSelect(null)} />
+          <rect className="nw-stage-bg" x={0} y={0} width={frame.width} height={frame.height} onClick={still ? undefined : () => onSelect(null)} />
           <g transform={`translate(0 ${band})`}>
             <g>
               {drawn.map((line) => {
@@ -586,10 +633,11 @@ export default function NetworkFigure({
                   hovered ? "is-active" : "",
                   selectedLine ? "is-selected" : "",
                   (hover || highlight !== null) && !hovered && !selectedLine ? "is-dim" : "",
+                  roleMask.has(line.a) || roleMask.has(line.b) ? "is-faded" : "",
                 ]
                   .filter(Boolean)
                   .join(" ");
-                const hit = line.kind !== "tie" || oneStep || selectedLine;
+                const hit = !still && (line.kind !== "tie" || oneStep || selectedLine);
                 return (
                   <g key={line.key}>
                     <line className={cls} x1={a.x} y1={a.y} x2={b.x} y2={b.y} strokeWidth={line.width} />
@@ -627,7 +675,8 @@ export default function NetworkFigure({
                   signersOfSelectedAct.has(id) ? "is-signer" : "",
                   id === lit || (litSet !== null && litSet.has(id)) ? "is-hover" : "",
                   (hover || highlight !== null) && !near && !isSelectedNode(id) ? "is-dim" : "",
-                  mask.faded.has(id) ? "is-faded" : "",
+                  faded(id) ? "is-faded" : "",
+                  roleClass(placed.node),
                 ]
                   .filter(Boolean)
                   .join(" ");
@@ -642,7 +691,7 @@ export default function NetworkFigure({
                   >
                     {placed.node.hub && <circle className="nw-hub-ring" cx={placed.x} cy={placed.y} r={placed.r + 3.5} />}
                     {mark(placed)}
-                    <circle className="nw-hit" cx={placed.x} cy={placed.y} r={Math.max(12, placed.r + 4)} />
+                    {!still && <circle className="nw-hit" cx={placed.x} cy={placed.y} r={Math.max(12, placed.r + 4)} />}
                   </g>
                 );
               })}
@@ -661,13 +710,16 @@ export default function NetworkFigure({
   );
 }
 
-/** The marks, for a key under the figure, with "Label all" as its last item. */
+/** The marks, for a key under the figure, with "Label all" as its last item;
+ * while the colour is on, the three role colours after the dot. */
 export function NetworkKey({
   data,
+  colour = null,
   labelAll,
   onLabelAll,
 }: {
   data: NetworkCircle;
+  colour?: NetworkColour | null;
   labelAll: boolean;
   onLabelAll: (labelAll: boolean) => void;
 }) {
@@ -680,6 +732,19 @@ export function NetworkKey({
       <span>
         <i className="nw-key-dot" /> a person entry, sized by its acts in view
       </span>
+      {colour === "role" && (
+        <>
+          <span>
+            <i className="nw-key-dot is-role-gp" /> general partner
+          </span>
+          <span>
+            <i className="nw-key-dot is-role-lp" /> external investor (accomandante)
+          </span>
+          <span>
+            <i className="nw-key-dot is-role-both" /> both, on different acts
+          </span>
+        </>
+      )}
       {data.counts.hubs > 0 && (
         <span>
           <i className="nw-key-ring" /> on more than 20 acts
