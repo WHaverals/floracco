@@ -23,8 +23,9 @@ import { periodLabel } from "../utils/findView";
  * only the row cells and the hover rows. In development, `?fixture=1` reads the
  * hand-written fixture instead of asking the server. */
 
-// The first of the validated series colours (FindViews.tsx), on the chart surface.
-const BAR = "#2a78d6";
+// The home page's contract bars (DistributionRibbon.tsx): one warm series, in the
+// house palette, not Find's categorical blue (WH, 3 November 2026).
+const BAR = "#b07a47";
 // The hover rows that are not drawn carry no key.
 const NO_KEY = "transparent";
 const SHOW_ALL = (n: number) => `Show all ${n}`;
