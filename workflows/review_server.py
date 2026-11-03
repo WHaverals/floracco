@@ -175,6 +175,9 @@ CORRECTABLE_FIELDS: dict[str, dict[str, dict[str, Any]]] = {
         "is_widow": {"label": "Recorded as widow", "input_type": "bool"},
         "is_guardian": {"label": "Acting as guardian", "input_type": "bool"},
         "is_jewish": {"label": "Jewish — stated in the act", "input_type": "bool"},
+        # The editorial layer: the 2010s data-entry team's marks, editable like the
+        # other flags since 2026-11-03 (WH, at FT's request; jewish_db.md addendum).
+        "jewish_db": {"label": "Jewish — editorial attribution", "input_type": "bool"},
         "is_convert": {"label": "Recorded as convert", "input_type": "bool"},
         "heirs": {"label": "Heirs", "input_type": "bool"},
         "heirs_of": {"label": "Heirs of", "input_type": "bool"},
@@ -1693,8 +1696,8 @@ def proposals_by_row() -> dict[str, dict[str, dict[str, Any]]]:
 # Francesca). Find's column headers carry the same sentence from
 # apps/review/src/utils/findView.ts; tests/test_find.py holds the two equal.
 JEWISH_ATTRIBUTION_NOTE = (
-    "Marked as Jewish by the project's data-entry team during the "
-    "original database entry (2010s), on the basis of name and context."
+    "Marked as Jewish by the project's editors. Most of these marks were made by the "
+    "data-entry team during the original database entry (2010s), on the basis of name and context."
 )
 
 
@@ -1822,16 +1825,9 @@ def build_partners(
             ]},
             {"label": "Religion", "fields": [
                 boolf("Jewish — stated in the act", "is_jewish"),
-                # The legacy editorial layer (2010s data entry) is display-only:
-                # the platform never sets it, and the only sanctioned write is the
-                # audited refute action (jewish_db 1→0) offered on this field.
-                {
-                    "label": "Jewish — editorial attribution",
-                    "value": yes_no(inv["jewish_db"]),
-                    "note": JEWISH_ATTRIBUTION_NOTE,
-                    "refute": ({"investor_id": str(iid)}
-                               if inv["jewish_db"] in (1, "1", True) else None),
-                },
+                # The editorial layer, editable like the flags around it; the hover
+                # note says whose marks these mostly are.
+                {**boolf("Jewish — editorial attribution", "jewish_db"), "note": JEWISH_ATTRIBUTION_NOTE},
                 boolf("Recorded as convert", "is_convert"),
             ]},
             {"label": "Capacity — how they participate", "fields": [
@@ -6286,13 +6282,13 @@ class _SpoolResponse(StreamingResponse):
 
 
 # The two Jewish lists, per contract, with how its Jewish partners are known:
-# stated in the act (is_jewish) or the data-entry team's attribution only
+# stated in the act (is_jewish) or the editorial attribution only
 # (jewish_db without is_jewish). The two layers are never merged into one mark
 # (review 2026-10-27, 4.1/Q4). A hidden person's appearance counts on no side.
 _JEWISH_PROVENANCE_NOTE = (
     "“Stated in the act”: every Jewish partner on the contract is described as Jewish in the act. "
-    "“Attributed only”: none is; each was marked by the data-entry team (its basis is not recorded "
-    "for each partner). “Partly stated, partly attributed”: some of each."
+    "“Attributed only”: none is; each carries the editorial attribution, made mostly by the data-entry "
+    "team (its basis is not recorded for each partner). “Partly stated, partly attributed”: some of each."
 )
 
 
@@ -6466,8 +6462,8 @@ ANALYSIS_LIBRARY: list[dict[str, Any]] = [
         "id": "jewish_all",
         "group": "People & gender",
         "title": "Contracts where every partner is marked Jewish (stated in the act or editorial attribution)",
-        "description": "Every partner is Jewish, either as stated in the act or by the "
-        "data-entry team's editorial attribution.",
+        "description": "Every partner is Jewish, either as stated in the act or by "
+        "editorial attribution.",
         "notes": _JEWISH_PROVENANCE_NOTE,
         "chart": "none",
         "sql": _jewish_list_sql("j.neither = 0"),
@@ -6591,8 +6587,8 @@ ANALYSIS_LIBRARY: list[dict[str, Any]] = [
         "id": "jewish_provenance_over_time",
         "group": "Trends over time",
         "title": "Jewish partners by provenance, by decade",
-        "description": "The same share split by how we know: stated in the act vs. the data-entry "
-        "team's editorial attribution (its basis is not recorded for each partner). Decades with ≥30 partner appearances.",
+        "description": "The same share split by how we know: stated in the act vs. editorial attribution "
+        "(made mostly by the data-entry team; its basis is not recorded for each partner). Decades with ≥30 partner appearances.",
         "chart": "multiline",
         "sql": "SELECT CAST(substr(c.registration_date, 1, 3) || '0' AS INTEGER) AS decade,\n"
         "       ROUND(100.0 * SUM(CASE WHEN i.is_jewish = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_stated_in_act,\n"
@@ -11741,7 +11737,7 @@ def db_record(table: str, record_id: str, include_hidden: bool = False) -> dict[
 # the op-log is never changed. One user action (several rows) reads as one line.
 
 # Labels for columns that are not in CORRECTABLE_FIELDS (the page builders name
-# them inline: relink fields, the editorial attribution, a place's address).
+# them inline: relink fields, a place's address).
 HISTORY_LABELS: dict[tuple[str, str], str] = {
     ("contract", "economic_sector"): "Economic activity",
     ("contract", "currency_id"): "Currency",
@@ -11751,7 +11747,6 @@ HISTORY_LABELS: dict[tuple[str, str], str] = {
     ("investor", "title_husband"): "Husband's title",
     ("investor", "place_of_residence"): "Place of residence",
     ("investor", "place_of_origin"): "Place of origin",
-    ("investor", "jewish_db"): "Jewish — editorial attribution",
     ("contract_place", "address"): "Address",
 }
 # Reasons the server or the editor writes by itself: not shown as a quoted reason.
@@ -11807,7 +11802,7 @@ def _history_value(connection: sqlite3.Connection, table: str, field: str | None
         meta = LOOKUP_KINDS[kind]
         return lookup_value(connection, meta["table"], meta["id"], raw, meta["value"]) or "not in the list"
     spec = CORRECTABLE_FIELDS.get(table, {}).get(field or "", {})
-    if spec.get("input_type") == "bool" or (table, field) == ("investor", "jewish_db"):
+    if spec.get("input_type") == "bool":
         return "Yes" if text.strip().lower() in ("1", "true", "yes") else "No"
     if (table, field) == ("investment", "type"):
         return data_quality.ROLE_WORDS.get(text, text)
@@ -12348,8 +12343,6 @@ def _describe_action(scope: _HistoryScope, group: list[dict[str, Any]]) -> dict[
         else:
             entry["tag"] = {"contract": "Contract", "sub_contract": "Sub-contract", "person": "Person entry"}.get(table, "Record")
         edit(lead)
-        if lead.get("field") == "jewish_db" and str(lead.get("after_value")) in ("0", "False"):
-            entry["text"], entry["field"], entry["before"], entry["after"] = "Jewish — editorial attribution refuted", None, None, None
     elif scope.table != "person" and ops_of("person", "delete", "restore"):
         lead = ops_of("person", "delete", "restore")[0]
         person = _pk_value(lead, "person_id")
@@ -12822,49 +12815,6 @@ def remove_stake(cid: str, investment_id: str, action: RecordAction) -> dict[str
 @serialized_write
 def restore_stake(cid: str, investment_id: str, action: RecordAction) -> dict[str, Any]:
     return _set_stake_removed(cid, investment_id, removed=False, action=action)
-
-
-class AttributionRefute(BaseModel):
-    reviewer: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
-
-
-@app.post("/api/db/investor/{investor_id}/refute-jewish-attribution")
-@serialized_write
-def refute_jewish_attribution(investor_id: str, payload: AttributionRefute) -> dict[str, Any]:
-    """The one sanctioned write to the legacy editorial layer: a reviewer judges a
-    2010s Jewish attribution erroneous and clears it (jewish_db 1→0), audited with
-    a required reason. The platform never *sets* jewish_db — new identifications
-    enter only as `is_jewish` (stated in the act) through the normal edit path.
-    The seed dump keeps the original 1 forever; replay applies this correction.
-    See docs/data_quality/jewish_db.md."""
-    connection = open_db()
-    clog = open_corrections()
-    try:
-        row = connection.execute(
-            "SELECT jewish_db, is_deleted FROM investor WHERE investor_id = ?", (investor_id,)
-        ).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Partner not found.")
-        if row["jewish_db"] not in (1, "1"):
-            raise HTTPException(status_code=409, detail="No editorial attribution is set on this partner.")
-        with connection:
-            connection.execute("UPDATE investor SET jewish_db = 0 WHERE investor_id = ?", (investor_id,))
-        try:
-            corrections_db.record_operation(
-                clog, op="update", db_table="investor", pk={"investor_id": int(investor_id)},
-                field="jewish_db", before_value=1, after_value=0,
-                by=payload.reviewer, reason=payload.reason.strip(),
-            )
-        except Exception:
-            # compensation-lite (§0 Phase A4): an unlogged refute must not stand
-            with connection:
-                connection.execute("UPDATE investor SET jewish_db = 1 WHERE investor_id = ?", (investor_id,))
-            raise
-    finally:
-        clog.close()
-        connection.close()
-    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -13642,15 +13592,36 @@ def flag_group_meta() -> dict[str, dict[str, Any]]:
     }
 
 
+def _attribution_ruled_ids() -> set[int]:
+    """Investors whose editorial attribution a reviewer has set on the platform,
+    either way (applied `update`s of investor.jewish_db in the op-log)."""
+    clog = open_corrections()
+    try:
+        rows = clog.execute(
+            "SELECT pk FROM change_request WHERE db_table = 'investor' AND field = 'jewish_db' "
+            "AND op = 'update' AND status = 'applied'"
+        ).fetchall()
+    finally:
+        clog.close()
+    out: set[int] = set()
+    for (pk,) in rows:
+        try:
+            out.add(int(json.loads(pk)["investor_id"]))
+        except (ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
 @app.get("/api/db/flags")
 def db_flags() -> dict[str, Any]:
     dismissed = dismissed_flag_keys()
+    ruled = _attribution_ruled_ids()
     connection = open_db()
     try:
         items = (
             data_quality.flags(connection)
             + _word_date_flags(connection)
-            + jewish_review.flags(connection)
+            + jewish_review.flags(connection, ruled)
             + _person_split_flag_items(connection)
         )
         items = [f for f in items if f["key"] not in dismissed]

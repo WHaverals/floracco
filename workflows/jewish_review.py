@@ -1,12 +1,12 @@
 """Jewish-attribution review — the curation lanes for the two provenance layers.
 
 The investor table carries two provenance-separated Jewish flags: ``is_jewish``
-(stated in the act) and ``jewish_db`` (the 2010s data-entry team's editorial
-attribution, basis never recorded per row). This module surfaces the places
+(stated in the act) and ``jewish_db`` (the editorial attribution: mostly the
+2010s data-entry team's marks, basis never recorded per row). This module surfaces the places
 where the two layers and the narratives disagree, as "Needs review" flags —
 computed live, is_deleted-filtered, nothing auto-applied. A reviewer resolves
 each case through the normal audited editors (set ``is_jewish`` when the text
-attests; the queue's refute action for an erroneous ``jewish_db``).
+attests; set ``jewish_db`` to No when an attribution is judged erroneous).
 
 Investigation, lane decisions, and the full evidence trail:
 docs/data_quality/jewish_db.md.
@@ -28,7 +28,7 @@ GROUP_META: dict[str, dict[str, str]] = {
         "severity": "medium",
         "explanation": (
             "The contract's narrative (or a sub-contract's) says “ebre…”, but this partner carries "
-            "only the 2010s editorial attribution. Read the narrative — if it names this person as "
+            "only the editorial attribution. Read the narrative — if it names this person as "
             "Jewish, set “Jewish — stated in the act”. The editorial mark stays either way."
         ),
     },
@@ -54,8 +54,7 @@ GROUP_META: dict[str, dict[str, str]] = {
         "severity": "medium",
         "explanation": (
             "The 2010s editorial attribution conflicts with the evidence (see the note on the "
-            "flagged record). If you judge it wrong, use the refute action on the partner's "
-            "“Jewish — editorial attribution” field; a reason is required, and the change is recorded under your initials."
+            "flagged record). If you judge it wrong, set the partner's “Jewish — editorial attribution” to No."
         ),
     },
     "jewish_convert_suspect": {
@@ -111,8 +110,10 @@ CONJECTURE: list[tuple[int, int, str]] = [
 # Curated suspect editorial attributions (Lane E): contract 2646's three investors
 # are northern-European merchant houses (Ahrenz of Constantinople, Friez & Co. of
 # Vienna, Otto Franck & Co. of Livorno) with no Jewish attestation anywhere; Otto
-# Franck is unflagged on his other two contracts. Runtime guard: the flag only
-# fires while jewish_db=1 still stands, so a refutation clears it from the list.
+# Franck is unflagged on his other two contracts. Runtime guards: the flag only
+# fires while jewish_db=1 still stands, so setting it to No clears it from the list,
+# and not once a reviewer has set the mark on the platform either way (a Yes set
+# back after a No is a reviewer's judgment, no longer the 2010s mark under suspicion).
 SUSPECT_ATTRIBUTIONS: list[tuple[int, int, str]] = [
     (8052, 2646, "Giovanni David Ahrenz “d'Albona dimorante in Costantinopoli”"),
     (8053, 2646, "Friez e compagni di Vienna"),
@@ -148,8 +149,12 @@ def _who(first: Any, last: Any, fallback: str) -> str:
     return name or fallback
 
 
-def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every lane's open items, computed live. Same shape as data_quality.flags."""
+def flags(connection: sqlite3.Connection, ruled: set[int] | None = None) -> list[dict[str, Any]]:
+    """Every lane's open items, computed live. Same shape as data_quality.flags.
+
+    `ruled`: investors whose editorial attribution a reviewer has set on the
+    platform (from the op-log); a curated suspect attribution among them is settled."""
+    ruled = ruled or set()
     out: list[dict[str, Any]] = []
 
     def add(group: str, table: str, pk: Any, title: str, fix: dict[str, Any], key_suffix: str = "") -> None:
@@ -214,6 +219,8 @@ def flags(connection: sqlite3.Connection) -> list[dict[str, Any]]:
 
     # Lane E — curated suspects, self-cleaning via runtime guards.
     for iid, cid, evidence in SUSPECT_ATTRIBUTIONS:
+        if iid in ruled:
+            continue
         row = connection.execute(
             "SELECT jewish_db FROM investor WHERE investor_id = ? AND is_deleted = 0", (iid,)
         ).fetchone()

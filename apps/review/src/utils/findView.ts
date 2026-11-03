@@ -167,7 +167,7 @@ export function shareChoice(series: { bases: { label: string }[] }[], k: number)
  * page's sentence (JEWISH_ATTRIBUTION_NOTE in review_server.py, register 1a),
  * held equal to it by tests/test_find.py. */
 export const ATTRIBUTION_NOTE =
-  "Marked as Jewish by the project's data-entry team during the original database entry (2010s), on the basis of name and context.";
+  "Marked as Jewish by the project's editors. Most of these marks were made by the data-entry team during the original database entry (2010s), on the basis of name and context.";
 
 /** That hover text for a column label, or undefined for any other column. */
 export function columnNote(label: string): string | undefined {

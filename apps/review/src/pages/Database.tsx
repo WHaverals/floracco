@@ -11,7 +11,6 @@ import {
   loadDbFacets,
   loadDbRecord,
   loadFlags,
-  refuteJewishAttribution,
   relinkField,
   restoreFlag,
   removePartner,
@@ -991,8 +990,8 @@ export default function Database() {
   );
 }
 
-function partnerChipLabel(c: NonNullable<DbEditableCell["correction"]>, column: string): string {
-  const shown = column === "type" ? roleLabel(c.proposed_value) : (c.proposed_value ?? "");
+function partnerChipLabel(c: NonNullable<DbEditableCell["correction"]>, cell: DbEditableCell): string {
+  const shown = cell.column === "type" ? roleLabel(c.proposed_value) : proposedLabel(c.proposed_value, cell.input_type);
   if (c.status === "applied") return `Corrected → ${shown}`;
   if (c.status === "reverted") return "Correction reverted";
   return `Change ${c.status}: → ${shown || "(flag)"}`;
@@ -1066,13 +1065,18 @@ function PartnerCell({
         {shown}
       </span>
       {cell.editable && !disabled && (
-        <button type="button" className="field-fix" onClick={onEdit} title={`Edit ${partnerCellLabel(cell.column)}`}>
+        <button
+          type="button"
+          className="field-fix"
+          onClick={onEdit}
+          title={label ? (/^[“"]/.test(label) ? `Edit ${label}` : `Edit “${label}”`) : `Edit ${partnerCellLabel(cell.column)}`}
+        >
           ✎ Edit
         </button>
       )}
       {cell.correction && (
         <span className={`field-correction is-${cell.correction.status}`}>
-          {partnerChipLabel(cell.correction, cell.column)}
+          {partnerChipLabel(cell.correction, cell)}
         </span>
       )}
     </div>
@@ -1397,79 +1401,6 @@ function LookupField({
   );
 }
 
-/** The one sanctioned write to the legacy editorial layer: judge a 2010s Jewish
- * attribution erroneous (jewish_db 1→0), audited with a required reason. The
- * platform never SETS that flag — this control only removes it. */
-function RefuteAttribution({
-  investorId,
-  onDone,
-  guardScopes = [],
-}: {
-  investorId: string;
-  onDone: () => void;
-  guardScopes?: string[];
-}) {
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
-  const [reviewer, setReviewer] = useState(() => localStorage.getItem("floracco_reviewer") ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  // Before the early return, so the hook order stays the same.
-  useUnsavedChange(open && reason.trim() !== "" && !busy, "the reason for refuting the attribution", guardScopes);
-  if (!open) {
-    return (
-      <button
-        type="button"
-        className="field-fix"
-        onClick={() => setOpen(true)}
-        title="Mark this 2010s attribution as mistaken. A reason is required; the change is recorded under your initials."
-      >
-        ✕ Refute
-      </button>
-    );
-  }
-  const save = async () => {
-    if (!reviewer.trim() || !reason.trim()) {
-      setError("Initials and a reason are required.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      await refuteJewishAttribution(investorId, { reviewer: reviewer.trim(), reason: reason.trim() });
-      localStorage.setItem("floracco_reviewer", reviewer.trim());
-      onDone();
-    } catch (err) {
-      setError((err as Error).message);
-      setBusy(false);
-    }
-  };
-  return (
-    <span className="refute-inline">
-      <input
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-        placeholder="why is it wrong? (required)"
-        aria-label="Reason for refuting the attribution"
-      />
-      <input
-        className="refute-initials"
-        value={reviewer}
-        onChange={(e) => setReviewer(e.target.value)}
-        placeholder="initials"
-        aria-label="Reviewer initials"
-      />
-      <button type="button" className="pill-button" onClick={() => setOpen(false)} disabled={busy}>
-        Cancel
-      </button>
-      <button type="button" className="pill-button is-danger" onClick={save} disabled={busy}>
-        {busy ? "Saving…" : "Refute"}
-      </button>
-      {error && <span className="error-text">{error}</span>}
-    </span>
-  );
-}
-
 /** The expand panel for one partner: the investor's full per-appearance record,
  * grouped, with set values emphasised and unset/empty ones muted (the ✎ appears
  * on hover). Everything stays visible so a reviewer can add a missing flag.
@@ -1519,13 +1450,6 @@ function PartnerDetailPanel({
                     />
                   ) : (
                     <span className="partner-attr-locked">{f.value}</span>
-                  )}
-                  {f.refute && !hidden && (
-                    <RefuteAttribution
-                      investorId={f.refute.investor_id}
-                      guardScopes={[`partner-panel:${rowKey}`]}
-                      onDone={onRefresh}
-                    />
                   )}
                 </dd>
               </div>

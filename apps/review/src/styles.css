@@ -6817,33 +6817,12 @@ a.db-history-subject:hover {
 }
 
 /* --- Jewish-attribution provenance ----------------------------------------
-   The Religion panel distinguishes "stated in the act" (editable) from the
-   2010s "editorial attribution" (display-only; hover note carries provenance;
-   the only write is the audited refute action). */
+   The Religion panel distinguishes "stated in the act" from the "editorial
+   attribution"; the hover note on the second label carries its provenance. */
 .partner-attr dt.has-note {
   border-bottom: 1px dashed #d8c7ac;
   cursor: help;
   width: fit-content;
-}
-.refute-inline {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin-left: 8px;
-}
-.refute-inline input {
-  border: 1px solid #d8c7ac;
-  border-radius: 6px;
-  font-size: 0.72rem;
-  padding: 3px 6px;
-  width: 200px;
-}
-.refute-inline input.refute-initials {
-  width: 64px;
-}
-.refute-inline .error-text {
-  font-size: 0.72rem;
 }
 .an-line-legend {
   display: flex;
